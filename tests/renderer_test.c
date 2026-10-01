@@ -231,6 +231,7 @@ int main(int argc, char **argv)
     context = wglCreateContext(dc);
     assert(context && wglMakeCurrent(dc, context));
 #else
+    fprintf(stderr,"renderer_test: creating hidden OpenGL context\n");
     assert(glfwInit());
     glfwWindowHint(GLFW_VISIBLE, 0); /* GLFW 3.1 predates GLFW_FALSE. */
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 1);
@@ -238,12 +239,25 @@ int main(int argc, char **argv)
     window = glfwCreateWindow(320, 240, "Hidden renderer check", NULL, NULL);
     assert(window);
     glfwMakeContextCurrent(window);
+    fprintf(stderr,"renderer_test: OpenGL context ready\n");
 #endif
     renderer = renderer_init();
     assert(renderer);
     assert(renderer_stats(renderer).vbo_budget_bytes == 16u * 1024u * 1024u);
     assert(renderer_stats(renderer).gart_report_valid == 0);
+#ifdef __APPLE__
+    {
+        GLint gpu_vertices=0;
+        int expected=-1;
+        if(CGLGetParameter(CGLGetCurrentContext(),kCGLCPGPUVertexProcessing,
+                           &gpu_vertices)==kCGLNoError)
+            expected=gpu_vertices?1:0;
+        assert(renderer_stats(renderer).gpu_vertex_processing==expected);
+    }
+#else
     assert(renderer_stats(renderer).gpu_vertex_processing == -1);
+#endif
+    fprintf(stderr,"renderer_test: renderer ready\n");
     glMatrixMode(GL_MODELVIEW);
     camera_view(&camera);
     glGetFloatv(GL_MODELVIEW_MATRIX, after);
@@ -407,5 +421,6 @@ int main(int argc, char **argv)
     glfwDestroyWindow(window);
     glfwTerminate();
 #endif
+    fprintf(stderr,"renderer_test: passed\n");
     return 0;
 }
