@@ -28,11 +28,18 @@ Linux/macOS use tar archives to preserve executable permissions and app layout.
 User saves, options, server lists and `third_party` references are excluded.
 Linux requires system OpenAL, zlib, X11 and OpenGL libraries.
 
-`cmake/legacy_source_compat.cmake` prepares checked build-only copies of three
+`cmake/legacy_source_compat.cmake` prepares checked build-only copies of four
 upstream translation units. GLFW/WGL tries accelerated pixel formats first,
 then permits GDI OpenGL 1.1 when none exists (including Windows CI machines).
 raylib's window creation is checked before centering, and its fixed-function
-path no longer asks GL 1.1 for an unsupported GLSL version enum. The dependency
+path no longer asks GL 1.1 for an unsupported GLSL version enum. Cocoa startup
+backports [GLFW's launch ordering fix](https://github.com/glfw/glfw/commit/eda12dd94938504ccaba0734b41485de91aac0c4):
+defer activation until the launch delegate is called and wake the temporary
+event loop before stopping it. This avoids unbundled renderer tests hanging in
+AppKit on modern macOS, using only Cocoa APIs already present in GLFW 3.1.2.
+The macOS renderer test also checks the actual CGL vertex-processing result.
+CTest on Vesper has a 60-second per-test timeout and captures a bounded stack
+sample after a startup failure. The dependency
 checkouts and the native macOS GLFW archive remain untouched.
 
 The Vesper artifact targets its installed macOS SDK, **not Snow Leopard**.
