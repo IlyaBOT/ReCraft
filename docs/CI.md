@@ -22,7 +22,7 @@ missing the workflow installs it using the runner's existing Homebrew.
 The workflow fetches raylib 1.4.0 and GLFW 3.1.2 at verified commits, builds
 Release, runs CTest with assertions enabled, checks `--version`, renders the
 main menu and uploads a runtime package. Action revisions are pinned too.
-Packaging copies only the executable, eight required textures, VERSION, README
+Packaging copies only the executable, twelve required textures, the portal OGG, VERSION, README
 and dependency/asset notices. Windows includes transitive non-system DLLs.
 Linux/macOS use tar archives to preserve executable permissions and app layout.
 User saves, options, server lists and `third_party` references are excluded.
@@ -34,9 +34,12 @@ then permits GDI OpenGL 1.1 when none exists (including Windows CI machines).
 raylib's window creation is checked before centering, and its fixed-function
 path no longer asks GL 1.1 for an unsupported GLSL version enum. Cocoa startup
 backports [GLFW's launch ordering fix](https://github.com/glfw/glfw/commit/eda12dd94938504ccaba0734b41485de91aac0c4):
-defer activation until the launch delegate is called and wake the temporary
-event loop before stopping it. This avoids unbundled renderer tests hanging in
-AppKit on modern macOS, using only Cocoa APIs already present in GLFW 3.1.2.
+defer activation until after startup and wake the temporary event loop before
+stopping it. It also uses [current GLFW's launch-state guard](https://github.com/glfw/glfw/blob/master/src/cocoa_init.m):
+skip `NSApplication run` if `NSRunningApplication.isFinishedLaunching` is already
+true. This API exists in the 10.6 SDK. The preceding patch still timed out inside
+`NSApplication run` on Vesper (run 36912363163); this additional guard needs a
+new native run, since Vesper was offline during local verification.
 The macOS renderer test also checks the actual CGL vertex-processing result.
 CTest on Vesper has a 60-second per-test timeout and captures a bounded stack
 sample after a startup failure. The dependency
