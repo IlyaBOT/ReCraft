@@ -1,5 +1,8 @@
 #include "renderer.h"
 #include "../assets/assets.h"
+#include "../world/fluid.h"
+#include "../world/block_entity.h"
+#include "texture_animation.h"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -38,7 +41,7 @@
 #define GL_TEXTURE_MAX_LEVEL 0x813D
 #endif
 
-#define ATLAS_TILES 8
+#define ATLAS_TILES 16
 #define TILE_PIXELS 16
 #define TILE_REPEATS 4
 #define ATLAS_SLOT_PIXELS (TILE_PIXELS * TILE_REPEATS)
@@ -47,7 +50,7 @@
 /* A fixed ceiling protects old unified-memory drivers even when their
    advertised VRAM/GART figures are large, dynamic, or unavailable. */
 #define DEFAULT_VBO_BUDGET_MB 16u
-#define VERTEX_COORD_SCALE 16.0f
+#define VERTEX_COORD_SCALE 128.0f
 #ifndef GL_MAX_TEXTURE_UNITS_ARB
 #define GL_MAX_TEXTURE_UNITS_ARB 0x84E2
 #endif
@@ -59,7 +62,7 @@ typedef void (APIENTRY *BufferDataProc)(GLenum, ptrdiff_t, const void *, GLenum)
 typedef void (APIENTRY *DeleteBuffersProc)(GLsizei, const GLuint *);
 
 /* GL 1.1 accepts signed-short position/texture coordinates. Positions are
-   chunk-local in sixteenths of a block; modelview scales and translates them.
+   chunk-local in 1/128 blocks; modelview scales and translates them.
    This needs no per-vertex CPU conversion when drawing client arrays. */
 typedef struct VoxelVertex {
     int16_t x, y, z, pad;
@@ -83,6 +86,7 @@ typedef struct ChunkMesh {
     Renderer *owner;
     int32_t chunk_x, chunk_z;
     uint32_t revision;
+    uint8_t animations;
 } ChunkMesh;
 
 typedef struct VisibleChunk {
@@ -106,8 +110,51 @@ struct Renderer {
     int mip_level_limit;
     VisibleChunk *visible_scratch;
     size_t visible_capacity;
+    TextureAnimation animations;
+    uint64_t animation_tick;
+    unsigned animated_visible;
 };
 
+static void upload_animated_slot(unsigned slot,const uint8_t source[1024],int scroll)
+{
+    uint8_t pixels[ATLAS_SLOT_PIXELS*ATLAS_SLOT_PIXELS*4];
+    unsigned x,y,size=ATLAS_SLOT_PIXELS,level=0;
+    for(y=0;y<size;++y) for(x=0;x<size;++x)
+        memcpy(pixels+(y*size+x)*4,source+(((y+scroll)&15)*16+(x&15))*4,4);
+    for(;;) {
+        glTexSubImage2D(GL_TEXTURE_2D,(GLint)level,(slot%ATLAS_TILES)*size,(slot/ATLAS_TILES)*size,size,size,GL_RGBA,GL_UNSIGNED_BYTE,pixels);
+        if(level==4) break;
+        for(y=0;y<size/2;++y) for(x=0;x<size/2;++x) {
+            unsigned c;
+            for(c=0;c<4;++c) {
+                unsigned a=((y*2)*size+x*2)*4+c;
+                pixels[(y*(size/2)+x)*4+c]=(uint8_t)((pixels[a]+pixels[a+4]+pixels[a+size*4]+pixels[a+size*4+4])/4);
+            }
+        }
+        size/=2; ++level;
+    }
+}
+void renderer_animate(Renderer *r,uint64_t tick)
+{
+    GLint old,unpack;
+    if(!r || !r->atlas || r->animation_tick==tick) return;
+    r->animation_tick=tick;
+    if(!r->animated_visible) return;
+    texture_animation_step(&r->animations);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D,&old); glGetIntegerv(GL_UNPACK_ALIGNMENT,&unpack);
+    glBindTexture(GL_TEXTURE_2D,r->atlas); glPixelStorei(GL_UNPACK_ALIGNMENT,1);
+    if(r->animated_visible&1) {
+        upload_animated_slot(11,r->animations.water_pixels,0);
+        upload_animated_slot(83,r->animations.water_pixels,0);
+        upload_animated_slot(84,r->animations.water_pixels,(int)tick);
+    }
+    if(r->animated_visible&2) {
+        upload_animated_slot(64,r->animations.lava_pixels,0);
+        upload_animated_slot(65,r->animations.lava_pixels,(int)(tick/3));
+    }
+    if(r->animated_visible&4) upload_animated_slot(66,r->animations.portal[tick&31],0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT,unpack); glBindTexture(GL_TEXTURE_2D,(GLuint)old);
+}
 static GenericProc gl_proc(const char *name)
 {
 #if defined(_WIN32)
@@ -305,66 +352,9 @@ static void apply_atlas_filter(Renderer *renderer)
     glBindTexture(GL_TEXTURE_2D, (GLuint)old_binding);
 }
 
-/* Compact slots 0..13 retain the original ReCraft materials. Additional
- * slots use the audited Beta registry texture selector. */
+/* Stable slot-to-terrain mapping is shared with block texture selection. */
 static int beta_source_tile(unsigned slot)
-{
-    static const int base[14] = {
-        6, 1, 2, 0, 3, 18, 19, 16, 21, 20, 52, -1, 49, 80,
-    };
-    static const uint8_t cube_ids[15] = {
-        BETA_BLOCK_BEDROCK, BETA_BLOCK_GOLD_ORE, BETA_BLOCK_IRON_ORE,
-        BETA_BLOCK_COAL_ORE, BETA_BLOCK_LAPIS_ORE, BETA_BLOCK_LAPIS_BLOCK,
-        BETA_BLOCK_BRICKS, BETA_BLOCK_MOSSY_COBBLESTONE, BETA_BLOCK_OBSIDIAN,
-        BETA_BLOCK_DIAMOND_ORE, BETA_BLOCK_REDSTONE_ORE, BETA_BLOCK_CLAY,
-        BETA_BLOCK_NETHERRACK, BETA_BLOCK_SOUL_SAND, BETA_BLOCK_GLOWSTONE
-    };
-    static const uint8_t cross_ids[11] = {
-        BETA_BLOCK_SAPLING, BETA_BLOCK_SAPLING, BETA_BLOCK_SAPLING,
-        BETA_BLOCK_TALL_GRASS, BETA_BLOCK_DEAD_BUSH, BETA_BLOCK_TALL_GRASS,
-        BETA_BLOCK_DANDELION, BETA_BLOCK_ROSE, BETA_BLOCK_BROWN_MUSHROOM,
-        BETA_BLOCK_RED_MUSHROOM, BETA_BLOCK_REEDS
-    };
-    static const uint8_t cross_metadata[11] = {0,1,2,1,0,2,0,0,0,0,0};
-    BetaBlockState state;
-    if (slot < 14u) return base[slot];
-    state.metadata = 0;
-    if (slot == 14u || slot == 15u) {
-        state.id = BETA_BLOCK_LOG;
-        state.metadata = (uint8_t)(slot - 13u);
-        return beta_block_terrain_tile(state, 2);
-    }
-    if (slot == 16u) {
-        state.id = BETA_BLOCK_LEAVES;
-        state.metadata = 1;
-        return beta_block_terrain_tile(state, 2);
-    }
-    if (slot == 17u) {
-        state.id = BETA_BLOCK_PLANKS;
-        return beta_block_terrain_tile(state, 2);
-    }
-    if (slot < 34u) {
-        state.id = BETA_BLOCK_WOOL;
-        state.metadata = (uint8_t)(slot - 18u);
-        return beta_block_terrain_tile(state, 2);
-    }
-    if (slot < 49u) {
-        state.id = cube_ids[slot - 34u];
-        return beta_block_terrain_tile(state, 2);
-    }
-    if (slot < 60u) {
-        state.id = cross_ids[slot - 49u];
-        state.metadata = cross_metadata[slot - 49u];
-        return beta_block_terrain_tile(state, 2);
-    }
-    /* Slot zero is unused by air and carries stone slab top. The remaining
-     * four slots fit the complete Beta slab material palette in 512x512. */
-    if (slot < 64u) {
-        static const int slab_tiles[4] = {5, 208, 176, 192};
-        return slab_tiles[slot - 60u];
-    }
-    return -1;
-}
+{ return beta_render_source_tile(slot); }
 
 static uint64_t atlas_upload_bytes(void)
 {
@@ -587,6 +577,7 @@ Renderer *renderer_init(void)
             renderer->capabilities.texture_memory_report_valid ? "reported" : "unknown",
             DEFAULT_VBO_BUDGET_MB);
     renderer->atlas = make_atlas();
+    texture_animation_init(&renderer->animations);
     renderer->stats.texture_bytes = atlas_upload_bytes();
     apply_atlas_filter(renderer);
     if (!renderer->atlas) {
@@ -682,10 +673,11 @@ static int visible_face(uint8_t self, uint8_t neighbor)
 {
     const BlockDef *self_def, *neighbor_def;
     if (self == BLOCK_AIR || self == BLOCK_TORCH || self == BETA_BLOCK_SLAB ||
+        self==BETA_BLOCK_REDSTONE_TORCH || self==BETA_BLOCK_UNLIT_REDSTONE_TORCH ||
+        self==BETA_BLOCK_CACTUS || self==BETA_BLOCK_NETHER_PORTAL || self==BETA_BLOCK_REDSTONE_WIRE ||
         beta_block_cross_plant(self))
         return 0;
-    if ((self == BETA_BLOCK_FLOWING_WATER || self == BETA_BLOCK_STILL_WATER) &&
-        (neighbor == BETA_BLOCK_FLOWING_WATER || neighbor == BETA_BLOCK_STILL_WATER))
+    if (fluid_kind(self) && fluid_kind(self)==fluid_kind(neighbor))
         return 0;
     self_def = world_block_def(self);
     if (!self_def || self_def->render_layer == BLOCK_LAYER_NONE) return 0;
@@ -700,21 +692,11 @@ static int visible_face(uint8_t self, uint8_t neighbor)
 static uint8_t block_face_tile(const BlockDef *definition, uint8_t block,
                                uint8_t metadata, int axis, int direction)
 {
-    if (block == BETA_BLOCK_WOOL) return (uint8_t)(18u + (metadata & 15u));
-    if (block == BETA_BLOCK_SLAB || block == BETA_BLOCK_DOUBLE_SLAB) {
-        if (metadata == 1u) return axis == 1 ? (direction > 0 ? 62u : 61u) : 63u;
-        if (metadata == 2u) return 17u;
-        if (metadata == 3u) return 7u;
-        return axis == 1 ? 0u : (metadata == 0u ? 60u : 0u);
-    }
-    if (block == BETA_BLOCK_LOG && axis != 1) {
-        if ((metadata & 3u) == 1u) return 14; /* spruce bark */
-        if ((metadata & 3u) == 2u) return 15; /* birch bark */
-    }
-    if (block == BETA_BLOCK_LEAVES && (metadata & 3u) == 1u)
-        return 16; /* spruce leaves */
-    if (axis == 1)
-        return direction > 0 ? definition->texture_top : definition->texture_bottom;
+    unsigned face=axis==1 ? (direction>0 ? 1u : 0u) :
+        axis==2 ? (direction>0 ? 3u : 2u) : (direction>0 ? 5u : 4u);
+    int source=beta_block_terrain_tile((BetaBlockState){block,metadata},face);
+    if (source>=0) return (uint8_t)beta_render_tile(source);
+    if (axis==1) return direction>0 ? definition->texture_top : definition->texture_bottom;
     return definition->texture_side;
 }
 
@@ -729,7 +711,7 @@ static uint32_t face_key(const Renderer *renderer, uint8_t block, uint8_t metada
     return (uint32_t)block | ((uint32_t)tile << 8) |
            ((uint32_t)(light & 15u) << 16) |
            ((uint32_t)render_layer << 20) |
-           ((uint32_t)((block==BLOCK_WATER || block==BETA_BLOCK_FLOWING_WATER) ?
+           ((uint32_t)(fluid_kind(block) ?
                         metadata&15u : 0u) << 24);
 }
 
@@ -740,17 +722,11 @@ static int16_t texcoord(unsigned tile, int upper, int vertical, int span)
     /* Unknown registry tiles use the last diagnostic checkerboard slot. */
     if (tile >= ATLAS_TILES * ATLAS_TILES) tile = ATLAS_TILES * ATLAS_TILES - 1;
     base = ((vertical ? tile / ATLAS_TILES : tile % ATLAS_TILES) * ATLAS_SLOT_PIXELS);
-    pixels = (float)base + (upper ? (float)(span * TILE_PIXELS) - 0.5f : 0.5f);
+    /* Every block advances exactly 16 texels. Half-texel insets applied to a
+     * whole greedy rectangle changed the phase/scale of neighboring blocks
+     * whenever an edit changed the rectangle's width. */
+    pixels=(float)base+(upper ? (float)(span*TILE_PIXELS) : 0);
     return (int16_t)(pixels * (32767.0f / (float)ATLAS_PIXELS) + 0.5f);
-}
-
-/* The torch occupies only the centre of terrain tile 80. Mapping its whole
- * 16x16 image onto a 2-pixel-wide prism smears the flame and stick. */
-static int16_t torch_texcoord(int pixel, int vertical)
-{
-    const unsigned tile=13u;
-    unsigned base=(vertical ? tile/ATLAS_TILES : tile%ATLAS_TILES)*ATLAS_SLOT_PIXELS;
-    return (int16_t)(((float)base+(float)pixel)*(32767.0f/(float)ATLAS_PIXELS)+0.5f);
 }
 
 static int layer_reserve(MeshLayer *layer, uint32_t count)
@@ -781,8 +757,7 @@ static void emit_quad(const Renderer *renderer, const World *world,
     const uint8_t light = (uint8_t)((key >> 16) & 15u);
     const uint8_t render_layer = (uint8_t)((key >> 20) & 3u);
     const uint8_t water_level=(uint8_t)((key >> 24)&15u);
-    const int water=((uint8_t)key==BLOCK_WATER ||
-                     (uint8_t)key==BETA_BLOCK_FLOWING_WATER);
+    const int water=fluid_kind((uint8_t)key)!=0;
     const int target_layer = (int)render_layer - 1;
     const int u = u_axis[axis], v = v_axis[axis];
     int corners[4][3] = {{0}};
@@ -816,6 +791,13 @@ static void emit_quad(const Renderer *renderer, const World *world,
         vs[0] = vs[1] = texcoord(tile, 0, 1, v_size);
         vs[2] = vs[3] = texcoord(tile, 1, 1, v_size);
     }
+    /* PNG row zero is the top of the picture. Vertical faces must map their
+     * top vertices there, independently of the greedy rectangle's size. */
+    if (axis!=1) {
+        int16_t a=texcoord(tile,0,1,axis==0 ? u_size : v_size);
+        int16_t b=texcoord(tile,1,1,axis==0 ? u_size : v_size);
+        for (i=0;i<4;++i) vs[i]=(int16_t)(a+b-vs[i]);
+    }
     shade = axis == 1 ? (direction > 0 ? 1.0f : 0.54f) :
             (axis == 0 ? 0.79f : 0.69f);
     base = target->vertex_count;
@@ -847,10 +829,10 @@ static void emit_quad(const Renderer *renderer, const World *world,
         vertex->y = (int16_t)(corners[order][1] * (int)VERTEX_COORD_SCALE);
         if (water && (axis!=1 || direction>0)) {
             int upper=corners[0][1],j;
-            int height16=water_level>=8 ? 16 : 14-2*(int)water_level;
+            int height128=(int)floorf((1-(float)((water_level>=8 ? 0 : water_level)+1)/9)*VERTEX_COORD_SCALE+0.5f);
             for (j=1;j<4;++j) if (corners[j][1]>upper) upper=corners[j][1];
-            if (corners[order][1]==upper && height16<16)
-                vertex->y=(int16_t)(vertex->y-(16-height16));
+            if (corners[order][1]==upper)
+                vertex->y=(int16_t)(vertex->y-(int)VERTEX_COORD_SCALE+height128);
         }
         vertex->z = (int16_t)(corners[order][2] * (int)VERTEX_COORD_SCALE);
         vertex->pad = 0;
@@ -865,13 +847,13 @@ static void emit_quad(const Renderer *renderer, const World *world,
     target->vertex_count += 4u;
 }
 
-static void emit_torch(ChunkMesh *mesh, int x, int y, int z, uint8_t metadata)
+static void emit_torch_kind(ChunkMesh *mesh,int x,int y,int z,uint8_t metadata,uint8_t id)
 {
     static const uint8_t faces[5][4] = {
         {1, 5, 6, 2}, {3, 7, 4, 0}, {2, 6, 7, 3},
         {0, 4, 5, 1}, {4, 7, 6, 5}
     };
-    const BlockDef *definition = world_block_def(BLOCK_TORCH);
+    const BlockDef *definition = world_block_def(id);
     MeshLayer *layer;
     float positions[8][3];
     uint32_t base;
@@ -919,21 +901,25 @@ static void emit_torch(ChunkMesh *mesh, int x, int y, int z, uint8_t metadata)
             vertex->y = (int16_t)floorf(point[1] * VERTEX_COORD_SCALE + 0.5f);
             vertex->z = (int16_t)floorf(point[2] * VERTEX_COORD_SCALE + 0.5f);
             vertex->pad = 0;
-            if (face == 4) {
-                vertex->u = torch_texcoord(corner >= 2 ? 9 : 7, 0);
-                vertex->v = torch_texcoord(corner == 1 || corner == 2 ? 8 : 6, 1);
-            } else {
-                vertex->u = torch_texcoord(corner >= 2 ? 9 : 7, 0);
-                vertex->v = torch_texcoord(corner == 1 || corner == 2 ? 6 : 16, 1);
+            {
+                unsigned tile=id==BLOCK_TORCH ? 13u : id==BETA_BLOCK_REDSTONE_TORCH ? 80u : 81u;
+                int upixel=corner>=2 ? 9 : 7;
+                int vpixel=face==4 ? (corner==1 || corner==2 ? 8 : 6) : (corner==1 || corner==2 ? 6 : 16);
+                unsigned ub=(tile%ATLAS_TILES)*ATLAS_SLOT_PIXELS;
+                unsigned vb=(tile/ATLAS_TILES)*ATLAS_SLOT_PIXELS;
+                vertex->u=(int16_t)((ub+upixel)*(32767.0f/ATLAS_PIXELS)+0.5f);
+                vertex->v=(int16_t)((vb+vpixel)*(32767.0f/ATLAS_PIXELS)+0.5f);
             }
             vertex->r = 255;
-            vertex->g = face == 4 ? 245 : 220;
-            vertex->b = face == 4 ? 205 : 175;
+            vertex->g = vertex->b = 255;
             vertex->a = 255;
         }
     }
     layer->vertex_count = base;
 }
+
+static void emit_torch(ChunkMesh *mesh,int x,int y,int z,uint8_t metadata)
+{ emit_torch_kind(mesh,x,y,z,metadata,BLOCK_TORCH); }
 
 static unsigned cross_slot(uint8_t id, uint8_t metadata)
 {
@@ -989,7 +975,7 @@ static void emit_cross_plant(const Renderer *renderer, const World *world,
                                              VERTEX_COORD_SCALE + 0.5f);
                 vertex->pad = 0;
                 vertex->u = texcoord(slot, corner == 1 || corner == 2, 0, 1);
-                vertex->v = texcoord(slot, top, 1, 1);
+                vertex->v = texcoord(slot, !top, 1, 1);
                 vertex->r = vertex->g = vertex->b = color;
                 vertex->a = 255;
             }
@@ -1001,7 +987,8 @@ static int16_t partial_texcoord(unsigned tile, float fraction, int upper, int ve
 {
     unsigned base = (vertical ? tile / ATLAS_TILES : tile % ATLAS_TILES) *
                     ATLAS_SLOT_PIXELS;
-    float pixel = (float)base + fraction * TILE_PIXELS + (upper ? -0.5f : 0.5f);
+    float pixel = (float)base + fraction * TILE_PIXELS;
+    (void)upper;
     return (int16_t)(pixel * (32767.0f / (float)ATLAS_PIXELS) + 0.5f);
 }
 
@@ -1047,6 +1034,12 @@ static void emit_partial_face(const Renderer *renderer, const World *world,
         vs[0]=vs[1]=partial_texcoord(tile,lower[v],0,1);
         vs[2]=vs[3]=partial_texcoord(tile,upper[v],1,1);
     }
+    if (axis!=1) {
+        for (i=0;i<4;++i) {
+            float h=axis==0 ? corners[i][u] : corners[i][v];
+            vs[i]=partial_texcoord(tile,1.0f-h,h<0.5f,1);
+        }
+    }
     for (i=0;i<4;++i) {
         int order = direction>0 ? i : (i==0 ? 0 : 4-i);
         VoxelVertex *vertex = &layer->vertices[layer->vertex_count++];
@@ -1080,6 +1073,103 @@ static void emit_slab(const Renderer *renderer, const World *world,
                           metadata,axis,direction,slab_lower,slab_upper);
     }
 }
+
+static void emit_cactus(const Renderer *renderer,const World *world,ChunkMesh *mesh,
+                        const Chunk *chunk,int x,int y,int z)
+{
+    static const float low[3]={0.0625f,0.0f,0.0625f},high[3]={0.9375f,1.0f,0.9375f};
+    int axis,direction;
+    for (axis=0;axis<3;++axis) for (direction=-1;direction<=1;direction+=2) {
+        if (axis==1 && block_at(world,chunk,x,y+direction,z)==BETA_BLOCK_CACTUS) continue;
+        emit_partial_face(renderer,world,mesh,chunk,x,y,z,BETA_BLOCK_CACTUS,0,axis,direction,low,high);
+    }
+}
+
+static void emit_decorative_plane(ChunkMesh *mesh,int x,int y,int z,unsigned tile,int axis,int power)
+{
+    MeshLayer *layer=&mesh->layers[axis==1 ? BLOCK_LAYER_CUTOUT-1 : BLOCK_LAYER_TRANSPARENT-1];
+    int side,corner,u=axis==0 ? 2 : 0,v=axis==1 ? 2 : 1;
+    if (!layer_reserve(layer,layer->vertex_count+(axis==1 ? 4u : 8u))) { layer->overflow=1; return; }
+    for (side=0;side<(axis==1 ? 1 : 2);++side) for (corner=0;corner<4;++corner) {
+        float p[3]={(float)x,(float)y,(float)z};
+        int c=side ? (corner==0 ? 0 : 4-corner) : corner;
+        VoxelVertex *vertex=&layer->vertices[layer->vertex_count++];
+        p[axis]+=axis==1 ? 0.0625f : 0.5f;
+        p[u]+=(c==1 || c==2); p[v]+=(c>=2);
+        vertex->x=(int16_t)floorf(p[0]*VERTEX_COORD_SCALE+0.5f);
+        vertex->y=(int16_t)floorf(p[1]*VERTEX_COORD_SCALE+0.5f);
+        vertex->z=(int16_t)floorf(p[2]*VERTEX_COORD_SCALE+0.5f); vertex->pad=0;
+        vertex->u=texcoord(tile,c==1 || c==2,0,1);
+        vertex->v=texcoord(tile,axis==1 ? c>=2 : c<2,1,1);
+        vertex->r=axis==1 ? (uint8_t)(power>0 ? 100+power*155/15 : 75) : 255;
+        vertex->g=axis==1 ? 0 : 255; vertex->b=axis==1 ? 0 : 255;
+        vertex->a=axis==1 ? 255 : 180;
+    }
+}
+/* Keep the large, level interior of an ocean greedy. Only shorelines, falling
+ * columns and changing levels need the four-corner liquid mesh. */
+static int uniform_liquid(const World *world,const Chunk *chunk,int x,int y,int z,uint8_t id)
+{
+    int a,b,kind=fluid_kind(id);
+    if (chunk_get_metadata(chunk,x,y,z)!=0) return 0;
+    for (a=-1;a<=1;++a) for (b=-1;b<=1;++b) {
+        int wx=chunk->x*16+x+a,wz=chunk->z*16+z+b;
+        if (fluid_kind(block_at(world,chunk,x+a,y,z+b))!=kind ||
+            world_peek_metadata(world,wx,y,wz)!=0 || fluid_kind(block_at(world,chunk,x+a,y+1,z+b))==kind) return 0;
+    }
+    return 1;
+}
+static void emit_liquid(const Renderer *renderer,const World *world,ChunkMesh *mesh,
+                        const Chunk *chunk,int x,int y,int z,uint8_t id)
+{
+    static const int offsets[6][3]={{-1,0,0},{1,0,0},{0,0,-1},{0,0,1},{0,1,0},{0,-1,0}};
+    float h[4],flow[3];
+    int wx=chunk->x*16+x,wz=chunk->z*16+z,kind=fluid_kind(id),face,i;
+    MeshLayer *layer=&mesh->layers[kind==1 ? BLOCK_LAYER_TRANSPARENT-1 : BLOCK_LAYER_OPAQUE-1];
+    h[0]=fluid_corner_height(world,wx,y,wz,kind);
+    h[1]=fluid_corner_height(world,wx+1,y,wz,kind);
+    h[2]=fluid_corner_height(world,wx+1,y,wz+1,kind);
+    h[3]=fluid_corner_height(world,wx,y,wz+1,kind);
+    fluid_flow_vector(world,wx,y,wz,flow);
+    for (face=0;face<6;++face) {
+        uint8_t neighbor=block_at(world,chunk,x+offsets[face][0],y+offsets[face][1],z+offsets[face][2]);
+        float p[4][3],height[4]={0},shade=face==4 ? 1 : face==5 ? .5f : face<2 ? .6f : .8f;
+        unsigned tile=kind==1 ? (face==4 && fabsf(flow[0])+fabsf(flow[2])<.01f ? 83 : 84) :
+            (face==4 && fabsf(flow[0])+fabsf(flow[2])<.01f ? 64 : 65);
+        uint8_t light=kind==2 ? 15 : light_at(world,chunk,x,y,z);
+        float ambient=.06f+renderer->options.brightness*.0034f;
+        uint8_t color=clamp_byte((int)(255*shade*(ambient+(1-ambient)*light/15)));
+        if (fluid_kind(neighbor)==kind || neighbor==79 || (face!=4 && world_block_def(neighbor)->opaque)) continue;
+        if (!layer_reserve(layer,layer->vertex_count+4)) { layer->overflow=1; return; }
+        if (face==0) {
+            float a[4][3]={{0,0,0},{0,0,1},{0,h[3],1},{0,h[0],0}}; memcpy(p,a,sizeof(p)); height[2]=h[3]; height[3]=h[0];
+        } else if (face==1) {
+            float a[4][3]={{1,0,1},{1,0,0},{1,h[1],0},{1,h[2],1}}; memcpy(p,a,sizeof(p)); height[2]=h[1]; height[3]=h[2];
+        } else if (face==2) {
+            float a[4][3]={{1,0,0},{0,0,0},{0,h[0],0},{1,h[1],0}}; memcpy(p,a,sizeof(p)); height[2]=h[0]; height[3]=h[1];
+        } else if (face==3) {
+            float a[4][3]={{0,0,1},{1,0,1},{1,h[2],1},{0,h[3],1}}; memcpy(p,a,sizeof(p)); height[2]=h[2]; height[3]=h[3];
+        } else if (face==4) {
+            float a[4][3]={{0,h[0],0},{0,h[3],1},{1,h[2],1},{1,h[1],0}}; memcpy(p,a,sizeof(p));
+        } else {
+            float a[4][3]={{0,0,1},{0,0,0},{1,0,0},{1,0,1}}; memcpy(p,a,sizeof(p));
+        }
+        for (i=0;i<4;++i) {
+            VoxelVertex *v=&layer->vertices[layer->vertex_count++];
+            float tu=face<4 ? (i==1 || i==2) : p[i][0],tv=face<4 ? 1-height[i] : p[i][2];
+            if (face==4 && fabsf(flow[0])+fabsf(flow[2])>.01f) {
+                float u=tu-.5f,t=tv-.5f;
+                tu=.5f+(u*flow[2]-t*flow[0])*.5f;
+                tv=.5f+(u*flow[0]+t*flow[2])*.5f;
+            }
+            v->x=(int16_t)floorf((x+p[i][0])*VERTEX_COORD_SCALE+.5f);
+            v->y=(int16_t)floorf((y+p[i][1])*VERTEX_COORD_SCALE+.5f);
+            v->z=(int16_t)floorf((z+p[i][2])*VERTEX_COORD_SCALE+.5f); v->pad=0;
+            v->u=partial_texcoord(tile,tu,tu>=1,0); v->v=partial_texcoord(tile,tv,tv>=1,1);
+            v->r=v->g=v->b=color; v->a=255;
+        }
+    }
+}
 static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world, const Chunk *chunk)
 {
     static const int dimensions[3] = {WORLD_CHUNK_SIZE, WORLD_HEIGHT, WORLD_CHUNK_SIZE};
@@ -1104,6 +1194,15 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
         if (found) { if (min_y==WORLD_HEIGHT) min_y=y; max_y=y; }
     }
     if (max_y<0) return mesh;
+    {
+        unsigned i;
+        for(i=0;i<WORLD_CHUNK_VOLUME;++i) {
+            unsigned id=chunk->blocks[i];
+            if(fluid_kind(id)==1) mesh->animations|=1;
+            if(fluid_kind(id)==2) mesh->animations|=2;
+            if(id==90) mesh->animations|=4;
+        }
+    }
     for (axis = 0; axis < 3; ++axis) {
         const int u = u_axis[axis], v = v_axis[axis];
         const int width = dimensions[u], height = dimensions[v];
@@ -1131,6 +1230,7 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                         block = chunk_get_block(chunk, point[0], point[1], point[2]);
                         neighbor = block_at(world, chunk, adjacent[0], adjacent[1], adjacent[2]);
                         face_visible = visible_face(block, neighbor);
+                        if (face_visible && fluid_kind(block) && !uniform_liquid(world,chunk,point[0],point[1],point[2],block)) face_visible=0;
                         if (face_visible &&
                             neighbor==BETA_BLOCK_SLAB && world_block_def(block)->opaque &&
                             axis!=1) {
@@ -1149,6 +1249,11 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                                 point[0], point[1], point[2]);
                             mask[row * width + column] = face_key(renderer, block,
                                 metadata, axis, direction, light);
+                            if(block==54) {
+                                unsigned face=axis==1 ? (direction>0 ? 1 : 0) : axis==2 ? (direction>0 ? 3 : 2) : (direction>0 ? 5 : 4);
+                                unsigned tile=beta_render_tile(block_chest_texture(world,chunk->x*16+point[0],point[1],chunk->z*16+point[2],face));
+                                mask[row*width+column]=(mask[row*width+column]&~UINT32_C(0xff00))|(tile<<8);
+                            }
                             if (renderer->options.smooth_lighting) {
                                 int du,dv;
                                 /* Only merge uniformly lit faces. A merged quad
@@ -1195,12 +1300,26 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
         }
     }
     {
-        int x, y, z;
+        int x, z;
         for (y = min_y; y <= max_y; ++y)
             for (z = 0; z < WORLD_CHUNK_SIZE; ++z)
                 for (x = 0; x < WORLD_CHUNK_SIZE; ++x)
                     if (chunk_get_block(chunk, x, y, z) == BLOCK_TORCH)
                         emit_torch(mesh, x, y, z,chunk_get_metadata(chunk,x,y,z));
+                    else if (fluid_kind(chunk_get_block(chunk,x,y,z))) {
+                        uint8_t id=chunk_get_block(chunk,x,y,z);
+                        if (!uniform_liquid(world,chunk,x,y,z,id)) emit_liquid(renderer,world,mesh,chunk,x,y,z,id);
+                    }
+                    else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_REDSTONE_TORCH ||
+                             chunk_get_block(chunk,x,y,z)==BETA_BLOCK_UNLIT_REDSTONE_TORCH)
+                        emit_torch_kind(mesh,x,y,z,chunk_get_metadata(chunk,x,y,z),chunk_get_block(chunk,x,y,z));
+                    else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_CACTUS)
+                        emit_cactus(renderer,world,mesh,chunk,x,y,z);
+                    else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_NETHER_PORTAL)
+                        emit_decorative_plane(mesh,x,y,z,66,
+                            block_at(world,chunk,x-1,y,z)==90 || block_at(world,chunk,x+1,y,z)==90 ? 2 : 0,0);
+                    else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_REDSTONE_WIRE)
+                        emit_decorative_plane(mesh,x,y,z,82,1,chunk_get_metadata(chunk,x,y,z));
                     else if (beta_block_cross_plant(chunk_get_block(chunk,x,y,z)))
                         emit_cross_plant(renderer, world, mesh, chunk, x, y, z,
                                          chunk_get_block(chunk,x,y,z),
@@ -1478,6 +1597,8 @@ void renderer_draw(Renderer *renderer, const World *world,
         ++visible_count;
     }
     renderer->stats.visible_chunks = (uint32_t)visible_count;
+    renderer->animated_visible=0;
+    for(index=0;index<visible_count;++index) renderer->animated_visible|=visible[index].mesh->animations;
     glGetIntegerv(GL_MATRIX_MODE, &old_matrix_mode);
     if (renderer->stats.vbo_available)
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING_ARB, &old_array_buffer);

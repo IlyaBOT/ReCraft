@@ -1,4 +1,6 @@
 #include "player.h"
+#include "../world/block_entity.h"
+#include "../world/fluid.h"
 
 #include <math.h>
 #include <string.h>
@@ -21,7 +23,7 @@ static int body_intersects_block(const Player *player, int bx, int by, int bz,
 static void collision_box(uint8_t id, BetaBlockBox *box)
 {
     BetaBlockState state = { id, 0 };
-    if (id == BETA_BLOCK_SLAB && beta_block_selection_box(state, box)) return;
+    if ((id==BETA_BLOCK_SLAB || id==BETA_BLOCK_CACTUS) && beta_block_selection_box(state,box)) return;
     box->min_x = box->min_y = box->min_z = 0.0f;
     box->max_x = box->max_y = box->max_z = 1.0f;
 }
@@ -127,6 +129,7 @@ void player_spawn(Player *player, World *world, int creative)
     player->z = (float)spawn_z+0.5f;
     player->yaw = 0.45f;
     player->creative = creative != 0;
+    player->health=20; player->air=300;
     for (y = WORLD_HEIGHT - 3; y >= 1; --y) {
         uint8_t id = world_get_block(world,spawn_x,y,spawn_z);
         if (world_block_def(id)->solid) {
@@ -137,8 +140,45 @@ void player_spawn(Player *player, World *world, int creative)
     player->y = world->beta_format ? (float)world->spawn_y : 68.0f;
 }
 
+void player_damage(Player *p,int amount)
+{
+    if (p->creative || p->health<=0 || amount<=0) return;
+    if (p->hurt_ticks>10) {
+        if (amount<=p->last_damage) return;
+        p->health-=amount-p->last_damage;
+    } else { p->health-=amount; p->hurt_ticks=20; }
+    p->last_damage=amount;
+    if (p->health<0) p->health=0;
+}
+static void hazards(Player *p,World *w,float old_y)
+{
+    int x0=(int)floorf(p->x-.3f),x1=(int)floorf(p->x+.3f),z0=(int)floorf(p->z-.3f),z1=(int)floorf(p->z+.3f);
+    int x,y,z,lava=0,cactus=0,fire=0,water=0;
+    uint8_t eye=world_peek_block(w,(int)floorf(p->x),(int)floorf(p->y+1.62f),(int)floorf(p->z));
+    if (w->network_mode || p->creative) return;
+    if (p->hurt_ticks>0) --p->hurt_ticks;
+    for (y=(int)floorf(p->y);y<= (int)floorf(p->y+1.79f);++y) for (z=z0;z<=z1;++z) for (x=x0;x<=x1;++x) {
+        uint8_t id=world_peek_block(w,x,y,z);
+        if (id==10 || id==11) lava=1;
+        if (id==8 || id==9) water=1;
+        if (id==51) fire=1;
+        if (id==81) cactus=1;
+    }
+    if (water) { p->fall_distance=0; p->fire=0; }
+    else if (p->on_ground) { player_damage(p,(int)ceilf(p->fall_distance-3)); p->fall_distance=0; }
+    else if (p->y<old_y) p->fall_distance+=old_y-p->y;
+    if (eye==8 || eye==9) {
+        if (--p->air<=-20) { p->air=0; player_damage(p,2); }
+    } else p->air=300;
+    if (lava) { player_damage(p,4); p->fire=600; }
+    else if (fire) { player_damage(p,1); if (p->fire<=0) p->fire=160; }
+    else if (p->fire>0) { if (p->fire%20==0) player_damage(p,1); --p->fire; }
+    if (cactus) player_damage(p,1);
+    if (p->y< -64) player_damage(p,4);
+}
 void player_tick(Player *player, World *world, const PlayerInput *input, float dt)
 {
+    float old_y=player->y;
     float forward = input->forward;
     float strafe = input->strafe;
     float length = sqrtf(forward * forward + strafe * strafe);
@@ -163,19 +203,10 @@ void player_tick(Player *player, World *world, const PlayerInput *input, float d
     player->vx = (sy * forward + cy * strafe) * speed;
     player->vz = (-cy * forward + sy * strafe) * speed;
     if (in_water && !player->flying) {
-        static const int dx[4]={1,-1,0,0},dz[4]={0,0,1,-1};
-        int i,level=world_get_metadata(world,foot_x,foot_y,foot_z)&7u;
-        for (i=0;i<4;++i) {
-            uint8_t neighbor=world_peek_block(world,foot_x+dx[i],foot_y,foot_z+dz[i]);
-            if (neighbor==BLOCK_WATER || neighbor==BETA_BLOCK_FLOWING_WATER) {
-                int gradient=(world_get_metadata(world,foot_x+dx[i],foot_y,
-                                                   foot_z+dz[i])&7u)-level;
-                if (gradient>0) {
-                    player->vx+=dx[i]*0.11f*gradient;
-                    player->vz+=dz[i]*0.11f*gradient;
-                }
-            }
-        }
+        float flow[3]; fluid_flow_vector(world,foot_x,foot_y,foot_z,flow);
+        /* World.handleMaterialAcceleration adds a normalized current of .014
+         * blocks per Beta tick (.28 blocks/s in our velocity units). */
+        player->vx+=flow[0]*.28f; player->vy+=flow[1]*.28f; player->vz+=flow[2]*.28f;
     }
     if (player->flying) {
         player->vy = ((input->jump != 0) - (input->descend != 0)) * speed;
@@ -198,10 +229,11 @@ void player_tick(Player *player, World *world, const PlayerInput *input, float d
             player->vy = 0.0f;
         } else player->on_ground = 0;
     }
-    if (player->y < -32.0f) player_spawn(player, world, player->creative);
+    hazards(player,world,old_y);
+    if (player->creative && player->y < -32.0f) player_spawn(player, world,1);
 }
 
-BlockHit player_raycast(const Player *player, World *world, float reach)
+static BlockHit raycast(const Player *player, World *world, float reach,int sources)
 {
     BlockHit result;
     float dx = sinf(player->yaw) * cosf(player->pitch);
@@ -225,14 +257,14 @@ BlockHit player_raycast(const Player *player, World *world, float reach)
     memset(&result, 0, sizeof(result));
     while (distance <= reach) {
         uint8_t id = world_get_block(world, x, y, z);
-        if (id != BLOCK_AIR && id != BLOCK_WATER && id != BETA_BLOCK_FLOWING_WATER) {
+        if (id != BLOCK_AIR && (!fluid_kind(id) || (sources && world_get_metadata(world,x,y,z)==0))) {
             int place[3] = { px, py, pz };
             int intersects = 1;
             BetaBlockBox box;
             if (beta_block_cross_plant(id) || id == BETA_BLOCK_SLAB ||
                 id == BETA_BLOCK_TORCH ||
                 id == BETA_BLOCK_UNLIT_REDSTONE_TORCH ||
-                id == BETA_BLOCK_REDSTONE_TORCH) {
+                id == BETA_BLOCK_REDSTONE_TORCH || id==BETA_BLOCK_CACTUS || id==BETA_BLOCK_NETHER_PORTAL) {
                 BetaBlockState state = { id, world_get_metadata(world, x, y, z) };
                 float end = fminf(reach, fminf(tx, fminf(ty, tz)));
                 place[0] = x; place[1] = y; place[2] = z;
@@ -257,6 +289,57 @@ BlockHit player_raycast(const Player *player, World *world, float reach)
     return result;
 }
 
+BlockHit player_raycast(const Player *player,World *world,float reach)
+{ return raycast(player,world,reach,0); }
+BlockHit player_raycast_sources(const Player *player,World *world,float reach)
+{ return raycast(player,world,reach,1); }
+
+int player_use_item(Player *p,World *w,InventorySlot *item)
+{
+    int heal=0;
+    if(!item || item->count<=0 || p->health<=0 || w->network_mode) return 0;
+    switch(item->id) {
+    case 260: heal=4; break;
+    case 282: heal=10; break;
+    case 297: heal=5; break;
+    case 319: heal=3; break;
+    case 320: heal=8; break;
+    case 322: heal=42; break;
+    case 349: heal=2; break;
+    case 350: heal=5; break;
+    case 357: heal=1; break;
+    default: break;
+    }
+    /* Beta food heals immediately; it has no modern hunger/use timer. */
+    if(heal) {
+        p->health+=heal; if(p->health>20) p->health=20;
+        if(!p->creative) {
+            if(item->id==282) *item=(InventorySlot){281,1,0};
+            else if(--item->count<=0) inventory_clear_slot(item);
+        }
+        return 1;
+    }
+    if(item->id==325 || item->id==326 || item->id==327) {
+        BlockHit hit=raycast(p,w,5,item->id==325);
+        if(!hit.hit) return 0;
+        if(item->id==325) {
+            int kind=fluid_kind(hit.block);
+            if(!kind || world_get_metadata(w,hit.x,hit.y,hit.z)!=0 || !world_set_block(w,hit.x,hit.y,hit.z,0)) return 0;
+            if(!p->creative) *item=(InventorySlot){kind==1 ? 326 : 327,1,0};
+        } else {
+            uint8_t old=world_get_block(w,hit.place_x,hit.place_y,hit.place_z);
+            if(beta_material_solid(old) || !world_set_block(w,hit.place_x,hit.place_y,hit.place_z,item->id==326 ? 8 : 10)) return 0;
+            if(!p->creative) *item=(InventorySlot){325,1,0};
+        }
+        return 1;
+    }
+    if(item->id==331 && player_place_block_state(p,w,(BetaBlockState){55,0})) {
+        if(!p->creative && --item->count<=0) inventory_clear_slot(item);
+        return 1;
+    }
+    return 0;
+}
+
 int player_break_block(Player *player, World *world)
 {
     BlockHit hit = player_raycast(player, world, 5.0f);
@@ -272,7 +355,8 @@ int player_place_block_state(Player *player, World *world, BetaBlockState state)
     old = world_get_block(world, hit.place_x, hit.place_y, hit.place_z);
     if (old != BLOCK_AIR && old != BLOCK_WATER &&
         old != BETA_BLOCK_FLOWING_WATER) return 0;
-    if (state.id == BETA_BLOCK_TORCH && state.metadata == 0) {
+    if ((state.id==BETA_BLOCK_TORCH || state.id==BETA_BLOCK_REDSTONE_TORCH ||
+         state.id==BETA_BLOCK_UNLIT_REDSTONE_TORCH) && state.metadata==0) {
         /* vm.e maps the clicked face to the attachment metadata. Metadata
          * zero is the local hotbar's "choose face" request. */
         if (!world_block_def(hit.block)->opaque) return 0;
@@ -283,6 +367,21 @@ int player_place_block_state(Player *player, World *world, BetaBlockState state)
         else if (hit.place_x < hit.x) state.metadata=2;
         else if (hit.place_x > hit.x) state.metadata=1;
         else return 0;
+    }
+    if (state.id==BETA_BLOCK_CHEST && !block_chest_can_place(world,hit.place_x,hit.place_y,hit.place_z)) return 0;
+    if(state.id==BETA_BLOCK_REDSTONE_WIRE && !world_block_def(world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z))->opaque) return 0;
+    if (state.id==BETA_BLOCK_CACTUS) {
+        static const int dx[4]={-1,1,0,0},dz[4]={0,0,-1,1};
+        uint8_t below=world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z);
+        int i;
+        if (below!=BETA_BLOCK_SAND && below!=BETA_BLOCK_CACTUS) return 0;
+        for (i=0;i<4;++i) if (beta_material_solid(world_get_block(world,hit.place_x+dx[i],
+                                      hit.place_y,hit.place_z+dz[i]))) return 0;
+    }
+    if (state.id==BETA_BLOCK_FURNACE || state.id==BETA_BLOCK_BURNING_FURNACE) {
+        static const uint8_t facing[4]={2,5,3,4};
+        int index=(int)floorf(player->yaw*0.63661977236f+2.5f)&3;
+        state.metadata=facing[index];
     }
     /* ys.c in the Beta client merges a newly placed slab with the matching
      * slab directly beneath it. The final block occupies the lower cell. */
@@ -310,6 +409,8 @@ int player_place_block_state(Player *player, World *world, BetaBlockState state)
                                   hit.place_z, &box)) return 0;
     }
     if (!world_set_block(world,hit.place_x,hit.place_y,hit.place_z,state.id)) return 0;
+    if (state.id==54 || state.id==61 || state.id==62)
+        block_entity_get(world,hit.place_x,hit.place_y,hit.place_z,1);
     return world_set_metadata(world,hit.place_x,hit.place_y,hit.place_z,state.metadata);
 }
 

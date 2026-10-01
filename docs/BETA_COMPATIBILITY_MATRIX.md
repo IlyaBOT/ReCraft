@@ -25,35 +25,33 @@ tiles. Local placement merges a new half slab into the matching one below,
 keeping metadata; the default local hotbar has no slab item yet. Generic block
 drops/pickup exist in survival; exact per-block drops and world-wide light
 propagation are not complete.
-The normal torch uses attachment metadata for its cached prism, ray
-selection and local placement. Redstone torches share the audited
-selection bounds but still have no rendered geometry or redstone logic.
-Other IDs use a generic solid or hidden proxy, so shape, collision and
-lighting can be wrong. The native `.rcg` format is still not a Minecraft
-save format: version 2 stores Beta IDs;
-version 1 loads through an explicit 12-ID migration. Procedural world generation
-is not Beta-compatible. Block-specific metadata behavior and textures are pending.
-No tile entity or redstone simulation or exact scheduled/random block ticks are
-present. Sand/gravel falling, torch support, and water spreading are local
-approximations, not original fluid or tick logic. A torch whose supporting
-block is removed becomes a collectible drop.
+Normal and redstone torches now have attachment geometry and support drops.
+Redstone adds two-tick inversion and burnout, with basic flat wire propagation;
+repeaters, pistons and a complete redstone network remain unfinished.
+Workbench, furnace, single/double chest and cactus have their own geometry and
+behaviour. Water/lava use scheduled Beta decay and sloping meshes. Portal has
+CPU animation, light and ambience, without dimension transport.
+The native `.rcg` format is not Minecraft's; version 2 stores Beta IDs, and
+version 1 is migrated from the original 12 private IDs. Missing Beta chunks are
+not generated. See [the gameplay milestone](GAMEPLAY_PARITY.md) for precise
+checks and limits. Unlisted block mechanisms remain unfinished.
 
 | Block ID | Block name | Metadata usage | Implemented | Rendering | Collision | Drops | Interaction | Scheduled tick | Random tick | Tile entity | Redstone | Lighting | Fluid behavior | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 0 | air | none | ID + metadata stored | none | none | no | no | no | no | no | no | none | no | air |
-| 1 | stone | none | ID + metadata stored | approximate | box approximation | no | generic break/place | no | no | no | no | local approximation | no | visual proxy |
-| 2 | grass | none | ID + metadata stored | approximate | box approximation | no | generic break/place | no | no | no | no | local approximation | no | visual proxy |
-| 3 | dirt | none | ID + metadata stored | approximate | box approximation | no | generic break/place | no | no | no | no | local approximation | no | visual proxy |
-| 4 | stonebrick | none | ID + metadata stored | approximate | box approximation | no | generic break/place | no | no | no | no | local approximation | no | visual proxy |
+| 1 | stone | none | ID + metadata stored | approximate | box approximation | cobblestone when harvested | generic break/place | no | no | no | no | local approximation | no | visual proxy |
+| 2 | grass | none | ID + metadata stored | Beta top/side UV; fixed tint | box approximation | dirt | generic break/place | no | no | no | no | local approximation | no | visual proxy |
+| 3 | dirt | none | ID + metadata stored | approximate | box approximation | dirt | generic break/place | no | no | no | no | local approximation | no | visual proxy |
+| 4 | stonebrick | none | ID + metadata stored | approximate | box approximation | cobblestone | generic break/place | no | no | no | no | local approximation | no | visual proxy |
 | 5 | wood | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 6 | sapling | tree species | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | local approximation | no | crossed plant |
 | 7 | bedrock | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
-| 8 | water | fluid level and falling | ID + metadata stored | approximate | box approximation | no | generic break/place | no | no | no | no | local approximation | static water approximation | visual proxy |
-| 9 | water | fluid level and falling | ID + metadata stored | approximate | box approximation | no | generic break/place | no | no | no | no | local approximation | static water approximation | visual proxy |
-| 10 | lava | fluid level and falling | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 11 | lava | fluid level and falling | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 12 | sand | none | ID + metadata stored | approximate | box approximation | no | generic break/place | no | no | no | no | local approximation | no | visual proxy |
-| 13 | gravel | none | ID + metadata stored | approximate | box approximation | no | generic break/place | no | no | no | no | local approximation | no | visual proxy |
+| 8 | water | fluid level and falling | level + scheduled flow | animated sloping liquid | none | no | bucket/source placement | 5 ticks | no | no | no | local approximation | decay 1; water source joining | fluid foundation |
+| 9 | water | fluid level and falling | level + still/moving conversion | animated sloping liquid | none | no | bucket/source placement | on neighbour change | no | no | no | local approximation | decay 1; water source joining | fluid foundation |
+| 10 | lava | fluid level and falling | level + scheduled flow | animated sloping liquid | none | no | bucket/source placement | 30 ticks | no | no | no | emission 15 | decay 2; no source joining | fluid foundation |
+| 11 | lava | fluid level and falling | level + still/moving conversion | animated sloping liquid | none | no | bucket/source placement | on neighbour change | no | no | no | emission 15 | decay 2; no source joining | fluid foundation |
+| 12 | sand | none | ID + metadata stored | approximate | box approximation | no | generic break/place | 3 ticks | no | no | no | local approximation | no | falling without entity animation |
+| 13 | gravel | none | ID + metadata stored | approximate | box approximation | no | generic break/place | 3 ticks | no | no | no | local approximation | no | falling without entity animation |
 | 14 | oreGold | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 15 | oreIron | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 16 | oreCoal | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
@@ -90,19 +88,19 @@ block is removed becomes a collectible drop.
 | 47 | bookshelf | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 48 | stoneMoss | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 49 | obsidian | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
-| 50 | torch | attachment face | ID + metadata + attachment mesh | metadata-oriented torch prism | none | no | selection-box raycast; local attachment | no | no | no | no | emission 14; local approximation | no | normal torch partial |
+| 50 | torch | attachment face | ID + metadata + attachment mesh | metadata-oriented torch prism | none | torch when broken/unsupported | selection-box raycast; local attachment | support check | no | no | no | emission 14; local approximation | no | normal torch |
 | 51 | fire | age | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 52 | mobSpawner | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 53 | stairsWood | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 54 | chest | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 55 | redstoneDust | power level | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 54 | chest | facing | 27/54 slots + NBT | Beta single/double chest cube | full cube | chest + contents | open; obstruction/triple checks | no | no | Chest | no | local approximation | no | container |
+| 55 | redstoneDust | power level | power metadata | flat cutout | none | redstone dust | dust placement | neighbour updates | no | no | basic flat wire | local approximation | no | partial redstone |
 | 56 | oreDiamond | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 57 | blockDiamond | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 58 | workbench | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 58 | workbench | none | 3 x 3 crafting | Beta face textures | full cube | workbench | 151 Beta recipes | no | no | no | no | local approximation | no | crafting |
 | 59 | crops | growth stage | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 60 | farmland | moisture | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 61 | furnace | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 62 | furnace | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 61 | furnace | facing | smelting + NBT | oriented Beta faces | full cube | furnace + contents | input/fuel/take-only output | 20 Hz smelting | no | Furnace | no | local approximation | no | container |
+| 62 | furnace | facing | smelting + NBT | oriented lit Beta faces | full cube | unlit furnace + contents | input/fuel/take-only output | 20 Hz smelting | no | Furnace | no | emission 13 | no | container |
 | 63 | sign | rotation | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 64 | doorWood | facing, open, upper half | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 65 | ladder | attachment face | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
@@ -115,13 +113,13 @@ block is removed becomes a collectible drop.
 | 72 | pressurePlate | powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 73 | oreRedstone | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 74 | oreRedstone | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | emission 9; local approximation | no | cube texture |
-| 75 | notGate | attachment face | ID + metadata + selection bounds | hidden | none | no | selection-box raycast; redstone pending | no | no | no | no | missing | no | redstone torch selection only |
-| 76 | notGate | attachment face | ID + metadata + selection bounds | hidden | none | no | selection-box raycast; redstone pending | no | no | no | no | missing | no | redstone torch selection only |
+| 75 | notGate | attachment face | attachment + inversion | unlit narrow prism | none | lit redstone torch | attach/support | 2 ticks | no | no | inversion/burnout | no emission | no | partial redstone |
+| 76 | notGate | attachment face | attachment + inversion | lit narrow prism | none | redstone torch | attach/support | 2 ticks | no | no | inversion/burnout | emission 7 | no | partial redstone |
 | 77 | button | attachment and powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 78 | snow | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 79 | ice | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 80 | snow | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 81 | cactus | age | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 81 | cactus | age | age + support + growth | inset cactus faces | inset box | cactus | sand/cactus support; contact damage | support check | growth to 3 blocks | no | no | local approximation | no | cactus |
 | 82 | clay | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 83 | reeds | age | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | local approximation | no | crossed plant |
 | 84 | jukebox | record present | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
@@ -130,7 +128,7 @@ block is removed becomes a collectible drop.
 | 87 | hellrock | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 88 | hellsand | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 89 | lightgem | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | emission 15; local approximation | no | cube texture |
-| 90 | portal | portal axis | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 90 | portal | portal axis | portal visual/ambient | animated double-sided plane | none | no | no dimension transport | no | no | no | no | emission 11 | no | visual/ambient only |
 | 91 | litpumpkin | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 92 | cake | bites eaten | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 93 | diode | facing and delay | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
@@ -151,13 +149,13 @@ block is removed becomes a collectible drop.
 
 The two Beta worlds in `build/saves/` are read-only test fixtures. The
 McRegion writer test copies a region file, edits that copy, and verifies it
-can read the changed block while retaining nonterrain chunk NBT. Full Beta
-terrain generation, tile entities, original fluid and
-tick rules, and entity behavior remain future work.
+can read the changed block while retaining nonterrain chunk NBT. Exact Beta terrain generation, most entity AI and many mechanisms remain
+future work. Container, Item-entity and supported pending-tick NBT are now saved.
 
 Player `level.dat` writeback now covers position/rotation/motion, inventory,
-Time and LastPlayed with a one-time backup; it is not yet a complete SaveHandler
-replacement (session lock, fallback loading and original save rotation remain).
+Health/Air/Fire, Time and LastPlayed with a one-time backup; it is not yet a complete SaveHandler
+replacement (session lock and concurrent writer ownership remain). Fallback loading and
+old/new save rotation are implemented.
 The Creative catalogue exposes registered IDs/variants; availability there does
 not mean that a block's geometry, mechanism or item-use behavior is implemented.
 Cross-chunk block light and optional smooth vertex colors are implemented;

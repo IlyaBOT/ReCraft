@@ -1,4 +1,5 @@
 #include "world.h"
+#include "block_entity.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -390,7 +391,7 @@ WorldError world_storage_write_chunk(const World *world, const Chunk *chunk)
         remove(temp);
         return WORLD_ERROR_IO;
     }
-    return WORLD_OK;
+    return block_entities_native_write(world,chunk) ? WORLD_OK : WORLD_ERROR_IO;
 }
 
 WorldError world_storage_read_chunk(const World *world, Chunk *chunk)
@@ -460,6 +461,7 @@ WorldError world_storage_read_chunk(const World *world, Chunk *chunk)
     free(encoded);
 done:
     fclose(file);
+    if (result==WORLD_OK && !block_entities_native_read(world,chunk)) result=WORLD_ERROR_CORRUPT;
     return result;
 }
 
@@ -522,7 +524,8 @@ static int allowed_chunk_filename(const char *name)
             ++p;
         }
     }
-    return strcmp(p,".rcg")==0 || strcmp(p,".rcg.tmp")==0;
+    return strcmp(p,".rcg")==0 || strcmp(p,".rcg.tmp")==0 ||
+           strcmp(p,".rct")==0 || strcmp(p,".rct.tmp")==0;
 }
 
 static int allowed_world_file(const char *name)

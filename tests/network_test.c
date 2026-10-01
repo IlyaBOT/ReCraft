@@ -41,6 +41,12 @@ typedef struct Observed {
     double feet_y;
     int16_t item_id,item_slot;
     uint8_t item_count;
+    NetworkClient *client;
+    int chest_open,chest_sync,chest_slots,cursor_updates;
+    int furnace_open,furnace_sync,furnace_slots,properties[3];
+    int rejected,accepted,closed,dead,alive,respawn;
+    int16_t chest_id[63],chest_damage[63];
+    uint8_t chest_count[63];
 } Observed;
 
 static void pause_ms(unsigned ms)
@@ -68,6 +74,86 @@ static void put64(uint8_t *p,double d)
 { uint64_t n; memcpy(&n,&d,8); put32(p,(uint32_t)(n>>32)); put32(p+4,(uint32_t)n); }
 static void put_float(uint8_t *p,float f)
 { uint32_t n; memcpy(&n,&f,4); put32(p,n); }
+static size_t put_slot(uint8_t *p,int id,int count,int damage)
+{
+    p[0]=(uint8_t)((uint16_t)id>>8); p[1]=(uint8_t)id;
+    if(id<0) return 2;
+    p[2]=(uint8_t)count; p[3]=(uint8_t)((unsigned)damage>>8); p[4]=(uint8_t)damage;
+    return 5;
+}
+static int send_window(TestSocket s,int window,int type,const char *title,int slots)
+{
+    uint8_t p[70]; size_t length=strlen(title);
+    assert(length<=64);
+    p[0]=0x64; p[1]=(uint8_t)window; p[2]=(uint8_t)type;
+    p[3]=0; p[4]=(uint8_t)length; memcpy(p+5,title,length);
+    p[5+length]=(uint8_t)slots;
+    /* Split inside the title to exercise partial String8 framing. */
+    return send_all(s,p,6) && send_all(s,p+6,length);
+}
+static int send_chest_contents(TestSocket s,int count)
+{
+    uint8_t p[4+63*5]; size_t at=4; int i;
+    p[0]=0x68; p[1]=1; p[2]=0; p[3]=63;
+    for(i=0;i<63;++i) {
+        if(i==0) at+=put_slot(p+at,17,count,2);
+        else if(i==26) at+=put_slot(p+at,263,12,0);
+        else if(i==27) at+=put_slot(p+at,1,64,0);
+        else if(i==54) at+=put_slot(p+at,278,1,321);
+        else at+=put_slot(p+at,-1,0,0);
+    }
+    return send_all(s,p,at);
+}
+static int mock_containers(TestSocket s)
+{
+    uint8_t p[64],out[4+39*5]; size_t at; int i;
+    if(!send_window(s,1,0,"Chest",27) || !send_chest_contents(s,7)) return 0;
+    if(!recv_all(s,p,13) || p[0]!=0x66 || p[1]!=1 || beta14_u16(p+2)!=0 ||
+       p[4]!=0 || beta14_u16(p+5)!=65534 || p[7]!=0 ||
+       beta14_u16(p+8)!=17 || p[10]!=7 || beta14_u16(p+11)!=2) return 0;
+    { const uint8_t rejection[]={0x6a,1,0xff,0xfe,0};
+      if(!send_all(s,rejection,sizeof(rejection))) return 0;
+    }
+    /* A rejected predicted click must be confirmed, then replaced by the
+     * server's complete inventory and cursor snapshots. */
+    if(!recv_all(s,p,5) || p[0]!=0x6a || p[1]!=1 ||
+       beta14_u16(p+2)!=65534 || p[4]!=1) return 0;
+    { const uint8_t cursor_empty[]={0x67,0xff,0xff,0xff,0xff,0xff};
+      if(!send_all(s,cursor_empty,sizeof(cursor_empty)) || !send_chest_contents(s,8)) return 0;
+    }
+    if(!recv_all(s,p,13) || p[0]!=0x66 || p[1]!=1 || beta14_u16(p+2)!=0 ||
+       p[4]!=1 || beta14_u16(p+5)!=65535 || p[7]!=0 ||
+       beta14_u16(p+8)!=17 || p[10]!=8 || beta14_u16(p+11)!=2) return 0;
+    { const uint8_t accepted[]={0x6a,1,0xff,0xff,1};
+      if(!send_all(s,accepted,sizeof(accepted))) return 0;
+    }
+    if(!recv_all(s,p,2) || p[0]!=0x65 || p[1]!=1) return 0;
+
+    if(!send_window(s,2,2,"Furnace",3)) return 0;
+    at=4; out[0]=0x68; out[1]=2; out[2]=0; out[3]=39;
+    for(i=0;i<39;++i) {
+        if(i==0) at+=put_slot(out+at,15,2,0);
+        else if(i==1) at+=put_slot(out+at,263,1,0);
+        else if(i==2) at+=put_slot(out+at,265,3,0);
+        else at+=put_slot(out+at,-1,0,0);
+    }
+    if(!send_all(s,out,at)) return 0;
+    { const uint8_t status[]={0x69,2,0,0,0,100,0x69,2,0,1,3,32,
+          0x69,2,0,2,6,64,0x08,0,0,0x65,2};
+      if(!send_all(s,status,sizeof(status))) return 0;
+    }
+    if(!recv_all(s,p,2) || p[0]!=0x09 || p[1]!=0) return 0;
+    { const uint8_t respawn[]={0x09,0,0x08,0,20};
+      if(!send_all(s,respawn,sizeof(respawn))) return 0;
+    }
+    memset(out,0,42); out[0]=0x0d;
+    put64(out+1,20.5); put64(out+9,65.0); put64(out+17,66.62); put64(out+25,20.5);
+    put_float(out+33,90.0f); out[41]=1;
+    if(!send_all(s,out,42)) return 0;
+    if(!recv_all(s,p,42) || p[0]!=0x0d || fabs(beta14_f64(p+1)-20.5)>0.0001 ||
+       fabs(beta14_f64(p+9)-66.62)>0.0001 || fabs(beta14_f64(p+17)-65.0)>0.0001) return 0;
+    return 1;
+}
 static int mock_session(TestSocket s)
 {
     uint8_t p[64],out[64],*blocks,*chunk_packet; size_t i,index,wool_index,packet_size;
@@ -130,7 +216,7 @@ static int mock_session(TestSocket s)
        fabs(beta14_f64(p+17)-65.0)>0.0001) return 0;
     if(!recv_all(s,p,1) || p[0]!=0) return 0;
     if(!recv_all(s,p,3) || p[0]!=0x10 || beta14_u16(p+1)!=2) return 0;
-    return 1;
+    return mock_containers(s);
 }
 #ifdef _WIN32
 static unsigned __stdcall mock_worker(void *arg)
@@ -164,6 +250,44 @@ static void observe(void *user,const NetworkEvent *e)
     if(e->type==NETWORK_EVENT_INVENTORY && e->entity_type==0 && e->slot==36) {
         o->inventory++; o->item_id=e->item_id; o->item_count=e->item_count; o->item_slot=e->slot;
     }
+    if(e->type==NETWORK_EVENT_WINDOW_OPEN) {
+        if(e->window_id==1) { assert(e->window_type==0 && e->window_slots==27); ++o->chest_open; }
+        if(e->window_id==2) { assert(e->window_type==2 && e->window_slots==3); ++o->furnace_open; }
+    }
+    if(e->type==NETWORK_EVENT_INVENTORY && e->entity_type==1) {
+        assert(e->slot>=0 && e->slot<63); ++o->chest_slots;
+        o->chest_id[e->slot]=e->item_id; o->chest_count[e->slot]=e->item_count; o->chest_damage[e->slot]=e->item_damage;
+    }
+    if(e->type==NETWORK_EVENT_INVENTORY && e->entity_type==255) { assert(e->slot==-1 && e->item_id==-1); ++o->cursor_updates; }
+    if(e->type==NETWORK_EVENT_INVENTORY && e->entity_type==2) {
+        ++o->furnace_slots;
+        if(e->slot==0) assert(e->item_id==15 && e->item_count==2);
+        if(e->slot==1) assert(e->item_id==263);
+        if(e->slot==2) assert(e->item_id==265 && e->item_count==3);
+    }
+    if(e->type==NETWORK_EVENT_WINDOW_SYNC) {
+        if(e->window_id==1) {
+            int action=++o->chest_sync==1 ? 65534 : 65535;
+            assert(o->chest_id[0]==17 && o->chest_damage[0]==2);
+            assert(o->chest_count[0]==(action==65534 ? 7 : 8));
+            assert(o->chest_id[26]==263 && o->chest_id[27]==1 && o->chest_id[54]==278 && o->chest_damage[54]==321);
+            assert(network_click_window(o->client,1,0,action==65535,action,0,(InventorySlot){17,o->chest_count[0],2}));
+        }
+        if(e->window_id==2) ++o->furnace_sync;
+    }
+    if(e->type==NETWORK_EVENT_WINDOW_TRANSACTION) {
+        assert(e->window_id==1);
+        if(!e->accepted) { assert(e->action==65534); ++o->rejected; assert(network_confirm_window(o->client,1,e->action)); }
+        else { assert(e->action==65535); ++o->accepted; assert(network_close_window(o->client,1)); }
+    }
+    if(e->type==NETWORK_EVENT_WINDOW_PROPERTY) { assert(e->window_id==2 && e->property>=0 && e->property<3); o->properties[e->property]=e->value; }
+    if(e->type==NETWORK_EVENT_WINDOW_CLOSE) { assert(e->window_id==2); ++o->closed; }
+    if(e->type==NETWORK_EVENT_HEALTH) {
+        if(e->health==0) { ++o->dead; assert(network_respawn(o->client)); }
+        if(e->health==20) ++o->alive;
+    }
+    if(e->type==NETWORK_EVENT_RESPAWN) { assert(e->dimension==0); ++o->respawn; }
+
 }
 static void test_packet_boundaries(void)
 {
@@ -176,6 +300,12 @@ static void test_packet_boundaries(void)
     assert(beta14_next_packet(packet,n,&parsed)==1 && parsed.size==n);
     assert(beta14_held_item(packet,sizeof(packet),8)==3);
     assert(beta14_held_item(packet,sizeof(packet),9)==0);
+    n=beta14_window_click(packet,sizeof(packet),2,54,1,32768,0,278,1,1234);
+    assert(n==13 && packet[0]==0x66 && packet[1]==2 && beta14_u16(packet+2)==54);
+    assert(packet[4]==1 && beta14_u16(packet+5)==32768 && !packet[7] && beta14_u16(packet+8)==278 && beta14_u16(packet+11)==1234);
+    for(i=0;i<n;++i) assert(beta14_next_packet(packet,i,&parsed)==0);
+    assert(beta14_next_packet(packet,n,&parsed)==1 && parsed.size==n);
+    assert(beta14_window_click(packet,sizeof(packet),0,1,0,1,0,-1,0,0)==10);
     { const uint8_t window[]={0x64,1,0,0,5,'C','h','e','s','t',27};
       for(i=0;i<sizeof(window);++i) assert(beta14_next_packet(window,i,&parsed)==0);
       assert(beta14_next_packet(window,sizeof(window),&parsed)==1 && parsed.size==sizeof(window));
@@ -219,18 +349,18 @@ int main(void)
 #endif
     assert(world_init(&world,0,0,64)==WORLD_OK); world.network_mode=1;
     memset(&observed,0,sizeof(observed));
-    client=network_create(&world,observe,&observed); assert(client!=NULL);
+    client=network_create(&world,observe,&observed); assert(client!=NULL); observed.client=client;
     assert(network_connect(client,"127.0.0.1",ntohs(addr.sin_port),"Player"));
     for(i=0;i<5000;++i) {
         network_tick(client);
         if(network_state(client)==NETWORK_PLAY && !ready) {
             assert(network_send_held_item(client,2)); ready=1;
         }
-        if(observed.chunk && observed.block && observed.inventory) break;
+        if(observed.respawn && observed.position==2 && observed.alive) break;
         if(network_state(client)==NETWORK_ERROR) break;
         pause_ms(1);
     }
-    assert(observed.state_play==1 && observed.position==1 && fabs(observed.feet_y-65.0)<0.0001);
+    assert(observed.state_play==1 && observed.position==2 && fabs(observed.feet_y-65.0)<0.0001);
     assert(observed.chunk==1 && observed.block==1);
     assert(observed.inventory==1 && observed.item_id==1 && observed.item_count==32 && observed.item_slot==36);
     assert(world_peek_block(&world,8,63,8)==BLOCK_STONE);
@@ -244,7 +374,11 @@ int main(void)
       assert(chunk_get_block_light(chunk,8,64,8)==13);
       assert(chunk_get_sky_light(chunk,9,64,8)==15);
     }
-    /* Let the nonblocking client flush the queued held-item packet. */
+    assert(observed.chest_open==1 && observed.chest_sync==2 && observed.chest_slots==126 && observed.cursor_updates==1);
+    assert(observed.rejected==1 && observed.accepted==1 && observed.furnace_open==1 && observed.furnace_sync==1);
+    assert(observed.furnace_slots==39 && observed.properties[0]==100 && observed.properties[1]==800 && observed.properties[2]==1600);
+    assert(observed.closed==1 && observed.dead==1 && observed.respawn==1 && observed.alive==1);
+    /* Let the nonblocking client flush the final respawn acknowledgement. */
     for(i=0;i<50;++i) { network_tick(client); pause_ms(1); }
     network_destroy(client);
 #ifdef _WIN32

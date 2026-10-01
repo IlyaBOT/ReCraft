@@ -1,4 +1,11 @@
 #include "beta_blocks.h"
+static const uint8_t materials[BETA_BLOCK_COUNT][5]={
+#include "beta_materials.def"
+};
+int beta_material_solid(unsigned id) { return id<BETA_BLOCK_COUNT && materials[id][0]; }
+int beta_material_blocks_flow(unsigned id) { return id<BETA_BLOCK_COUNT && materials[id][1]; }
+int beta_material_burns(unsigned id) { return id<BETA_BLOCK_COUNT && materials[id][3]; }
+int beta_material_wood(unsigned id) { return id<BETA_BLOCK_COUNT && materials[id][4]; }
 
 static const BetaBlockDef beta_blocks[BETA_BLOCK_COUNT] = {
 #define BETA_BLOCK(id, token, name, usage) [id] = { id, name, usage },
@@ -37,6 +44,14 @@ int beta_block_selection_box(BetaBlockState state, BetaBlockBox *out)
         out->min_x = out->min_y = out->min_z = 0.0f;
         out->max_x = out->max_z = 1.0f;
         out->max_y = 0.5f;
+        return 1;
+    }
+    if (state.id==BETA_BLOCK_CACTUS) {
+        *out=(BetaBlockBox){0.0625f,0.0f,0.0625f,0.9375f,1.0f,0.9375f};
+        return 1;
+    }
+    if (state.id==BETA_BLOCK_NETHER_PORTAL) {
+        *out=(BetaBlockBox){0.0f,0.0f,0.375f,1.0f,1.0f,0.625f};
         return 1;
     }
     if (state.id == BETA_BLOCK_TORCH ||
@@ -132,7 +147,44 @@ int beta_block_terrain_tile(BetaBlockState state, unsigned face)
     case BETA_BLOCK_RED_MUSHROOM: return 28;
     case BETA_BLOCK_REEDS: return 73;
     case BETA_BLOCK_TORCH: return 80;
+    case BETA_BLOCK_CRAFTING_TABLE: return face==1 ? 43 : face==0 ? 4 : (face==2 || face==4) ? 60 : 59;
+    case BETA_BLOCK_CHEST: return face<2 ? 25 : face==3 ? 27 : 26;
+    case BETA_BLOCK_FURNACE:
+    case BETA_BLOCK_BURNING_FURNACE:
+        return face<2 ? 62 : face==(state.metadata>=2 && state.metadata<=5 ? state.metadata : 3) ?
+            (state.id==BETA_BLOCK_BURNING_FURNACE ? 61 : 44) : 45;
+    case BETA_BLOCK_UNLIT_REDSTONE_TORCH: return 115;
+    case BETA_BLOCK_REDSTONE_TORCH: return 99;
+    case BETA_BLOCK_CACTUS: return face==1 ? 69 : face==0 ? 71 : 70;
+    case BETA_BLOCK_NETHER_PORTAL: return 14;
+    case BETA_BLOCK_FLOWING_LAVA: case BETA_BLOCK_STILL_LAVA: return face<2 ? 237 : 238;
+    case BETA_BLOCK_FLOWING_WATER: case BETA_BLOCK_STILL_WATER: return face<2 ? 205 : 206;
+    case BETA_BLOCK_REDSTONE_WIRE: return 164;
+    case BETA_BLOCK_STONE: return 1;
+    case BETA_BLOCK_GRASS: return face==1 ? 0 : face==0 ? 2 : 3;
+    case BETA_BLOCK_DIRT: return 2;
+    case BETA_BLOCK_COBBLESTONE: return 16;
+    case BETA_BLOCK_SAND: return 18;
+    case BETA_BLOCK_GRAVEL: return 19;
+    case BETA_BLOCK_GLASS: return 49;
     default:
         return -1;
     }
+}
+
+int beta_render_source_tile(unsigned slot)
+{
+    static const int tiles[]={6,1,2,0,3,18,19,16,21,20,52,-1,49,80,
+        116,117,132,4,64,210,194,178,162,146,130,114,225,209,193,177,161,145,129,113,
+        17,32,33,34,160,144,7,36,37,50,51,72,103,104,105,
+        15,63,79,39,55,56,13,12,29,28,73,5,208,176,192,
+        237,238,14,69,70,71,43,59,60,25,26,27,62,45,44,61,99,115,164,
+        205,206,41,42,57,58};
+    return slot<sizeof(tiles)/sizeof(tiles[0]) ? tiles[slot] : -1;
+}
+unsigned beta_render_tile(int terrain_tile)
+{
+    unsigned i;
+    for (i=0;i<256;++i) if (beta_render_source_tile(i)==terrain_tile) return i;
+    return 1;
 }

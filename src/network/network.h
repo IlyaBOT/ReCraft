@@ -30,7 +30,10 @@ typedef enum NetworkEventType {
     NETWORK_EVENT_ENTITY_MOVE,
     NETWORK_EVENT_ENTITY_DESPAWN,
     NETWORK_EVENT_INVENTORY,
-    NETWORK_EVENT_HEALTH
+    NETWORK_EVENT_HEALTH,
+    NETWORK_EVENT_WINDOW_OPEN,NETWORK_EVENT_WINDOW_CLOSE,NETWORK_EVENT_WINDOW_PROPERTY,
+    NETWORK_EVENT_WINDOW_TRANSACTION,NETWORK_EVENT_WINDOW_SYNC,
+    NETWORK_EVENT_RESPAWN
 } NetworkEventType;
 
 typedef struct NetworkEvent {
@@ -44,6 +47,8 @@ typedef struct NetworkEvent {
     int16_t item_id, item_damage;
     int16_t slot, health;
     uint8_t block_id, metadata, entity_type, item_count;
+    int window_id,window_type,window_slots,property,value,action,accepted;
+    int dimension;
 } NetworkEvent;
 
 typedef void (*NetworkEventFn)(void *user, const NetworkEvent *event);
@@ -65,12 +70,19 @@ int network_send_position(NetworkClient *client, double x, double feet_y,
 int network_send_chat(NetworkClient *client, const char *message);
 /* Current hotbar index (0..8), sent as Beta 14 packet 0x10. */
 int network_send_held_item(NetworkClient *client, int slot);
-/* status: 0=start, 2=finish, 4=drop; face: 0..5. */
+/* status: 0=start, 1=cancel, 2=finish, 4=drop; face: 0..5. */
 int network_mine_block(NetworkClient *client, int status, int x, int y,
                        int z, int face);
 /* item_id=-1 means empty hand; face: 0..5, 255 for air click. */
 int network_place_block(NetworkClient *client, int x, int y, int z, int face,
                         int item_id, int count, int damage);
+int network_click_window(NetworkClient *client,int window,int slot,int button,int action,
+                         int shift,InventorySlot expected);
+int network_close_window(NetworkClient *client,int window);
+int network_confirm_window(NetworkClient *client,int window,int action);
+/* Ask the server to respawn in the current dimension. Completion is a RESPAWN
+ * event followed by server health/position/inventory updates. */
+int network_respawn(NetworkClient *client);
 
 #ifdef __cplusplus
 }

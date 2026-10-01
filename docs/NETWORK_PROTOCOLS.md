@@ -16,13 +16,16 @@ Implemented traffic:
 | --- | --- | --- |
 | Both | `0x00`, `0x02`, `0x01`, `0x03`, `0x0D` | Keepalive, offline handshake, login, chat, position/rotation |
 | Client to server | `0x0E`, `0x0F`, `0x10` | Mining, placement, selected hotbar slot |
+| Both | `0x09`, `0x65`, `0x6A` | Same-dimension respawn, close window, transaction |
+| Client to server | `0x66` | Click Window with expected slot stack and action ID |
 | Server to client | `0x08`, `0x14`-`0x18`, `0x1D`, `0x1F`-`0x22` | Health and basic entity events |
 | Server to client | `0x32`-`0x35`, `0x3C` | Chunk visibility, zlib block regions, block changes, explosions |
-| Server to client | `0x67`, `0x68`, `0xFF` | Slot updates, inventory, disconnect |
+| Server to client | `0x64`, `0x67`-`0x69`, `0xFF` | Open window, slot/inventory updates, furnace progress, disconnect |
 
 Other known protocol 14 packets are framed and skipped when they do not affect
 the current client. The adapter rejects a dimension other than the Overworld and
-does not handle later respawns or online authentication. A number of Beta block
+does not handle dimension changes or online authentication. Same-dimension death
+respawns retain chunks and wait for the server's new player position. A number of Beta block
 IDs have no ReCraft model yet. Their original ID and metadata nibble now stay
 in the chunk; rendering and collision still use solid or hidden placeholders.
 IDs outside the stock 0..96 registry end the connection with an error.
@@ -38,6 +41,10 @@ clientbound `NETWORK_EVENT_POSITION` returns feet Y and Beta degrees. Local
 The reverse conversion applies to a received position. Inventory events carry
 the raw window ID in `entity_type`, raw slot number in `slot`, item ID (`-1`
 means empty), amount, and damage. Window 0 hotbar occupies slots 36-44.
+Player, workbench, chest (27/54) and furnace containers use server slot layouts.
+One click transaction is pending at a time. A rejected transaction is acknowledged,
+and further clicks wait for the server's full Window Items resynchronization.
+Shift-click transfers and the remaining server container types are not implemented.
 
 ## Verification
 
@@ -46,6 +53,8 @@ handshake/login, sends a deterministic protocol 14 session, and checks the
 client's position acknowledgement, keepalive response, selected slot, zlib
 chunk, single and multiple block changes, relighting, and inventory callbacks.
 It checks that a wool ID and its color metadata survive the chunk packet.
+It also checks server chest slots, rejected/accepted window clicks, cursor
+resynchronization, furnace properties and the same-dimension respawn exchange.
 It also checks packet truncation boundaries and rejects an oversized compressed
 chunk length. The test runs with a synthetic server; **native interoperability
 with a Beta 1.7.3 server has not been measured**.

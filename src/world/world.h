@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "beta_blocks.h"
+#include "../game/inventory.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,6 +60,8 @@ const BlockDef *world_block_def(uint8_t id);
 #define CHUNK_DIRTY_SAVE 2u
 #define CHUNK_DIRTY_LIGHT 4u
 #define CHUNK_DIRTY_SMOOTH_MESH 8u
+#define CHUNK_DIRTY_ENTITIES 16u
+#define CHUNK_DIRTY_TICKS 32u
 
 /* x + z * 16 + y * 256. Block bytes use Beta IDs; metadata is a nibble. */
 typedef struct Chunk {
@@ -76,6 +79,12 @@ typedef struct Chunk {
     size_t beta_raw_size;
     size_t beta_offsets[4];  /* Blocks, Data, BlockLight, SkyLight. */
     uint8_t beta_compression;
+    struct BlockEntity *entities;
+    struct SavedEntity *saved_entities;
+    uint8_t entities_modified;
+    struct SavedTick *ticks;
+    uint8_t ticks_modified;
+    uint64_t ticks_saved_at;
 } Chunk;
 
 typedef enum WorldError {
@@ -102,11 +111,16 @@ typedef struct WorldInfo {
 typedef struct WorldPhysicsCell {
     int32_t x, z;
     uint8_t y;
+    uint8_t id;
+    uint16_t hash_slot;
+    uint64_t due,order;
+    struct SavedTick *saved_tick;
 } WorldPhysicsCell;
 
 typedef struct WorldDropEvent {
     int32_t x,z;
-    uint8_t y,id;
+    uint8_t y;
+    int id,count,damage;
 } WorldDropEvent;
 
 typedef struct World {
@@ -137,7 +151,12 @@ typedef struct World {
     WorldError (*read_beta_chunk)(const struct World *, Chunk *);
     WorldError (*write_beta_chunk)(const struct World *, const Chunk *);
     WorldPhysicsCell physics[WORLD_PHYSICS_QUEUE];
-    unsigned physics_head, physics_count;
+    uint16_t physics_hash[WORLD_PHYSICS_QUEUE*2];
+    unsigned physics_count,physics_overflow;
+    uint64_t tick,physics_order,random_seed;
+    uint32_t random_tick;
+    struct { int x,y,z; uint64_t tick; } torch_toggles[128];
+    unsigned torch_toggle_head;
     uint8_t physics_processing;
     WorldDropEvent drops[WORLD_DROP_QUEUE];
     unsigned drop_head,drop_count;
@@ -175,7 +194,15 @@ uint8_t world_get_metadata(World *world, int wx, int y, int wz);
 int world_set_metadata(World *world, int wx, int y, int wz, uint8_t value);
 /* Bounded local block updates; authoritative multiplayer worlds skip these. */
 void world_step_physics(World *world, unsigned max_updates);
+void world_schedule_tick(World *world,int x,int y,int z,uint8_t id,unsigned delay);
+void world_physics_notify(World *world,int x,int y,int z);
+void world_physics_loaded(World *world,Chunk *chunk);
+void world_physics_forget_chunk(World *world,Chunk *chunk);
+void world_redstone_notify(World *world,int x,int y,int z);
+uint8_t world_peek_metadata(const World *world,int x,int y,int z);
+void world_finish_light_updates(World *world);
 int world_take_drop(World *world, WorldDropEvent *drop);
+void world_drop_stack(World *world,int x,int y,int z,InventorySlot item);
 /* Rebuild local sky and block light once after a batch of chunk edits. */
 void world_relight_chunk(World *world, Chunk *chunk);
 

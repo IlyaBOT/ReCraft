@@ -9,7 +9,8 @@ if(NOT DEFINED RUNTIME_DIR OR NOT DEFINED OUTPUT_DIR)
 endif()
 file(MAKE_DIRECTORY "${OUTPUT_DIR}/assets" "${OUTPUT_DIR}/licenses")
 foreach(asset gui/widgets.png gui/background.png gui/icons.png gui/inventory.png
-    gui/items.png gui/panorama.png textures/terrain.png fonts/ascii.png)
+    gui/items.png gui/panorama.png gui/crafting.png gui/furnace.png gui/container.png
+    textures/terrain.png textures/mob/char.png fonts/ascii.png sounds/portal/portal.ogg)
     get_filename_component(directory "${asset}" DIRECTORY)
     file(MAKE_DIRECTORY "${OUTPUT_DIR}/assets/${directory}")
     configure_file("${RUNTIME_DIR}/assets/${asset}" "${OUTPUT_DIR}/assets/${asset}" COPYONLY)

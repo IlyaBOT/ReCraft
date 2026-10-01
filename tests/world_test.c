@@ -120,7 +120,9 @@ int main(void)
     }
     assert(world_set_block(&a,9,64,9,BLOCK_WATER));
     for (i=0;i<32;++i) world_step_physics(&a,64);
-    assert(world_get_block(&a,10,64,9)==BETA_BLOCK_FLOWING_WATER);
+    assert(world_get_block(&a,10,64,9)==BETA_BLOCK_FLOWING_WATER ||
+           world_get_block(&a,10,64,9)==BETA_BLOCK_STILL_WATER);
+    assert(world_get_metadata(&a,10,64,9)==1);
     assert(world_close(&a)==WORLD_OK);
 
     snprintf(dir,sizeof(dir),"build/world-test-%ld-%d",(long)time(NULL),(int)test_pid());

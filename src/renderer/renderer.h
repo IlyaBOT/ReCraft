@@ -10,6 +10,7 @@ extern "C" {
 
 /* Call after InitWindow(), while the OpenGL context is current. */
 typedef struct Renderer Renderer;
+void renderer_animate(Renderer *renderer,uint64_t tick);
 
 typedef enum RendererVboMode {
     RENDERER_VBO_AUTO = 0,

@@ -79,7 +79,30 @@ int main(int argc, char **argv)
     assert(beta_source_tile(0)==6 && beta_source_tile(60)==5 &&
            beta_source_tile(61)==208 && beta_source_tile(62)==176 &&
            beta_source_tile(63)==192);
-    assert(atlas_upload_bytes()==1398100u);
+    assert(atlas_upload_bytes()==5592404u);
+    /* UV phase and texel density cannot change when an edit splits a greedy
+     * face. One block must span exactly 16 texels at every rectangle width. */
+    for(x=1;x<=4;++x) {
+        int16_t start=texcoord(4,0,0,x),end=texcoord(4,1,0,x);
+        float per_block=(end-start)*(float)ATLAS_PIXELS/32767/x;
+        assert(fabsf(per_block-16)<.04f);
+        assert(start==texcoord(4,0,0,1));
+    }
+    {
+        World water; Chunk *a,*b; ChunkMesh *ma=(ChunkMesh *)calloc(1,sizeof(*ma)),*mb=(ChunkMesh *)calloc(1,sizeof(*mb));
+        assert(ma && mb && world_init(&water,1,1,4)==WORLD_OK);
+        a=world_get_chunk(&water,0,0); b=world_get_chunk(&water,1,0);
+        chunk_set_block(a,15,64,8,8); chunk_set_metadata(a,15,64,8,0);
+        chunk_set_block(b,0,64,8,8); chunk_set_metadata(b,0,64,8,1);
+        emit_liquid(&basic,&water,ma,a,15,64,8,8); emit_liquid(&basic,&water,mb,b,0,64,8,8);
+        assert(ma->layers[2].vertex_count==16 && mb->layers[2].vertex_count==16); /* three sides + top */
+        {
+            const VoxelVertex *left=ma->layers[2].vertices+12,*right=mb->layers[2].vertices+12;
+            assert(left[3].y==right[0].y && left[2].y==right[1].y);
+            assert(left[0].y!=left[3].y); /* actual slope rather than one height per voxel */
+        }
+        chunk_mesh_destroy(ma); chunk_mesh_destroy(mb); assert(world_close(&water)==WORLD_OK);
+    }
     memset(chunk->blocks, 0, sizeof(chunk->blocks));
     memset(chunk->sky_light, 255, sizeof(chunk->sky_light));
     for (y = 0; y < 16; ++y)
@@ -101,11 +124,11 @@ int main(int argc, char **argv)
         const VoxelVertex *v = greedy->layers[0].vertices + i;
         float du = fabsf((float)v[0].u - (float)v[2].u) * ATLAS_PIXELS / 32767.0f;
         float dv = fabsf((float)v[0].v - (float)v[2].v) * ATLAS_PIXELS / 32767.0f;
-        assert(fabsf(du - 63.0f) < 0.03f && fabsf(dv - 63.0f) < 0.03f);
+        assert(fabsf(du - 64.0f) < 0.04f && fabsf(dv - 64.0f) < 0.04f);
         for (x = 0; x < 4; ++x) {
-            assert(v[x].x >= 0 && v[x].x <= 16 * 16);
-            assert(v[x].y >= 0 && v[x].y <= 16 * 16);
-            assert(v[x].z >= 0 && v[x].z <= 16 * 16);
+            assert(v[x].x >= 0 && v[x].x <= 16 * VERTEX_COORD_SCALE);
+            assert(v[x].y >= 0 && v[x].y <= 16 * VERTEX_COORD_SCALE);
+            assert(v[x].z >= 0 && v[x].z <= 16 * VERTEX_COORD_SCALE);
         }
     }
     chunk_mesh_destroy(greedy);
@@ -137,8 +160,8 @@ int main(int argc, char **argv)
     assert(greedy && greedy->layers[1].vertex_count==16u);
     assert(greedy->layers[0].vertex_count==96u*4u);
     for (i=0; i<(int)greedy->layers[1].vertex_count; ++i)
-        assert(greedy->layers[1].vertices[i].y>=16*16 &&
-               greedy->layers[1].vertices[i].y<=16*16+13);
+        assert(greedy->layers[1].vertices[i].y>=16*128 &&
+               greedy->layers[1].vertices[i].y<=16*128+102);
     chunk_mesh_destroy(greedy);
     chunk_set_metadata(chunk, 0, 16, 0, 2);
     assert(cross_slot(BETA_BLOCK_SAPLING,2)==51u);
@@ -159,18 +182,18 @@ int main(int argc, char **argv)
             for(j=0;j<4;++j) {
                 if(vertices[j].y<min_y) min_y=vertices[j].y;
                 if(vertices[j].y>max_y) max_y=vertices[j].y;
-                if(vertices[j].x!=5*16) on_x5=0;
+                if(vertices[j].x!=5*128) on_x5=0;
             }
-            if(on_x5 && min_y==16*16+8 && max_y==17*16) ++upper_neighbor_faces;
-            if(min_y==16*16+8 && max_y==min_y) ++slab_top_faces;
+            if(on_x5 && min_y==16*128+64 && max_y==17*128) ++upper_neighbor_faces;
+            if(min_y==16*128+64 && max_y==min_y) ++slab_top_faces;
         }
         assert(upper_neighbor_faces==1 && slab_top_faces==1);
     }
     chunk_mesh_destroy(greedy);
     {
         static const uint8_t orientations[3]={1,2,5};
-        static const int min_x_bounds[3]={64,75,71};
-        static const int max_x_bounds[3]={69,80,73};
+        static const int min_x_bounds[3]={514,603,568};
+        static const int max_x_bounds[3]={549,638,584};
         int orientation;
         for(orientation=0;orientation<3;++orientation) {
             ChunkMesh torch_mesh={0};
@@ -186,8 +209,8 @@ int main(int argc, char **argv)
             }
             assert(min_x==min_x_bounds[orientation]);
             assert(max_x==max_x_bounds[orientation]);
-            assert(min_y==(orientations[orientation]==5 ? 256 : 259));
-            assert(max_y==(orientations[orientation]==5 ? 266 : 269));
+            assert(min_y==(orientations[orientation]==5 ? 2048 : 2074));
+            assert(max_y==(orientations[orientation]==5 ? 2125 : 2150));
             free(torch_mesh.layers[1].vertices);
         }
     }

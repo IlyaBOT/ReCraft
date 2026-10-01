@@ -40,6 +40,13 @@ int beta_block_state_valid(BetaBlockState state);
  * Face numbering follows Beta: 0 bottom, 1 top, 2..5 sides. Returns -1 when
  * this stage has not verified the block's texture selection. */
 int beta_block_terrain_tile(BetaBlockState state, unsigned face);
+/* Stable compact atlas slots shared by all chunk meshing paths. */
+int beta_render_source_tile(unsigned slot);
+unsigned beta_render_tile(int terrain_tile);
+int beta_material_solid(unsigned id);
+int beta_material_blocks_flow(unsigned id);
+int beta_material_burns(unsigned id);
+int beta_material_wood(unsigned id);
 /* Exact crossed-plane plant family audited for this renderer stage. */
 int beta_block_cross_plant(unsigned id);
 /* Audited selection bounds for crossed plants, torches and the half slab.

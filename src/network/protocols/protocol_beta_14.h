@@ -38,5 +38,7 @@ size_t beta14_mine(uint8_t *out, size_t capacity, int status, int x, int y,
                    int z, int face);
 size_t beta14_place(uint8_t *out, size_t capacity, int x, int y, int z,
                     int face, int item_id, int count, int damage);
+size_t beta14_window_click(uint8_t *out,size_t capacity,int window,int slot,int button,
+                           int action,int shift,int item,int count,int damage);
 
 #endif

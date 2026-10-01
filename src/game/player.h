@@ -11,6 +11,8 @@ typedef struct Player {
     int flying;
     int creative;
     int selected_slot;
+    int health,air,fire,hurt_ticks,last_damage;
+    float fall_distance;
 } Player;
 
 typedef struct PlayerInput {
@@ -32,7 +34,10 @@ typedef struct BlockHit {
 
 void player_spawn(Player *player, World *world, int creative);
 void player_tick(Player *player, World *world, const PlayerInput *input, float dt);
+void player_damage(Player *player,int amount);
 BlockHit player_raycast(const Player *player, World *world, float reach);
+BlockHit player_raycast_sources(const Player *player,World *world,float reach);
+int player_use_item(Player *player,World *world,InventorySlot *item);
 int player_break_block(Player *player, World *world);
 /* Local placement with an explicit Beta metadata nibble. */
 int player_place_block_state(Player *player, World *world, BetaBlockState state);

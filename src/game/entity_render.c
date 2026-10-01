@@ -1,6 +1,8 @@
 #include "entity_render.h"
 #include "../assets/assets.h"
 #include "../world/beta_blocks.h"
+#include "creative.h"
+#include "player.h"
 
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
@@ -20,146 +22,207 @@ static void box(float x, float y, float z, float half, float height)
     glVertex3f(a,y,d); glVertex3f(b,y,d); glVertex3f(b,y,c); glVertex3f(a,y,c);
 }
 
-int entity_render_draw(const RenderEntity *entities, int count,
-                       const RendererCamera *camera, int width, int height,
-                       int render_distance_chunks)
+static GLint scene_begin(const RendererCamera *camera,int width,int height,float far_plane)
 {
-    GLint old_mode;
-    float fov, top, aspect, far_plane, sy, cy, sp, cp, far2;
-    int i, rendered=0;
-    if (!entities || count<=0 || !camera || width<=0 || height<=0) return 0;
-    fov=camera->fov_y;
-    if (fov<30) fov=30;
-    if (fov>110) fov=110;
-    aspect=(float)width/height;
-    top=0.05f*tanf(fov*0.00872664625997f);
-    far_plane=(float)(render_distance_chunks*WORLD_CHUNK_SIZE+32);
-    far2=far_plane*far_plane;
-    sy=sinf(camera->yaw); cy=cosf(camera->yaw);
-    sp=sinf(camera->pitch); cp=cosf(camera->pitch);
-    glGetIntegerv(GL_MATRIX_MODE,&old_mode);
-    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    GLint mode; float top=.05f*tanf(camera->fov_y*.00872664625997f),aspect=(float)width/height;
+    glGetIntegerv(GL_MATRIX_MODE,&mode); glPushAttrib(GL_ALL_ATTRIB_BITS);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
-    glFrustum(-top*aspect,top*aspect,-top,top,0.05,far_plane);
+    glFrustum(-top*aspect,top*aspect,-top,top,.05,far_plane);
     glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
-    glRotatef(-camera->pitch*57.2957795131f,1,0,0);
-    glRotatef(camera->yaw*57.2957795131f,0,1,0);
-    glTranslatef(-camera->x,-camera->y,-camera->z);
-    glViewport(0,0,width,height);
-    glDisable(GL_TEXTURE_2D); glDisable(GL_LIGHTING); glDisable(GL_FOG);
-    glDisable(GL_ALPHA_TEST); glDisable(GL_BLEND); glDisable(GL_CULL_FACE);
+    glRotatef(-camera->pitch*57.2957795131f,1,0,0); glRotatef(camera->yaw*57.2957795131f,0,1,0);
+    glTranslatef(-camera->x,-camera->y,-camera->z); glViewport(0,0,width,height);
+    glDisable(GL_LIGHTING); glDisable(GL_FOG); glDisable(GL_BLEND); glDisable(GL_CULL_FACE);
+    glEnable(GL_TEXTURE_2D); glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_GREATER,.1f);
     glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthMask(GL_TRUE);
-    glBegin(GL_QUADS);
-    for (i=0; i<count; ++i) {
-        const RenderEntity *entity=&entities[i];
-        float dx,dy,dz,forward;
-        if (rendered >= 64) break;
-        if (!entity->active) continue;
-        dx=entity->x-camera->x; dy=entity->y-camera->y; dz=entity->z-camera->z;
-        if (dx*dx+dy*dy+dz*dz>far2) continue;
-        forward=dx*sy*cp+dy*sp-dz*cy*cp;
-        if (forward < -2.0f) continue;
-        if (entity->type==0) glColor3ub(77,111,163);     /* player */
-        else if (entity->type==50 || entity->type==54) glColor3ub(84,133,72);
-        else glColor3ub(143,126,91);
-        box(entity->x,entity->y,entity->z,0.27f,1.25f);
-        glColor3ub(190,173,141);
-        box(entity->x,entity->y+1.25f,entity->z,0.22f,0.48f);
-        ++rendered;
+    return mode;
+}
+static void scene_end(GLint mode)
+{ glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(mode); glPopAttrib(); }
+
+/* The six face rectangles follow Beta ModelRenderer's 64x32 skin layout. */
+static void skin_box(float x,float y,float z,int w,int h,int d,int u,int v,int mirror)
+{
+    const float p[8][3]={{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
+        {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
+    static const int face[6][4]={{5,1,2,6},{0,4,7,3},{5,4,0,1},{2,3,7,6},{1,0,3,2},{4,5,6,7}};
+    const int uv[6][4]={{u+d+w,v+d,u+d+w+d,v+d+h},{u,v+d,u+d,v+d+h},
+        {u+d,v,u+d+w,v+d},{u+d+w,v,u+d+w+w,v+d},{u+d,v+d,u+d+w,v+d+h},
+        {u+d+w+d,v+d,u+d+w+d+w,v+d+h}};
+    int f,i; glBegin(GL_QUADS);
+    for(f=0;f<6;++f) for(i=0;i<4;++i) {
+        int c=mirror ? 3-i : i;
+        float a=(float)uv[f][(c==0 || c==3) ? 2 : 0]/64;
+        float b=(float)uv[f][c<2 ? 1 : 3]/32;
+        glTexCoord2f(a,b); glVertex3fv(p[face[f][i]]);
     }
     glEnd();
-    glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix();
-    glMatrixMode(old_mode); glPopAttrib();
-    return rendered;
 }
-
-static int drop_tile(int id)
+static void limb(float x,float y,float angle,int arm,int mirror)
 {
-    BetaBlockState state;
-    int tile;
-    switch (id) {
-    case BETA_BLOCK_STONE: return 1;
-    case BETA_BLOCK_DIRT: return 2;
-    case BETA_BLOCK_GRASS: return 0;
-    case BETA_BLOCK_SAND: return 18;
-    case BETA_BLOCK_COBBLESTONE: return 16;
-    case BETA_BLOCK_LOG: return 20;
-    case BETA_BLOCK_LEAVES: return 52;
-    case BETA_BLOCK_GLASS: return 49;
-    default: break;
+    glPushMatrix(); glTranslatef(x,y,0); glRotatef(angle,1,0,0);
+    skin_box(arm ? (mirror ? -1 : -3) : -2,arm ? -2 : 0,-2,4,12,4,arm ? 40 : 0,16,mirror);
+    glPopMatrix();
+}
+static void player_model(const RenderEntity *e)
+{
+    float angle=sinf(e->walk)*32;
+    glPushMatrix(); glTranslatef(e->draw_x,e->draw_y+1.40625f,e->draw_z);
+    glRotatef(180-e->yaw,0,1,0); glScalef(.05859375f,-.05859375f,.05859375f);
+    glColor3ub(255,255,255);
+    skin_box(-4,0,-2,8,12,4,16,16,0);
+    glPushMatrix(); glRotatef(e->pitch,1,0,0); skin_box(-4,-8,-4,8,8,8,0,0,0); glPopMatrix();
+    limb(-5,2,angle,1,0); limb(5,2,-angle,1,1);
+    limb(-2,12,-angle,0,0); limb(2,12,angle,0,1); glPopMatrix();
+}
+int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *camera,
+                       int width,int height,int distance,float dt)
+{
+    GLint mode; int i,rendered=0; float far_plane=(float)(distance*16+32),far2=far_plane*far_plane;
+    Texture2D skin;
+    if (!entities || count<=0 || !camera || width<=0 || height<=0) return 0;
+    /* No GL state queries or texture upload when no tracked entities exist. */
+    for (i=0;i<count && !entities[i].active;++i) { }
+    if (i==count) return 0;
+    skin=assets_get_texture(ASSET_PLAYER_SKIN); mode=scene_begin(camera,width,height,far_plane);
+    for (i=0;i<count && rendered<64;++i) {
+        RenderEntity *e=&entities[i]; float dx,dy,dz,a=dt*10,move;
+        if (!e->active) continue;
+        dx=e->x-e->draw_x; dy=e->y-e->draw_y; dz=e->z-e->draw_z;
+        if (!e->positioned || dx*dx+dy*dy+dz*dz>64) { e->draw_x=e->x; e->draw_y=e->y; e->draw_z=e->z; e->positioned=1; }
+        else {
+            if(a>1) a=1;
+            if(a<0) a=0;
+            move=sqrtf(dx*dx+dz*dz)*a;
+            e->draw_x+=dx*a; e->draw_y+=dy*a; e->draw_z+=dz*a; e->walk+=move*6;
+        }
+        dx=e->draw_x-camera->x; dy=e->draw_y-camera->y; dz=e->draw_z-camera->z;
+        if(dx*dx+dy*dy+dz*dz>far2) continue;
+        if(e->type==0) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,skin.id); player_model(e); }
+        else {
+            glDisable(GL_TEXTURE_2D); glColor3ub(84,133,72); glBegin(GL_QUADS);
+            box(e->draw_x,e->draw_y,e->draw_z,.27f,1.25f); box(e->draw_x,e->draw_y+1.25f,e->draw_z,.22f,.48f);
+            glEnd();
+        }
+        ++rendered;
     }
-    state.id=(uint8_t)id; state.metadata=0;
-    tile=beta_block_terrain_tile(state,2);
-    return tile>=0 ? tile : 1;
+    scene_end(mode); return rendered;
 }
 
-static void drop_face(float u0,float v0,float u1,float v1,
-                      const float p[4][3],unsigned char shade)
-{
-    glColor3ub(shade,shade,shade);
-    glTexCoord2f(u0,v0); glVertex3fv(p[0]);
-    glTexCoord2f(u1,v0); glVertex3fv(p[1]);
-    glTexCoord2f(u1,v1); glVertex3fv(p[2]);
-    glTexCoord2f(u0,v1); glVertex3fv(p[3]);
-}
+static void held_cube(const InventorySlot *item);
+static void held_sprite(int tile,int block);
 
 int item_drop_draw(const ItemDrop *drops,int count,const RendererCamera *camera,
                    int width,int height,int render_distance_chunks)
 {
-    static const float faces[6][4][3]={
-        {{-.2f,0,-.2f},{.2f,0,-.2f},{.2f,.4f,-.2f},{-.2f,.4f,-.2f}},
-        {{.2f,0,.2f},{-.2f,0,.2f},{-.2f,.4f,.2f},{.2f,.4f,.2f}},
-        {{-.2f,0,.2f},{-.2f,0,-.2f},{-.2f,.4f,-.2f},{-.2f,.4f,.2f}},
-        {{.2f,0,-.2f},{.2f,0,.2f},{.2f,.4f,.2f},{.2f,.4f,-.2f}},
-        {{-.2f,.4f,-.2f},{.2f,.4f,-.2f},{.2f,.4f,.2f},{-.2f,.4f,.2f}},
-        {{-.2f,0,.2f},{.2f,0,.2f},{.2f,0,-.2f},{-.2f,0,-.2f}}
-    };
-    Texture2D terrain;
-    GLint old_mode;
-    float top,aspect,far_plane,far2;
+    GLint mode;
+    float far_plane=(float)(render_distance_chunks*WORLD_CHUNK_SIZE+32),far2=far_plane*far_plane;
     int i,drawn=0;
     if (!drops || !camera || count<=0 || width<=0 || height<=0) return 0;
-    terrain=assets_get_texture(ASSET_TERRAIN);
-    top=0.05f*tanf(camera->fov_y*0.00872664625997f);
-    aspect=(float)width/height;
-    far_plane=(float)(render_distance_chunks*WORLD_CHUNK_SIZE+32);
-    far2=far_plane*far_plane;
-    glGetIntegerv(GL_MATRIX_MODE,&old_mode);
-    glPushAttrib(GL_ALL_ATTRIB_BITS);
-    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
-    glFrustum(-top*aspect,top*aspect,-top,top,0.05,far_plane);
-    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
-    glRotatef(-camera->pitch*57.2957795131f,1,0,0);
-    glRotatef(camera->yaw*57.2957795131f,0,1,0);
-    glTranslatef(-camera->x,-camera->y,-camera->z);
-    glViewport(0,0,width,height);
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D,terrain.id);
-    glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_GREATER,0.5f);
-    glEnable(GL_DEPTH_TEST); glDepthMask(GL_TRUE);
-    glDisable(GL_CULL_FACE);
+    for(i=0;i<count && !drops[i].active;++i) { }
+    if(i==count) return 0;
+    mode=scene_begin(camera,width,height,far_plane);
     for (i=0;i<count;++i) if (drops[i].active) {
-        float dx=drops[i].x-camera->x,dy=drops[i].y-camera->y,
-              dz=drops[i].z-camera->z;
-        int tile,face;
-        float u0,u1,v0,v1;
+        const ItemDrop *d=&drops[i];
+        InventorySlot item={d->id,d->count,d->damage};
+        float dx=d->x-camera->x,dy=d->y-camera->y,dz=d->z-camera->z;
+        int n,copies=d->count>20 ? 4 : d->count>5 ? 3 : d->count>1 ? 2 : 1;
+        int block=d->id>0 && d->id<BETA_BLOCK_COUNT;
+        int cube=block && world_block_def((uint8_t)d->id)->solid;
         if (dx*dx+dy*dy+dz*dz>far2) continue;
-        tile=drop_tile(drops[i].id);
-        u0=((tile%16)*16+0.5f)/256.0f;
-        u1=((tile%16)*16+15.5f)/256.0f;
-        v0=((tile/16)*16+0.5f)/256.0f;
-        v1=((tile/16)*16+15.5f)/256.0f;
         glPushMatrix();
-        glTranslatef(drops[i].x,drops[i].y,drops[i].z);
-        glRotatef(drops[i].age*85.0f,0,1,0);
-        glBegin(GL_QUADS);
-        for (face=0;face<6;++face)
-            drop_face(u0,v0,u1,v1,faces[face],face==4 ? 255 : face==5 ? 140 : 195);
-        glEnd();
-        glPopMatrix();
-        ++drawn;
+        glTranslatef(d->x,d->y+.15f+sinf(d->age*2)*.05f,d->z);
+        glRotatef(cube ? d->age*57.2957795f : -camera->yaw*57.2957795f,0,1,0);
+        glScalef(cube ? .25f : .5f,cube ? .25f : .5f,cube ? .25f : .5f);
+        for(n=0;n<copies;++n) {
+            glPushMatrix();
+            if(n) glTranslatef((n&1 ? .13f : -.13f),n*.06f,(n&2 ? .13f : -.13f));
+            if(cube) held_cube(&item);
+            else {
+                int tile=block ? beta_block_terrain_tile((BetaBlockState){(uint8_t)d->id,(uint8_t)d->damage},2) : beta_item_tile(d->id,d->damage);
+                if(tile>=0) held_sprite(tile,block);
+            }
+            glPopMatrix();
+        }
+        glPopMatrix(); ++drawn;
     }
-    glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix();
-    glMatrixMode(old_mode); glPopAttrib();
-    return drawn;
+    scene_end(mode); return drawn;
+}
+
+static void held_cube(const InventorySlot *item)
+{
+    static const int faces[6][4]={{4,5,1,0},{3,2,6,7},{1,5,6,2},{4,0,3,7},{0,1,2,3},{5,4,7,6}};
+    static const float points[8][3]={{-.5f,-.5f,-.5f},{.5f,-.5f,-.5f},{.5f,.5f,-.5f},{-.5f,.5f,-.5f},
+        {-.5f,-.5f,.5f},{.5f,-.5f,.5f},{.5f,.5f,.5f},{-.5f,.5f,.5f}};
+    int f,c; Texture2D terrain=assets_get_texture(ASSET_TERRAIN);
+    glBindTexture(GL_TEXTURE_2D,terrain.id); glBegin(GL_QUADS);
+    for (f=0;f<6;++f) {
+        int tile=beta_block_terrain_tile((BetaBlockState){(uint8_t)item->id,(uint8_t)item->damage},(unsigned)f);
+        float u0,u1,v0,v1; if(tile<0) tile=1;
+        u0=((tile%16)*16+.01f)/256; u1=((tile%16)*16+15.99f)/256;
+        v0=((tile/16)*16+.01f)/256; v1=((tile/16)*16+15.99f)/256;
+        if (tile==0 || tile==52 || tile==132) glColor3ub(116,174,73); else glColor3ub(255,255,255);
+        for(c=0;c<4;++c) {
+            glTexCoord2f(c==0 || c==3 ? u0 : u1,c<2 ? v1 : v0); glVertex3fv(points[faces[f][c]]);
+        }
+    }
+    glEnd();
+}
+static void held_sprite(int tile,int block)
+{
+    Texture2D image=assets_get_texture(block ? ASSET_TERRAIN : ASSET_GUI_ITEMS);
+    float u0=((tile%16)*16+.01f)/256,u1=((tile%16)*16+15.99f)/256;
+    float v0=((tile/16)*16+.01f)/256,v1=((tile/16)*16+15.99f)/256;
+    glBindTexture(GL_TEXTURE_2D,image.id); glColor3ub(255,255,255);
+    glBegin(GL_QUADS);
+    glTexCoord2f(u0,v1); glVertex3f(-.5f,-.5f,0); glTexCoord2f(u1,v1); glVertex3f(.5f,-.5f,0);
+    glTexCoord2f(u1,v0); glVertex3f(.5f,.5f,0); glTexCoord2f(u0,v0); glVertex3f(-.5f,.5f,0);
+    glEnd();
+}
+void first_person_draw(const InventorySlot *item,int width,int height,float swing,int hurt)
+{
+    RendererCamera camera={0}; GLint mode; float arc;
+    if(width<=0 || height<=0) return;
+    camera.fov_y=70; mode=scene_begin(&camera,width,height,10);
+    glDepthRange(0,.1); /* Keep the hand close in depth without clearing terrain. */
+    if (swing<0) swing=0;
+    if(swing>1) swing=1;
+    arc=sinf(sqrtf(swing)*3.14159265f);
+    glTranslatef(.65f-arc*.25f,-.55f+sinf(swing*3.14159265f)*.12f,-1.05f);
+    glRotatef(-arc*55,0,1,0); glRotatef(arc*35,1,0,0);
+    if(hurt>0) glRotatef(sinf(hurt*.3f)*8,0,0,1);
+    glPushMatrix(); glTranslatef(.15f,-.28f,.1f); glRotatef(-25,0,0,1); glRotatef(-60,1,0,0);
+    glScalef(.047f,-.047f,.047f); glBindTexture(GL_TEXTURE_2D,assets_get_texture(ASSET_PLAYER_SKIN).id);
+    glColor3ub(255,255,255); skin_box(-2,-3,-2,4,12,4,40,16,0); glPopMatrix();
+    if(item && item->id>0 && item->count>0) {
+        glTranslatef(-.06f,.12f,-.12f);
+        if(item->id<97 && !beta_block_cross_plant(item->id) && item->id!=50 && item->id!=75 && item->id!=76 && item->id!=55) {
+            glRotatef(25,1,0,0); glRotatef(-35,0,1,0); glScalef(.38f,.38f,.38f); held_cube(item);
+        } else {
+            int tile=item->id<97 ? beta_block_terrain_tile((BetaBlockState){(uint8_t)item->id,(uint8_t)item->damage},2) : beta_item_tile(item->id,item->damage);
+            if(tile>=0) { glRotatef(-25,0,0,1); glRotatef(15,0,1,0); glScalef(.65f,.65f,.65f); held_sprite(tile,item->id<97); }
+        }
+    }
+    scene_end(mode);
+}
+void mining_cracks_draw(const RendererCamera *camera,int width,int height,
+                        int x,int y,int z,BetaBlockState state,float progress)
+{
+    GLint mode; BetaBlockBox b; int stage=(int)(progress*10),f;
+    float u0,u1,v0,v1;
+    static const int faces[6][4]={{0,1,2,3},{5,4,7,6},{4,0,3,7},{1,5,6,2},{3,2,6,7},{4,5,1,0}};
+    float p[8][3];
+    if(progress<=0 || width<=0 || height<=0) return;
+    if(stage>9) stage=9;
+    if(!beta_block_selection_box(state,&b)) { b.min_x=b.min_y=b.min_z=0; b.max_x=b.max_y=b.max_z=1; }
+    for(f=0;f<8;++f) {
+        p[f][0]=x+((f==1 || f==2 || f==5 || f==6) ? b.max_x : b.min_x);
+        p[f][1]=y+((f==2 || f==3 || f==6 || f==7) ? b.max_y : b.min_y);
+        p[f][2]=z+(f>=4 ? b.max_z : b.min_z);
+    }
+    u0=(stage*16+.01f)/256; u1=(stage*16+15.99f)/256; v0=240.01f/256; v1=255.99f/256;
+    mode=scene_begin(camera,width,height,256); glBindTexture(GL_TEXTURE_2D,assets_get_texture(ASSET_TERRAIN).id);
+    glEnable(GL_BLEND); glBlendFunc(GL_DST_COLOR,GL_SRC_COLOR); glColor4f(1,1,1,.5f);
+    glDepthMask(GL_FALSE); glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(-1,-1); glBegin(GL_QUADS);
+    for(f=0;f<6;++f) { int i; for(i=0;i<4;++i) { glTexCoord2f(i==0 || i==3 ? u0 : u1,i<2 ? v1 : v0); glVertex3fv(p[faces[f][i]]); } }
+    glEnd(); scene_end(mode);
 }

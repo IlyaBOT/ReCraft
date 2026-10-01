@@ -31,6 +31,8 @@ typedef struct Capture {
     unsigned preserved;
     int data,player,inventory,item,slot;
     int has_player,has_position,has_rotation,has_inventory,has_time;
+    int has_motion,has_health,has_air,has_fire;
+    int has_ground,has_fall;
     int failed;
 } Capture;
 
@@ -70,6 +72,17 @@ static int capture_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned d
             capture->inventory=1;
             capture->has_inventory=1;
         }
+        else if (named(tag,"Motion") && tag->list_type==NBT_DOUBLE && tag->count==3)
+            capture->has_motion=1;
+    }
+    if (capture->player && event==NBT_VALUE && depth==3 && tag->type==NBT_SHORT) {
+        if (named(tag,"Health")) capture->has_health=1;
+        if (named(tag,"Air")) capture->has_air=1;
+        if (named(tag,"Fire")) capture->has_fire=1;
+    }
+    if (capture->player && event==NBT_VALUE && depth==3) {
+        if (tag->type==NBT_BYTE && named(tag,"OnGround")) capture->has_ground=1;
+        if (tag->type==NBT_FLOAT && named(tag,"FallDistance")) capture->has_fall=1;
     }
     if (capture->inventory && event==NBT_BEGIN && depth==4 && tag->type==NBT_COMPOUND) {
         capture->item=1;
@@ -128,14 +141,61 @@ static NbtResult emit_item(NbtWriter *writer,int slot,const InventorySlot *item)
     return nbt_writer_end(writer);
 }
 
+static int emit_scalar(NbtWriter *w,NbtType type,const char *name,int64_t value)
+{
+    NbtTag tag; memset(&tag,0,sizeof(tag)); tag.type=type; tag.name=nbt_span(name);
+    if (type==NBT_SHORT) tag.value.short_value=(int16_t)value;
+    else if (type==NBT_BYTE) tag.value.byte=(int8_t)value;
+    else if (type==NBT_FLOAT) tag.value.float_value=(float)value;
+    else if (type==NBT_INT) tag.value.int_value=(int32_t)value;
+    else if (type==NBT_LONG) tag.value.long_value=value;
+    return nbt_writer_tag(w,&tag)==NBT_OK;
+}
+static int emit_numbers(NbtWriter *w,const char *name,const double *values,unsigned count,int angles)
+{
+    NbtTag tag; unsigned i;
+    memset(&tag,0,sizeof(tag)); tag.type=NBT_LIST; tag.name=nbt_span(name);
+    tag.list_type=angles ? NBT_FLOAT : NBT_DOUBLE; tag.count=count;
+    if (nbt_writer_tag(w,&tag)!=NBT_OK) return 0;
+    memset(&tag,0,sizeof(tag)); tag.type=angles ? NBT_FLOAT : NBT_DOUBLE;
+    for (i=0;i<count;++i) {
+        if (angles) tag.value.float_value=(float)values[i]; else tag.value.double_value=values[i];
+        if (nbt_writer_tag(w,&tag)!=NBT_OK) return 0;
+    }
+    return nbt_writer_end(w)==NBT_OK;
+}
+static int emit_missing_player(Rewrite *r)
+{
+    const BetaLevelState *s=r->state; const Capture *c=r->capture;
+    double position[3]={s->x,s->y,s->z},motion[3]={s->motion_x,s->motion_y,s->motion_z},angle[2]={s->yaw,s->pitch};
+    NbtWriter *w=&r->writer; NbtTag tag; unsigned i,count=0;
+    if (!c->has_position && !emit_numbers(w,"Pos",position,3,0)) return 0;
+    if (!c->has_motion && !emit_numbers(w,"Motion",motion,3,0)) return 0;
+    if (!c->has_rotation && !emit_numbers(w,"Rotation",angle,2,1)) return 0;
+    if (!c->has_inventory) {
+        for (i=0;i<36;++i) if (s->inventory[i].id>0 && s->inventory[i].count>0) ++count;
+        memset(&tag,0,sizeof(tag)); tag.type=NBT_LIST; tag.name=nbt_span("Inventory");
+        tag.list_type=NBT_COMPOUND; tag.count=count;
+        if (nbt_writer_tag(w,&tag)!=NBT_OK) return 0;
+        for (i=0;i<36;++i) if (s->inventory[i].id>0 && s->inventory[i].count>0 && emit_item(w,(int)i,&s->inventory[i])!=NBT_OK) return 0;
+        if (nbt_writer_end(w)!=NBT_OK) return 0;
+    }
+    if (!c->has_health && !emit_scalar(w,NBT_SHORT,"Health",s->has_vitals ? s->health : 20)) return 0;
+    if (!c->has_air && !emit_scalar(w,NBT_SHORT,"Air",s->has_vitals ? s->air : 300)) return 0;
+    if (!c->has_fire && !emit_scalar(w,NBT_SHORT,"Fire",s->has_vitals ? s->fire : 0)) return 0;
+    if (!c->has_ground && !emit_scalar(w,NBT_BYTE,"OnGround",s->on_ground!=0)) return 0;
+    if (!c->has_fall && !emit_scalar(w,NBT_FLOAT,"FallDistance",0)) return 0;
+    if (!c->has_player && !emit_scalar(w,NBT_INT,"Dimension",0)) return 0;
+    return 1;
+}
 static int rewrite_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned depth)
 {
     Rewrite *rewrite=(Rewrite *)context;
     NbtWriter *writer=&rewrite->writer;
     NbtTag changed=*tag;
     unsigned i,j;
-    if (depth==1 && tag->type==NBT_COMPOUND && named(tag,"Data"))
-        rewrite->data=event==NBT_BEGIN;
+    if (depth==1 && event==NBT_BEGIN && tag->type==NBT_COMPOUND && named(tag,"Data"))
+        rewrite->data=1;
     if (!rewrite->data)
         return (event==NBT_FINISH ? nbt_writer_end(writer) :
                 nbt_writer_tag(writer,tag))==NBT_OK;
@@ -193,14 +253,29 @@ static int rewrite_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned d
             named(tag,"OnGround")) changed.value.byte=(int8_t)(rewrite->state->on_ground!=0);
         if (rewrite->player && depth==3 && tag->type==NBT_FLOAT &&
             named(tag,"FallDistance")) changed.value.float_value=0.0f;
+        if (rewrite->state->has_vitals && rewrite->player && depth==3 && tag->type==NBT_SHORT) {
+            if (named(tag,"Health")) changed.value.short_value=(int16_t)rewrite->state->health;
+            if (named(tag,"Air")) changed.value.short_value=(int16_t)rewrite->state->air;
+            if (named(tag,"Fire")) changed.value.short_value=(int16_t)rewrite->state->fire;
+        }
     }
     if (event==NBT_FINISH && depth==3 && tag->type==NBT_LIST) {
         if (named(tag,"Pos")) rewrite->position=0;
         if (named(tag,"Motion")) rewrite->motion=0;
         if (named(tag,"Rotation")) rewrite->rotation=0;
     }
-    if (event==NBT_FINISH && depth==2 && tag->type==NBT_COMPOUND && named(tag,"Player"))
+    if (event==NBT_FINISH && depth==2 && tag->type==NBT_COMPOUND && named(tag,"Player")) {
+        if (!emit_missing_player(rewrite)) return 0;
         rewrite->player=0;
+    }
+    if (event==NBT_FINISH && depth==1 && tag->type==NBT_COMPOUND && named(tag,"Data")) {
+        if (!rewrite->capture->has_player) {
+            NbtTag player; memset(&player,0,sizeof(player)); player.type=NBT_COMPOUND; player.name=nbt_span("Player");
+            if (nbt_writer_tag(writer,&player)!=NBT_OK || !emit_missing_player(rewrite) || nbt_writer_end(writer)!=NBT_OK) return 0;
+        }
+        if (!rewrite->capture->has_time && !emit_scalar(writer,NBT_LONG,"Time",rewrite->state->world_time)) return 0;
+        rewrite->data=0;
+    }
     return (event==NBT_FINISH ? nbt_writer_end(writer) :
             nbt_writer_tag(writer,&changed))==NBT_OK;
 }
@@ -261,14 +336,13 @@ int beta_level_save(const char *world_path,const BetaLevelState *state)
                         "level.dat.recraft.bak.tmp")) return 0;
     for (i=0;i<RECRAFT_INVENTORY_SLOTS;++i) {
         const InventorySlot *slot=&state->inventory[i];
-        if (slot->id>32767 || slot->count<0 || slot->count>64 ||
+        if (slot->id>32767 || slot->count<0 || slot->count>255 ||
             slot->damage<0 || slot->damage>65535) return 0;
     }
     if (!beta_level_read(world_path,&input,&size,&used_old)) return 0;
     memset(&capture,0,sizeof(capture));
     if (nbt_read(input,size,NULL,capture_tag,&capture,NULL)!=NBT_OK ||
-        capture.failed || !capture.has_player || !capture.has_position ||
-        !capture.has_rotation || !capture.has_inventory || !capture.has_time) {
+        capture.failed) {
         free(capture.tags); goto done;
     }
     output=(unsigned char *)malloc(LEVEL_OUTPUT_LIMIT);

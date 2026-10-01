@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "../assets/assets.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -52,7 +53,8 @@ void audio_init(AudioState *audio)
     InitAudioDevice();
     audio->ready = 1;
     for (i = 0; i < RECRAFT_SOUND_COUNT; ++i)
-        audio->effects[i] = make_effect(i);
+        audio->effects[i]=i==RECRAFT_SOUND_PORTAL ? assets_get_sound(ASSET_SOUND_PORTAL) : make_effect(i);
+    if(audio->effects[RECRAFT_SOUND_PORTAL].source) SetSoundVolume(audio->effects[RECRAFT_SOUND_PORTAL],.5f);
 }
 
 void audio_play(AudioState *audio, RecraftSound effect)
@@ -67,7 +69,8 @@ void audio_shutdown(AudioState *audio)
     int i;
     if (!audio || !audio->ready) return;
     for (i = 0; i < RECRAFT_SOUND_COUNT; ++i)
-        if (audio->effects[i].source) UnloadSound(audio->effects[i]);
+        if(i!=RECRAFT_SOUND_PORTAL && audio->effects[i].source) UnloadSound(audio->effects[i]);
+    assets_release_sounds();
     CloseAudioDevice();
     memset(audio, 0, sizeof(*audio));
 }

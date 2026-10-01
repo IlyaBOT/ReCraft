@@ -13,13 +13,20 @@ typedef enum AssetId {
     ASSET_FONT_ASCII,
     ASSET_GUI_INVENTORY,
     ASSET_GUI_ITEMS,
+    ASSET_GUI_CRAFTING,
+    ASSET_GUI_FURNACE,
+    ASSET_GUI_CONTAINER,
+    ASSET_PLAYER_SKIN,
     ASSET_COUNT
 } AssetId;
+typedef enum AssetSoundId { ASSET_SOUND_PORTAL,ASSET_SOUND_COUNT } AssetSoundId;
 
 void assets_init(const char *game_root);
 const char *assets_path(AssetId id, char *buffer, size_t capacity);
 Texture2D assets_get_texture(AssetId id);
 Image assets_load_image(AssetId id);
+Sound assets_get_sound(AssetSoundId id);
+void assets_release_sounds(void);
 void assets_shutdown(void);
 
 #endif

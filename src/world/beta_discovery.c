@@ -28,6 +28,7 @@ typedef struct LevelRead {
     int in_inventory,item_slot,item_id,item_count,item_damage;
     double xyz[3];
     float angles[2];
+    int *health,*air,*fire;
 } LevelRead;
 
 static int metadata_tag(void *context, NbtEvent event, const NbtTag *tag, unsigned depth)
@@ -82,6 +83,11 @@ static int metadata_tag(void *context, NbtEvent event, const NbtTag *tag, unsign
     if (read->player && event==NBT_VALUE && depth==3 &&
         tag->type==NBT_INT && tag_is(tag,"Dimension"))
         world->dimension=tag->value.int_value;
+    if (read->player && event==NBT_VALUE && depth==3 && tag->type==NBT_SHORT) {
+        if (read->health && tag_is(tag,"Health")) *read->health=tag->value.short_value;
+        if (read->air && tag_is(tag,"Air")) *read->air=tag->value.short_value;
+        if (read->fire && tag_is(tag,"Fire")) *read->fire=tag->value.short_value;
+    }
     if (event==NBT_FINISH && depth==3 && tag->type==NBT_LIST) {
         if (tag_is(tag,"Pos")) read->pos=0;
         if (tag_is(tag,"Rotation")) read->rotation=0;
@@ -137,6 +143,18 @@ static int read_level(const char *world_path, BetaWorldInfo *world,InventorySlot
     return valid;
 }
 
+int beta_world_read_vitals(const char *path,int *health,int *air,int *fire)
+{
+    BetaWorldInfo ignored;
+    LevelRead parsed;
+    unsigned char *bytes; size_t size; int ok;
+    if (!health || !air || !fire || !beta_level_read(path,&bytes,&size,NULL)) return 0;
+    memset(&ignored,0,sizeof(ignored)); memset(&parsed,0,sizeof(parsed));
+    *health=20; *air=300; *fire=0;
+    parsed.world=&ignored; parsed.health=health; parsed.air=air; parsed.fire=fire;
+    ok=nbt_read(bytes,size,NULL,metadata_tag,&parsed,NULL)==NBT_OK;
+    free(bytes); return ok;
+}
 static unsigned count_regions(const char *world_path)
 {
     char path[512];

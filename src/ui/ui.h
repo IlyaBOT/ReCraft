@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "../game/inventory.h"
+#include "../game/container.h"
 
 #define UI_NAME_MAX 96
 #define UI_ID_MAX 64
@@ -23,6 +24,7 @@ typedef enum UiScreen {
     UI_SCREEN_VIDEO,
     UI_SCREEN_PAUSE,
     UI_SCREEN_CONFIRM,
+    UI_SCREEN_DEATH,
     UI_SCREEN_GAME
 } UiScreen;
 
@@ -39,6 +41,7 @@ typedef enum UiActionType {
     UI_ACTION_DELETE_SERVER,
     UI_ACTION_REFRESH_SERVERS,
     UI_ACTION_RESUME,
+    UI_ACTION_RESPAWN,
     UI_ACTION_RETURN_TO_MENU
 } UiActionType;
 
@@ -155,9 +158,10 @@ UiAction ui_frame(Ui *ui, const UiWorldEntry *worlds, int world_count,
 /* Draw after the 3D renderer, before EndDrawing. */
 void ui_draw_hud(const Ui *ui, int selected_slot, const InventorySlot *hotbar,
                  const char *const labels[9],
-                 int debug_visible, const char *debug_text);
-void ui_draw_inventory(const Ui *ui, const InventorySlot *slots, int selected_slot);
-int ui_inventory_slot_at(const Ui *ui);
+                 int debug_visible, const char *debug_text,int health,int air,int hurt);
+void ui_draw_container(const Ui *ui,const ContainerSession *session,const InventorySlot *inventory,
+                       const InventorySlot *contents,int burn,int fuel,int cook);
+int ui_container_slot_at(const Ui *ui,const ContainerSession *session);
 void ui_creative_input(Ui *ui, InventorySlot *slots, int *hotbar, int can_give);
 void ui_draw_creative(const Ui *ui, const InventorySlot *slots, int hotbar);
 

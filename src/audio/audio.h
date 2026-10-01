@@ -8,6 +8,7 @@ typedef enum RecraftSound {
     RECRAFT_SOUND_STEP,
     RECRAFT_SOUND_BREAK,
     RECRAFT_SOUND_PLACE,
+    RECRAFT_SOUND_PORTAL,
     RECRAFT_SOUND_COUNT
 } RecraftSound;
 

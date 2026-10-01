@@ -201,3 +201,15 @@ size_t beta14_place(uint8_t *out,size_t cap,int x,int y,int z,int face,int item,
     out[0]=15; put32(out+1,(uint32_t)x); out[5]=(uint8_t)y; put32(out+6,(uint32_t)z); out[10]=(uint8_t)face; put16(out+11,(unsigned)item);
     if(item>=0) { out[13]=(uint8_t)count; put16(out+14,(unsigned)damage); } return n;
 }
+size_t beta14_window_click(uint8_t *out,size_t cap,int window,int slot,int button,
+                           int action,int shift,int item,int count,int damage)
+{
+    size_t n=item<0 ? 10 : 13;
+    if(!out || cap<n || window<0 || window>255 || slot< -999 || slot>1023 ||
+        button<0 || button>1 || item< -1 || item>32767 || count<0 || count>127 || damage<0 || damage>65535) return 0;
+    out[0]=0x66; out[1]=(uint8_t)window; put16(out+2,(uint16_t)slot);
+    out[4]=(uint8_t)button; put16(out+5,(uint16_t)action); out[7]=(uint8_t)(shift!=0);
+    put16(out+8,(uint16_t)item);
+    if(item>=0) { out[10]=(uint8_t)count; put16(out+11,(uint16_t)damage); }
+    return n;
+}

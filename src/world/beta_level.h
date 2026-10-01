@@ -10,6 +10,7 @@ typedef struct BetaLevelState {
     float yaw,pitch; /* Minecraft degrees, not ReCraft camera radians. */
     int on_ground;
     int64_t world_time;
+    int has_vitals,health,air,fire;
     InventorySlot inventory[RECRAFT_INVENTORY_SLOTS];
 } BetaLevelState;
 

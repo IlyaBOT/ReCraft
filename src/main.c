@@ -11,6 +11,11 @@
 #include "game/settings.h"
 #include "game/inventory.h"
 #include "game/creative.h"
+#include "game/crafting.h"
+#include "game/mining.h"
+#include "game/container.h"
+#include "world/block_entity.h"
+#include "world/entities.h"
 #include "ui/ui.h"
 #include "audio/audio.h"
 #include "network/network.h"
@@ -65,11 +70,19 @@ typedef struct App {
     uint64_t frame_vbo_bytes, frame_client_bytes;
     InventorySlot inventory[RECRAFT_INVENTORY_SLOTS];
     int inventory_open, inventory_pick;
+    ContainerSession container;
+    InventorySlot server_player_slots[9];
+    BlockHit mining_hit;
+    float mining_progress;
+    int mining_item,mining_active,mining_wait,attack,attack_pressed,swing_ticks;
+    uint64_t animation_tick;
+    unsigned portal_sound_wait;
     char inventory_labels[9][32];
     const char *inventory_label_ptrs[9];
     char chat[128], message[256];
     double message_until, step_time;
     Vector2 last_mouse;
+    int mouse_settle;
     PlayerInput input;
     ServerList servers;
     UiServerEntry server_ui[RECRAFT_MAX_SERVERS];
@@ -85,6 +98,9 @@ typedef struct RunOptions {
     int distance, mipmaps, smooth, blur, leaves, budget, vbo_budget, debug, profile_gpu;
     const char *benchmark, *csv, *capture, *screen, *connect, *data_dir, *world_id;
 } RunOptions;
+
+static void close_inventory(App *app);
+static void open_inventory(App *app,ContainerKind kind,BlockHit hit,int size);
 
 static void copy_text(char *dst, size_t size, const char *src)
 {
@@ -191,6 +207,7 @@ static void capture_cursor(App *app, int capture)
     if (capture) DisableCursor();
     else EnableCursor();
     app->last_mouse = GetMousePosition();
+    app->mouse_settle=capture ? 2 : 0;
     memset(&app->input, 0, sizeof(app->input));
 }
 
@@ -226,9 +243,9 @@ static int save_player(App *app)
         !path_join(temporary, sizeof(temporary), app->world.path, "player.tmp")) return 0;
     f = fopen(temporary, "wb");
     if (!f) return 0;
-    ok = fprintf(f, "1 %.9g %.9g %.9g %.9g %.9g %d %d\n", app->player.x,
+    ok = fprintf(f, "2 %.9g %.9g %.9g %.9g %.9g %d %d %d %d %d\n", app->player.x,
         app->player.y, app->player.z, app->player.yaw, app->player.pitch,
-        app->player.selected_slot, app->player.flying) > 0;
+        app->player.selected_slot, app->player.flying,app->player.health,app->player.air,app->player.fire) > 0;
     if (fclose(f) != 0) ok = 0;
     if (!ok) return 0;
 #ifdef _WIN32
@@ -248,12 +265,18 @@ static void load_player(App *app)
     f = fopen(path, "rb");
     if (!f) return;
     if (fscanf(f, "%d %f %f %f %f %f %d %d", &version, &p.x, &p.y, &p.z,
-        &p.yaw, &p.pitch, &p.selected_slot, &p.flying) == 8 && version == 1 &&
+        &p.yaw, &p.pitch, &p.selected_slot, &p.flying) == 8 && (version==1 || version==2) &&
         isfinite(p.x) && isfinite(p.y) && isfinite(p.z) && isfinite(p.yaw) &&
         isfinite(p.pitch) && fabsf(p.x) < 10000000.0f && fabsf(p.z) < 10000000.0f &&
         p.y >= 0 && p.y < 256 && fabsf(p.pitch) <= 1.48f &&
         p.selected_slot >= 0 && p.selected_slot < 9) {
         p.flying = p.creative && p.flying;
+        if (version==2) {
+            int health,air,fire;
+            if (fscanf(f,"%d %d %d",&health,&air,&fire)==3 && health>=0 && health<=20 && air>=-20 && air<=300 && fire>=0 && fire<=32767) {
+                p.health=health; p.air=air; p.fire=fire;
+            }
+        }
         app->player = p;
     }
     fclose(f);
@@ -308,6 +331,7 @@ static int leave_world(App *app)
 {
     if (app->has_world) {
         BetaLevelState beta_state;
+        close_inventory(app);
         if (app->world.beta_format) {
             memset(&beta_state,0,sizeof(beta_state));
             beta_state.x=app->player.x;
@@ -317,6 +341,8 @@ static int leave_world(App *app)
             beta_state.pitch=-app->player.pitch*180.0f/PI_F;
             beta_state.on_ground=app->player.on_ground;
             beta_state.world_time=app->world.beta_world_time;
+            beta_state.has_vitals=1; beta_state.health=app->player.health;
+            beta_state.air=app->player.air; beta_state.fire=app->player.fire;
             memcpy(beta_state.inventory,app->inventory,sizeof(beta_state.inventory));
         }
         if (!save_player(app) || !save_inventory(app) || world_save(&app->world) != WORLD_OK ||
@@ -340,6 +366,8 @@ static int leave_world(App *app)
     memset(app->inventory, 0, sizeof(app->inventory));
     app->inventory_open=0;
     app->inventory_pick=-1;
+    memset(&app->container,0,sizeof(app->container));
+    inventory_clear_slot(&app->container.cursor);
     return 1;
 }
 
@@ -356,6 +384,9 @@ static void enter_world(App *app)
     }
     app->previous_player=app->player;
     inventory_init(app->inventory,app->world.creative);
+    app->mining_active=app->mining_wait=app->attack=app->attack_pressed=0;
+    if (app->world.beta_format) beta_world_read_vitals(app->world.path,&app->player.health,&app->player.air,&app->player.fire);
+    app->health=app->player.health;
     if (app->world.beta_format &&
         !beta_world_read_inventory(app->world.path,app->inventory))
         fprintf(stderr,"Could not read Beta inventory from %s/level.dat.\n",
@@ -381,6 +412,23 @@ static uint64_t seed_value(const char *text)
     return value;
 }
 
+static int container_prefix(const ContainerSession *s)
+{ return s->kind==CONTAINER_PLAYER ? 9 : s->kind==CONTAINER_WORKBENCH ? 10 : s->size; }
+static void server_slot(App *app,int window,int raw,InventorySlot item)
+{
+    ContainerSession *s=&app->container; int prefix=container_prefix(s),index;
+    if(window==255 && raw==-1) { s->cursor=item; return; }
+    if(window==0) {
+        if(raw>=0 && raw<9) app->server_player_slots[raw]=item;
+        if(raw>=9 && raw<45) { index=raw>=36 ? raw-36 : raw; app->inventory[index]=item; }
+        if(s->kind!=CONTAINER_PLAYER || s->window_id!=0) return;
+    } else if(!s->server || window!=s->window_id) return;
+    if(raw>=prefix && raw<prefix+36) {
+        index=raw-prefix; index=index>=27 ? index-27 : index+9; app->inventory[index]=item;
+    } else if((s->kind==CONTAINER_PLAYER || s->kind==CONTAINER_WORKBENCH) && raw==0) s->result=item;
+    else if((s->kind==CONTAINER_PLAYER || s->kind==CONTAINER_WORKBENCH) && raw>=1 && raw<= (s->kind==CONTAINER_PLAYER ? 4 : 9)) s->grid[raw-1]=item;
+    else if(raw>=0 && raw<s->size && raw<54) s->contents[raw]=item;
+}
 static void network_event(void *user, const NetworkEvent *event)
 {
     App *app = (App *)user;
@@ -399,14 +447,41 @@ static void network_event(void *user, const NetworkEvent *event)
         notice(app, event->text);
         ui_set_screen(&app->ui, UI_SCREEN_PAUSE);
         capture_cursor(app, 0);
-    } else if (event->type == NETWORK_EVENT_HEALTH) app->health = event->health;
-    else if (event->type == NETWORK_EVENT_INVENTORY && event->entity_type == 0 &&
-             event->slot >= 9 && event->slot < 45) {
-        int index=event->slot>=36 ? event->slot-36 : event->slot;
-        InventorySlot *item = &app->inventory[index];
-        item->id = event->item_id;
-        item->count = event->item_count;
-        item->damage = event->item_damage;
+    } else if (event->type == NETWORK_EVENT_HEALTH) {
+        app->health=app->player.health=event->health;
+    } else if (event->type==NETWORK_EVENT_RESPAWN) {
+        app->player.vx=app->player.vy=app->player.vz=0;
+        app->player.fall_distance=0; app->player.health=app->health=20;
+        app->player.air=300; app->player.fire=app->player.hurt_ticks=0;
+        app->inventory_open=0; app->network_position=0;
+        memset(&app->container,0,sizeof(app->container));
+        inventory_clear_slot(&app->container.cursor);
+        memset(app->entities,0,sizeof(app->entities)); app->entity_count=0;
+        ui_set_screen(&app->ui,UI_SCREEN_GAME); capture_cursor(app,1);
+        menu_background_clear(&app->menu_background);
+    }
+    else if(event->type==NETWORK_EVENT_INVENTORY) {
+        server_slot(app,event->entity_type,event->slot,(InventorySlot){event->item_id,event->item_count,event->item_damage});
+    } else if(event->type==NETWORK_EVENT_WINDOW_OPEN) {
+        BlockHit hit={0}; ContainerKind kind;
+        if(event->window_type==0 && (event->window_slots==27 || event->window_slots==54)) kind=CONTAINER_CHEST;
+        else if(event->window_type==1) kind=CONTAINER_WORKBENCH;
+        else if(event->window_type==2 && event->window_slots==3) kind=CONTAINER_FURNACE;
+        else { network_close_window(app->network,event->window_id); notice(app,"This server container is not supported yet."); return; }
+        open_inventory(app,kind,hit,event->window_type==1 ? 0 : event->window_slots);
+        app->container.window_id=event->window_id;
+    } else if(event->type==NETWORK_EVENT_WINDOW_CLOSE) {
+        if(app->container.window_id==event->window_id) { app->inventory_open=0; capture_cursor(app,1); }
+    } else if(event->type==NETWORK_EVENT_WINDOW_PROPERTY && app->container.window_id==event->window_id) {
+        if(event->property==0) app->container.cook=event->value;
+        if(event->property==1) app->container.burn=event->value;
+        if(event->property==2) app->container.fuel=event->value;
+    } else if(event->type==NETWORK_EVENT_WINDOW_TRANSACTION) {
+        if(!event->accepted) network_confirm_window(app->network,event->window_id,event->action);
+        if(app->container.window_id==event->window_id && app->container.transaction==event->action)
+            app->container.pending=event->accepted ? 0 : 2;
+    } else if(event->type==NETWORK_EVENT_WINDOW_SYNC && app->container.window_id==event->window_id) {
+        if(app->container.pending==2) app->container.pending=0;
     }
     else if (event->type == NETWORK_EVENT_ENTITY_SPAWN || event->type == NETWORK_EVENT_ENTITY_MOVE ||
              event->type == NETWORK_EVENT_ENTITY_DESPAWN) {
@@ -415,7 +490,8 @@ static void network_event(void *user, const NetworkEvent *event)
             if (!e->active && free_slot < 0) free_slot = i;
             if (e->active && e->id == event->entity_id) {
                 if (event->type == NETWORK_EVENT_ENTITY_DESPAWN) { e->active = 0; --app->entity_count; }
-                else { e->x = (float)event->x; e->y = (float)event->y; e->z = (float)event->z; }
+                else { e->x=(float)event->x; e->y=(float)event->y; e->z=(float)event->z;
+                    e->yaw=event->yaw; e->pitch=event->pitch; }
                 return;
             }
         }
@@ -423,6 +499,8 @@ static void network_event(void *user, const NetworkEvent *event)
             Entity *e = &app->entities[free_slot];
             e->active = 1; e->id = event->entity_id; e->type = event->entity_type;
             e->x = (float)event->x; e->y = (float)event->y; e->z = (float)event->z;
+            e->yaw=event->yaw; e->pitch=event->pitch;
+            e->positioned=0; e->walk=0;
             ++app->entity_count;
         }
     }
@@ -459,6 +537,7 @@ static void join_server(App *app, const char *address)
     app->world.network_mode = 1;
     app->has_world = 1;
     memset(&app->player, 0, sizeof(app->player));
+    app->player.health=app->health=20; app->player.air=300;
     app->network_position = 0;
     {
         int i;
@@ -577,6 +656,14 @@ static void handle_action(App *app, UiAction action)
             refresh_lists(app); notice(app, "Saved servers reloaded. Legacy status ping is not implemented."); break;
         case UI_ACTION_RESUME:
             ui_set_screen(&app->ui, UI_SCREEN_GAME); capture_cursor(app, 1); break;
+        case UI_ACTION_RESPAWN:
+            if (!app->network) {
+                player_spawn(&app->player,&app->world,app->world.creative);
+                app->previous_player=app->player; app->health=20;
+                ui_set_screen(&app->ui,UI_SCREEN_GAME); capture_cursor(app,1);
+                menu_background_clear(&app->menu_background);
+            } else if(!network_respawn(app->network)) notice(app,"Unable to request server respawn.");
+            break;
         case UI_ACTION_RETURN_TO_MENU:
             if (leave_world(app)) { ui_set_screen(&app->ui, UI_SCREEN_MAIN); refresh_lists(app); }
             break;
@@ -616,51 +703,109 @@ static int hit_face(BlockHit hit)
     return hit.place_x < hit.x ? 4 : 5;
 }
 
-static void spawn_drop(App *app, int id, int x, int y, int z)
+static void return_inventory_stack(App *app,InventorySlot *item)
 {
-    int i;
-    if (id<=0 || app->player.creative || app->network) return;
-    for (i=0;i<128;++i) if (!app->drops[i].active) {
-        app->drops[i].active=1;
-        app->drops[i].id=id;
-        app->drops[i].count=1;
-        app->drops[i].x=(float)x+0.5f;
-        app->drops[i].y=(float)y+0.35f;
-        app->drops[i].z=(float)z+0.5f;
-        app->drops[i].vy=0;
-        app->drops[i].age=0;
-        return;
-    }
+    int added;
+    if (item->id<=0 || item->count<=0) return;
+    added=inventory_add_stack(app->inventory,RECRAFT_INVENTORY_SLOTS,*item);
+    item->count-=added;
+    if (item->count>0) world_drop_stack(&app->world,(int)floorf(app->player.x),
+        (int)floorf(app->player.y+1),(int)floorf(app->player.z),*item);
+    inventory_clear_slot(item);
 }
 
-static void tick_drops(App *app, float dt)
+static void close_inventory(App *app)
 {
     int i;
-    for (i=0;i<128;++i) if (app->drops[i].active) {
-        float dx,dz;
-        int bx,by,bz;
-        app->drops[i].age+=dt;
-        app->drops[i].vy-=18.0f*dt;
-        if (app->drops[i].vy< -20.0f) app->drops[i].vy=-20.0f;
-        app->drops[i].y+=app->drops[i].vy*dt;
-        bx=(int)floorf(app->drops[i].x);
-        by=(int)floorf(app->drops[i].y-0.2f);
-        bz=(int)floorf(app->drops[i].z);
-        if (world_block_def(world_peek_block(&app->world,bx,by,bz))->solid) {
-            app->drops[i].y=(float)by+1.2f;
-            app->drops[i].vy=0;
+    if (!app->inventory_open) return;
+    if(app->network) {
+        network_close_window(app->network,app->container.window_id);
+        app->inventory_open=0; app->inventory_pick=-1;
+        inventory_clear_slot(&app->container.cursor);
+        for(i=0;i<5;++i) inventory_clear_slot(&app->server_player_slots[i]);
+        return;
+    }
+    return_inventory_stack(app,&app->container.cursor);
+    for (i=0;i<9;++i) return_inventory_stack(app,&app->container.grid[i]);
+    app->inventory_open=0;
+    app->inventory_pick=-1;
+}
+
+static void open_inventory(App *app,ContainerKind kind,BlockHit hit,int size)
+{
+    int i;
+    memset(&app->container,0,sizeof(app->container));
+    app->container.kind=kind;
+    app->container.x=hit.x; app->container.y=hit.y; app->container.z=hit.z;
+    app->container.size=size;
+    for (i=0;i<9;++i) inventory_clear_slot(&app->container.grid[i]);
+    inventory_clear_slot(&app->container.cursor);
+    inventory_clear_slot(&app->container.result);
+    for(i=0;i<54;++i) inventory_clear_slot(&app->container.contents[i]);
+    app->container.server=app->network!=NULL;
+    if(app->network && kind==CONTAINER_PLAYER) {
+        app->container.result=app->server_player_slots[0];
+        for(i=0;i<4;++i) app->container.grid[i]=app->server_player_slots[i+1];
+    }
+    app->inventory_open=1; capture_cursor(app,0);
+}
+
+static void container_input(App *app)
+{
+    ContainerSession *s=&app->container;
+    BlockEntity *first=NULL,*second=NULL;
+    InventorySlot *slot=NULL;
+    int index,right;
+    if (s->kind==CONTAINER_CREATIVE) {
+        ui_creative_input(&app->ui,app->inventory,&app->player.selected_slot,!app->network);
+        return;
+    }
+    if (s->server && s->pending) return;
+    if (!s->server && s->kind==CONTAINER_CHEST) {
+        s->size=block_chest_halves(&app->world,s->x,s->y,s->z,&first,&second);
+        if (!s->size) { close_inventory(app); capture_cursor(app,1); return; }
+    } else if (!s->server && s->kind==CONTAINER_FURNACE) {
+        first=block_entity_get(&app->world,s->x,s->y,s->z,0);
+        if (!first) { close_inventory(app); capture_cursor(app,1); return; }
+    }
+    right=IsMouseButtonPressed(MOUSE_RIGHT_BUTTON);
+    if (!right && !IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) return;
+    index=ui_container_slot_at(&app->ui,s);
+    if (index<0) return;
+    if(s->server) {
+        int raw,prefix=container_prefix(s);
+        InventorySlot expected;
+        if(index<36) { raw=index<9 ? prefix+27+index : prefix+index-9; slot=&app->inventory[index]; }
+        else if(index<45) { raw=index-35; slot=&s->grid[index-36]; }
+        else if(index==45) { raw=0; slot=&s->result; }
+        else { raw=index-46; slot=&s->contents[raw]; }
+        expected=*slot; s->transaction=(s->transaction+1)&65535;
+        if(!network_click_window(app->network,s->window_id,raw,right,s->transaction,0,expected)) return;
+        s->pending=1;
+        if(index==45) {
+            crafting_take(s->grid,s->kind==CONTAINER_WORKBENCH ? 3 : 2,&s->cursor,app->inventory);
+            crafting_match(s->grid,s->kind==CONTAINER_WORKBENCH ? 3 : 2,&s->result);
+        } else inventory_click(slot,&s->cursor,right,s->kind==CONTAINER_FURNACE && index==48);
+        if(s->kind==CONTAINER_PLAYER) {
+            app->server_player_slots[0]=s->result;
+            memcpy(app->server_player_slots+1,s->grid,4*sizeof(InventorySlot));
         }
-        dx=app->drops[i].x-app->player.x;
-        dz=app->drops[i].z-app->player.z;
-        if (app->drops[i].age>0.35f && dx*dx+dz*dz<1.4f &&
-            fabsf(app->drops[i].y-(app->player.y+0.9f))<1.6f) {
-            int added=inventory_add(app->inventory,app->drops[i].id,
-                                    app->drops[i].count);
-            app->drops[i].count-=added;
-            if (app->drops[i].count<=0) app->drops[i].active=0;
-        }
-        if (app->drops[i].age>300.0f || app->drops[i].y< -32.0f)
-            app->drops[i].active=0;
+        return;
+    }
+    if (index<36) slot=&app->inventory[index];
+    else if (index<45) slot=&s->grid[index-36];
+    else if (index==45) {
+        crafting_take(s->grid,s->kind==CONTAINER_WORKBENCH ? 3 : 2,&s->cursor,app->inventory);
+        return;
+    } else if (first) {
+        int n=index-46;
+        slot=n<27 ? &first->slots[n] : second ? &second->slots[n-27] : NULL;
+        if (s->kind==CONTAINER_FURNACE && n==1 && s->cursor.count>0 &&
+            furnace_fuel_ticks(s->cursor.id)==0) return;
+    }
+    if (inventory_click(slot,&s->cursor,right,s->kind==CONTAINER_FURNACE && index==48)) {
+        if (first) block_entity_changed(&app->world,first);
+        if (second) block_entity_changed(&app->world,second);
     }
 }
 
@@ -668,6 +813,7 @@ static void game_input(App *app)
 {
     Vector2 mouse = GetMousePosition();
     int i, wheel;
+    app->attack=0;
     if (IsKeyPressed(KEY_F3)) app->debug = !app->debug;
     if (app->chat_open) {
         size_t n = strlen(app->chat);
@@ -685,8 +831,7 @@ static void game_input(App *app)
     }
     if (IsKeyPressed(KEY_ESCAPE)) {
         if (app->inventory_open) {
-            app->inventory_open=0;
-            app->inventory_pick=-1;
+            close_inventory(app);
             capture_cursor(app,1);
             return;
         }
@@ -695,31 +840,26 @@ static void game_input(App *app)
         capture_cursor(app, 0); return;
     }
     if (IsKeyPressed(KEY_E)) {
-        app->inventory_open=!app->inventory_open;
-        app->inventory_pick=-1;
+        if (app->inventory_open) close_inventory(app);
+        else {
+            BlockHit hit={0};
+            open_inventory(app,app->player.creative ? CONTAINER_CREATIVE : CONTAINER_PLAYER,hit,0);
+        }
         capture_cursor(app,!app->inventory_open);
         return;
     }
     if (app->inventory_open) {
-        if (app->player.creative) {
-            ui_creative_input(&app->ui,app->inventory,&app->player.selected_slot,!app->network);
-        } else if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-            int slot=ui_inventory_slot_at(&app->ui);
-            if (slot>=0 && !app->network) {
-                if (app->inventory_pick<0) app->inventory_pick=slot;
-                else {
-                    inventory_swap(app->inventory,app->inventory_pick,slot);
-                    app->inventory_pick=-1;
-                }
-            }
-        }
+        container_input(app);
         memset(&app->input,0,sizeof(app->input));
         app->last_mouse=mouse;
         return;
     }
     if (IsKeyPressed(KEY_T) && app->network) { app->chat_open = 1; app->chat[0] = 0; return; }
-    app->input.look_dx += mouse.x - app->last_mouse.x;
-    app->input.look_dy += mouse.y - app->last_mouse.y;
+    if(app->mouse_settle) --app->mouse_settle;
+    else {
+        app->input.look_dx += mouse.x - app->last_mouse.x;
+        app->input.look_dy += mouse.y - app->last_mouse.y;
+    }
     app->last_mouse = mouse;
     /* raylib 1.4 typedefs bool as an enum whose arithmetic may be unsigned.
      * Normalize each key to signed int before subtracting opposite axes. */
@@ -741,29 +881,39 @@ static void game_input(App *app)
         if (app->network && app->player.selected_slot != old_slot)
             network_send_held_item(app->network, app->player.selected_slot);
     }
-    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-        if (app->network) {
-            BlockHit hit = player_raycast(&app->player, &app->world, 5);
-            if (hit.hit) {
-                network_mine_block(app->network, 0, hit.x, hit.y, hit.z, hit_face(hit));
-                network_mine_block(app->network, 2, hit.x, hit.y, hit.z, hit_face(hit));
-            }
-        } else {
-            BlockHit hit=player_raycast(&app->player,&app->world,5);
-            if (hit.hit && player_break_block(&app->player,&app->world)) {
-                spawn_drop(app,hit.block,hit.x,hit.y,hit.z);
-                audio_play(&app->audio,RECRAFT_SOUND_BREAK);
-            }
-        }
-    }
+    app->attack=IsMouseButtonDown(MOUSE_LEFT_BUTTON)!=0;
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) app->attack_pressed=1;
     if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON)) {
         if (app->network) {
             BlockHit hit = player_raycast(&app->player, &app->world, 5);
             const InventorySlot *item = &app->inventory[app->player.selected_slot];
             if (hit.hit) network_place_block(app->network, hit.x, hit.y, hit.z, hit_face(hit),
                 item->id, item->count, item->damage);
+            else network_place_block(app->network,-1,255,-1,255,item->id,item->count,item->damage);
         } else {
+            BlockHit hit=player_raycast(&app->player,&app->world,5);
             InventorySlot *item=&app->inventory[app->player.selected_slot];
+            if (hit.hit && !IsKeyDown(KEY_LEFT_SHIFT)) {
+                if (hit.block==58) { open_inventory(app,CONTAINER_WORKBENCH,hit,0); return; }
+                if (hit.block==54) {
+                    BlockEntity *a,*b;
+                    int n=block_chest_halves(&app->world,hit.x,hit.y,hit.z,&a,&b);
+                    if (n) open_inventory(app,CONTAINER_CHEST,hit,n);
+                    return;
+                }
+                if (hit.block==61 || hit.block==62) {
+                    if (block_entity_get(&app->world,hit.x,hit.y,hit.z,1))
+                        open_inventory(app,CONTAINER_FURNACE,hit,3);
+                    return;
+                }
+                if(hit.block==69 || hit.block==77) {
+                    world_set_metadata(&app->world,hit.x,hit.y,hit.z,
+                        world_get_metadata(&app->world,hit.x,hit.y,hit.z)^8);
+                    world_redstone_notify(&app->world,hit.x,hit.y,hit.z);
+                    return;
+                }
+            }
+            if(player_use_item(&app->player,&app->world,item)) { app->health=app->player.health; app->swing_ticks=6; return; }
             if (item->id>0 && item->id<BETA_BLOCK_COUNT && item->count>0 &&
                 player_place_block_state(&app->player,&app->world,
                     (BetaBlockState){(uint8_t)item->id,(uint8_t)item->damage})) {
@@ -772,6 +922,60 @@ static void game_input(App *app)
             }
         }
     }
+}
+
+static void cancel_mining(App *app)
+{
+    if (app->mining_active && app->network)
+        network_mine_block(app->network,1,app->mining_hit.x,app->mining_hit.y,
+                           app->mining_hit.z,hit_face(app->mining_hit));
+    app->mining_active=0; app->mining_progress=0;
+}
+
+static void tick_mining(App *app)
+{
+    BlockHit hit;
+    InventorySlot *item=&app->inventory[app->player.selected_slot];
+    int held=app->attack || app->attack_pressed,new_target,eye_id;
+    float strength;
+    app->attack_pressed=0;
+    if (app->swing_ticks>0) --app->swing_ticks;
+    if (!held || app->inventory_open || app->chat_open || app->ui.screen!=UI_SCREEN_GAME) {
+        cancel_mining(app); app->mining_wait=0; return;
+    }
+    if (!app->swing_ticks) app->swing_ticks=6;
+    if (app->mining_wait>0) { --app->mining_wait; return; }
+    hit=player_raycast(&app->player,&app->world,app->player.creative ? 5 : 4);
+    if (!hit.hit) { cancel_mining(app); return; }
+    new_target=!app->mining_active || app->mining_hit.x!=hit.x ||
+        app->mining_hit.y!=hit.y || app->mining_hit.z!=hit.z ||
+        app->mining_hit.block!=hit.block || app->mining_item!=item->id;
+    if (new_target) {
+        cancel_mining(app);
+        app->mining_hit=hit; app->mining_item=item->id; app->mining_active=1;
+        if (app->network) network_mine_block(app->network,0,hit.x,hit.y,hit.z,hit_face(hit));
+    }
+    eye_id=world_get_block(&app->world,(int)floorf(app->player.x),
+        (int)floorf(app->player.y+1.62f),(int)floorf(app->player.z));
+    strength=app->player.creative ? 1 : mining_strength(item->id,hit.block,
+        eye_id==8 || eye_id==9,app->player.on_ground);
+    /* A click instantly removes zero-hardness blocks. Other targets start
+     * accumulating only on the subsequent controller tick, like Beta. */
+    if (!new_target || strength>=1) app->mining_progress+=strength;
+    if (app->mining_progress<1) return;
+    if (app->network) network_mine_block(app->network,2,hit.x,hit.y,hit.z,hit_face(hit));
+    else {
+        BetaBlockState state={hit.block,world_get_metadata(&app->world,hit.x,hit.y,hit.z)};
+        InventorySlot drop=mining_drop(state,item->id,(uint32_t)app->world.clock);
+        if (world_set_block(&app->world,hit.x,hit.y,hit.z,0)) {
+            if (!app->player.creative) {
+                world_drop_stack(&app->world,hit.x,hit.y,hit.z,drop);
+                mining_wear(item,hit.block);
+            }
+            audio_play(&app->audio,RECRAFT_SOUND_BREAK);
+        }
+    }
+    app->mining_active=0; app->mining_progress=0; app->mining_wait=5;
 }
 
 static void tick_game(App *app)
@@ -783,13 +987,37 @@ static void tick_game(App *app)
     }
     app->previous_player=app->player;
     player_tick(&app->player, &app->world, &app->input, (float)RECRAFT_TICK_SECONDS);
+    app->health=app->player.health;
+    if (app->health<=0 && !app->player.creative) {
+        int i;
+        close_inventory(app);
+        if (!app->network) for (i=0;i<36;++i) {
+            world_drop_stack(&app->world,(int)floorf(app->player.x),(int)floorf(app->player.y+1),
+                (int)floorf(app->player.z),app->inventory[i]);
+            inventory_clear_slot(&app->inventory[i]);
+        }
+        cancel_mining(app); memset(&app->input,0,sizeof(app->input));
+        ui_set_screen(&app->ui,UI_SCREEN_DEATH); capture_cursor(app,0);
+    }
+    tick_mining(app);
+    renderer_animate(app->renderer,++app->animation_tick);
+    if(app->portal_sound_wait) --app->portal_sound_wait;
+    else {
+        int x,y,z,found=0,px=(int)floorf(app->player.x),py=(int)floorf(app->player.y),pz=(int)floorf(app->player.z);
+        for(y=-3;y<=3 && !found;++y) for(z=-6;z<=6 && !found;++z) for(x=-6;x<=6;++x)
+            if(world_peek_block(&app->world,px+x,py+y,pz+z)==90) { found=1; break; }
+        if(found) audio_play(&app->audio,RECRAFT_SOUND_PORTAL);
+        app->portal_sound_wait=found ? 100+(unsigned)(app->animation_tick%100) : 20;
+    }
     if (!app->network) {
         WorldDropEvent drop;
         if (app->world.beta_format) ++app->world.beta_world_time;
         world_step_physics(&app->world,64);
-        while (world_take_drop(&app->world,&drop))
-            spawn_drop(app,drop.id,drop.x,drop.y,drop.z);
-        tick_drops(app,(float)RECRAFT_TICK_SECONDS);
+        block_entities_tick(&app->world);
+        while(world_take_drop(&app->world,&drop)) { }
+        world_items_tick(&app->world,&app->player,app->inventory);
+        memset(app->drops,0,sizeof(app->drops));
+        world_items_visible(&app->world,app->drops,128);
     }
     app->input.look_dx = app->input.look_dy = 0;
     if (app->network) network_send_position(app->network, app->player.x, app->player.y,
@@ -933,6 +1161,60 @@ static int parse_options(int argc, char **argv, RunOptions *o)
          o->vbo_budget == 16 || o->vbo_budget == 32);
 }
 
+/* Deterministic, in-memory views for GUI/geometry regression captures. Never
+ * seed sample items or alter a user's persistent world. */
+static int gameplay_preview(App *app,const char *name)
+{
+    BlockHit hit={0}; BlockEntity *a,*b; int i;
+    if(!app->has_world) return 0;
+    if(!strcmp(name,"inventory")) {
+        ui_set_screen(&app->ui,UI_SCREEN_GAME);
+        open_inventory(app,app->player.creative ? CONTAINER_CREATIVE : CONTAINER_PLAYER,hit,0);
+        return 1;
+    }
+    if(app->world.persistent || app->network) return 0;
+    hit.x=4; hit.y=64; hit.z=4;
+    if(!strcmp(name,"player") || !strcmp(name,"crafting")) {
+        int table=!strcmp(name,"crafting");
+        app->player.creative=0;
+        open_inventory(app,table ? CONTAINER_WORKBENCH : CONTAINER_PLAYER,hit,0);
+        for(i=0;i<(table ? 9 : 4);++i) app->container.grid[i]=(InventorySlot){table ? 4 : 5,3,0};
+        if(table) inventory_clear_slot(&app->container.grid[4]);
+    } else if(!strcmp(name,"furnace")) {
+        world_set_block(&app->world,4,64,4,62);
+        a=block_entity_get(&app->world,4,64,4,1);
+        if(!a) return 0;
+        a->slots[0]=(InventorySlot){15,16,0}; a->slots[1]=(InventorySlot){263,2,0}; a->slots[2]=(InventorySlot){265,3,0};
+        a->burn=800; a->fuel=1600; a->cook=100;
+        open_inventory(app,CONTAINER_FURNACE,hit,3);
+    } else if(!strcmp(name,"chest") || !strcmp(name,"large-chest")) {
+        int large=!strcmp(name,"large-chest");
+        world_set_block(&app->world,4,64,4,54);
+        if(large) world_set_block(&app->world,5,64,4,54);
+        if(!block_chest_halves(&app->world,4,64,4,&a,&b)) return 0;
+        for(i=0;i<27;++i) {
+            a->slots[i]=(InventorySlot){i%3==0 ? 17 : i%3==1 ? 35 : 263,i+1,i%3==1 ? i%16 : 0};
+            if(b) b->slots[i]=(InventorySlot){i%2 ? 278 : 1,i%2 ? 1 : 64,i%2 ? 321 : 0};
+        }
+        open_inventory(app,CONTAINER_CHEST,hit,large ? 54 : 27);
+    } else if(!strcmp(name,"health")) {
+        app->player.creative=0; app->player.health=13; app->health=13;
+    } else if(!strcmp(name,"blocks")) {
+        static const uint8_t ids[6]={58,61,62,54,54,76};
+        for(i=0;i<6;++i) { world_set_block(&app->world,i*2,64,4,ids[i]); world_set_metadata(&app->world,i*2,64,4,ids[i]==76 ? 5 : 3); }
+        world_set_block(&app->world,9,64,4,54);
+        world_set_block(&app->world,12,63,4,12); world_set_block(&app->world,12,64,4,81); world_set_block(&app->world,12,65,4,81);
+        for(i=0;i<6;++i) world_set_block(&app->world,14+i%2,64+i/2,4,90);
+        for(i=0;i<3;++i) { world_set_block(&app->world,13,64+i,4,49); world_set_block(&app->world,16,64+i,4,49); }
+        for(i=0;i<2;++i) { world_set_block(&app->world,14+i,63,4,49); world_set_block(&app->world,14+i,67,4,49); }
+        app->player.x=7.5f; app->player.y=64; app->player.z=14; app->player.yaw=0; app->player.pitch=-.05f;
+        app->previous_player=app->player;
+    } else return 0;
+    ui_set_screen(&app->ui,UI_SCREEN_GAME);
+    if(app->inventory_open) capture_cursor(app,0);
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     App app;
@@ -953,7 +1235,9 @@ int main(int argc, char **argv)
             "  [--frames N] [--window 960x720] [--capture file.png] [--csv file.csv]\n"
             "  [--client-arrays] [--basic-mesh] [--distance 2..12] [--mipmaps 0..4]\n"
             "  [--smooth-lighting 0|1] [--menu-blur 0|1] [--fancy-leaves 0|1] [--chunk-budget 1..8] [--vbo-budget 4|8|16|32]\n"
-            "  [--screen main|worlds|create|multiplayer|add|direct|video|inventory|pause] [--no-audio] [--debug] [--fullscreen]\n"
+            "  [--screen main|worlds|create|multiplayer|add|direct|video|inventory|pause]\n"
+            "  [--smoke-test --screen player|crafting|furnace|chest|large-chest|health|blocks]\n"
+            "  [--no-audio] [--debug] [--fullscreen]\n"
             "  [--connect host:port] [--world save-directory] [--data-dir directory] [--profile-gpu]\n");
         return 2;
     }
@@ -1037,11 +1321,7 @@ int main(int argc, char **argv)
     }
     if (run.screen) {
         if (!strcmp(run.screen,"worlds")) ui_set_screen(&app.ui,UI_SCREEN_WORLDS);
-        else if (!strcmp(run.screen,"inventory") && app.has_world) {
-            ui_set_screen(&app.ui,UI_SCREEN_GAME);
-            app.inventory_open=1;
-            capture_cursor(&app,0);
-        }
+        else if (gameplay_preview(&app,run.screen)) { }
         else if (!strcmp(run.screen,"pause") && app.has_world) {
             ui_set_screen(&app.ui,UI_SCREEN_PAUSE);
             capture_cursor(&app,0);
@@ -1074,7 +1354,7 @@ int main(int argc, char **argv)
         last = start;
         if (elapsed > 0.25) elapsed = 0.25;
         if (app.network) network_tick(app.network);
-        if (app.has_world && app.ui.screen == UI_SCREEN_GAME && !run.benchmark) game_input(&app);
+        if (app.has_world && app.ui.screen == UI_SCREEN_GAME && !run.benchmark && !run.smoke) game_input(&app);
         app.ui.world_background=app.has_world && app.ui.screen!=UI_SCREEN_GAME;
         if (app.ui.world_background) {
             memset(&app.input,0,sizeof(app.input));
@@ -1151,7 +1431,7 @@ int main(int argc, char **argv)
                 renderer_draw(app.renderer,&app.world,&camera,scene_width,scene_height,app.ui.options.render_distance);
                 terrain_ms=(recraft_now_seconds()-terrain_start)*1000;
                 app.rendered_entities = entity_render_draw(app.entities,ENTITY_LIMIT,&camera,
-                    scene_width,scene_height,app.ui.options.render_distance);
+                    scene_width,scene_height,app.ui.options.render_distance,(float)elapsed);
                 app.rendered_entities += item_drop_draw(app.drops,128,&camera,
                     scene_width,scene_height,app.ui.options.render_distance);
                 hit = player_raycast(&app.player,&app.world,5);
@@ -1160,6 +1440,13 @@ int main(int argc, char **argv)
                         world_get_metadata(&app.world,hit.x,hit.y,hit.z) };
                     renderer_draw_selection(app.renderer,&camera,recraft_screen_width(),recraft_screen_height(),
                                             hit.x,hit.y,hit.z,state);
+                }
+                if (!app.ui.world_background && !app.inventory_open && !run.benchmark) {
+                    if (app.mining_active) mining_cracks_draw(&camera,scene_width,scene_height,
+                        app.mining_hit.x,app.mining_hit.y,app.mining_hit.z,
+                        (BetaBlockState){app.mining_hit.block,world_get_metadata(&app.world,app.mining_hit.x,app.mining_hit.y,app.mining_hit.z)},app.mining_progress);
+                    first_person_draw(&app.inventory[app.player.selected_slot],scene_width,scene_height,
+                        app.swing_ticks ? 1-app.swing_ticks/6.0f : 0,app.player.hurt_ticks);
                 }
                 if (run.profile_gpu) {
                     double began=recraft_now_seconds();
@@ -1234,10 +1521,27 @@ int main(int argc, char **argv)
                 hud_start=recraft_now_seconds();
                 if (!app.inventory_open)
                     ui_draw_hud(&app.ui,app.player.selected_slot,app.inventory,app.inventory_label_ptrs,
-                        app.debug||app.ui.options.debug_statistics,debug_text);
+                        app.debug||app.ui.options.debug_statistics,debug_text,
+                        app.player.creative ? -1 : app.health,app.player.air,app.player.hurt_ticks);
                 if (app.inventory_open) {
-                    if (app.player.creative) ui_draw_creative(&app.ui,app.inventory,app.player.selected_slot);
-                    else ui_draw_inventory(&app.ui,app.inventory,app.inventory_pick);
+                    if (app.container.kind==CONTAINER_CREATIVE)
+                        ui_draw_creative(&app.ui,app.inventory,app.player.selected_slot);
+                    else {
+                        InventorySlot contents[54];
+                        BlockEntity *a=NULL,*b=NULL;
+                        int burn=0,fuel=0,cook=0;
+                        memset(contents,0,sizeof(contents));
+                        if(app.container.server) {
+                            memcpy(contents,app.container.contents,sizeof(contents));
+                            burn=app.container.burn; fuel=app.container.fuel; cook=app.container.cook;
+                        } else if (app.container.kind==CONTAINER_CHEST)
+                            block_chest_halves(&app.world,app.container.x,app.container.y,app.container.z,&a,&b);
+                        else if (app.container.kind==CONTAINER_FURNACE)
+                            a=block_entity_get(&app.world,app.container.x,app.container.y,app.container.z,0);
+                        if (a) { memcpy(contents,a->slots,sizeof(a->slots)); burn=a->burn; fuel=a->fuel; cook=a->cook; }
+                        if (b) memcpy(contents+27,b->slots,sizeof(b->slots));
+                        ui_draw_container(&app.ui,&app.container,app.inventory,contents,burn,fuel,cook);
+                    }
                 }
                 if (app.message_until > start) DrawMinecraftText(app.message,12,recraft_screen_height()-120,12,WHITE,1);
                 if (app.chat_open) {

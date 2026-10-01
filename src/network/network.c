@@ -75,7 +75,7 @@ struct NetworkClient {
     char username[17],error[512];
     uint8_t rx[NET_RX_CAP],tx[NET_TX_CAP];
     size_t rx_count,tx_count;
-    int logged_in;
+    int logged_in,dimension;
     RemoteEntity entities[NET_MAX_ENTITIES];
 };
 
@@ -395,13 +395,20 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
         if(c->state!=NETWORK_LOGIN || c->logged_in) { fail(c,"Unexpected login packet"); return; }
         off=beta14_read_string(packet,5,text,sizeof(text));
         if(!off || (int8_t)p[off+8]!=0) { fail(c,"Only protocol 14 overworld sessions are supported"); return; }
-        c->world->seed=(uint64_t)beta14_u32(p+off)<<32 | beta14_u32(p+off+4); c->logged_in=1; return;
+        c->world->seed=(uint64_t)beta14_u32(p+off)<<32 | beta14_u32(p+off+4);
+        c->dimension=(int8_t)p[off+8]; c->logged_in=1; return;
     }
     if(!c->logged_in) { fail(c,"Received gameplay packet before login response"); return; }
     switch(p[0]) {
     case 0x03: beta14_read_string(packet,1,text,sizeof(text)); e.type=NETWORK_EVENT_CHAT; e.text=text; emit(c,&e); break;
     case 0x08: e.type=NETWORK_EVENT_HEALTH; e.health=(int16_t)beta14_u16(p+1); emit(c,&e); break;
-    case 0x09: fail(c,"Server dimension/respawn transition is not implemented"); break;
+    case 0x09:
+        if((int8_t)p[1]!=c->dimension) {
+            fail(c,"Server dimension transition is not implemented"); break;
+        }
+        /* Beta keeps the same WorldClient and its chunks for a death respawn.
+         * The server supplies the new player inventory and position separately. */
+        e.type=NETWORK_EVENT_RESPAWN; e.dimension=c->dimension; emit(c,&e); break;
     case 0x0d:
         /* Beta 14 clientbound: feet Y, camera Y. Serverbound reverses them. */
         e.type=NETWORK_EVENT_POSITION; e.x=beta14_f64(p+1); e.y=beta14_f64(p+9); e.z=beta14_f64(p+25);
@@ -456,8 +463,24 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
         if(p[0]!=0x1f) { r->yaw=p[off]*(360.0f/256.0f); r->pitch=p[off+1]*(360.0f/256.0f); }
         entity_event(c,r,NETWORK_EVENT_ENTITY_MOVE,NULL); break; }
     case 0x1d: { RemoteEntity *r=entity_find(c,beta14_i32(p+1),0); if(r) { entity_event(c,r,NETWORK_EVENT_ENTITY_DESPAWN,NULL); r->used=0; } break; }
+    case 0x64: {
+        char title[65]; size_t count=beta14_u16(p+3);
+        if(count>64) { fail(c,"Invalid container title"); break; }
+        memcpy(title,p+5,count); title[count]=0;
+        e.type=NETWORK_EVENT_WINDOW_OPEN; e.window_id=p[1]; e.window_type=p[2];
+        e.window_slots=p[5+count]; e.text=title; emit(c,&e); break;
+    }
+    case 0x65: e.type=NETWORK_EVENT_WINDOW_CLOSE; e.window_id=p[1]; emit(c,&e); break;
     case 0x67: inventory_slot(c,p+4,p[1],(int16_t)beta14_u16(p+2)); break;
-    case 0x68: off=4; for(i=0;i<beta14_u16(p+2);++i) { inventory_slot(c,p+off,p[1],(int)i); off+=beta14_u16(p+off)==65535u?2:5; } break;
+    case 0x68:
+        off=4; for(i=0;i<beta14_u16(p+2);++i) { inventory_slot(c,p+off,p[1],(int)i); off+=beta14_u16(p+off)==65535u?2:5; }
+        e.type=NETWORK_EVENT_WINDOW_SYNC; e.window_id=p[1]; emit(c,&e); break;
+    case 0x69:
+        e.type=NETWORK_EVENT_WINDOW_PROPERTY; e.window_id=p[1]; e.property=(int16_t)beta14_u16(p+2);
+        e.value=(int16_t)beta14_u16(p+4); emit(c,&e); break;
+    case 0x6a:
+        e.type=NETWORK_EVENT_WINDOW_TRANSACTION; e.window_id=p[1]; e.action=beta14_u16(p+2); e.accepted=p[4]!=0;
+        emit(c,&e); break;
     default: break; /* Framed standard packets with no implemented visual effect. */
     }
 }
@@ -499,3 +522,25 @@ int network_mine_block(NetworkClient *c,int status,int x,int y,int z,int face)
 { uint8_t p[12]; size_t n; if(!c || c->state!=NETWORK_PLAY) return 0; n=beta14_mine(p,sizeof(p),status,x,y,z,face); return queue_bytes(c,p,n); }
 int network_place_block(NetworkClient *c,int x,int y,int z,int face,int item,int count,int damage)
 { uint8_t p[16]; size_t n; if(!c || c->state!=NETWORK_PLAY) return 0; n=beta14_place(p,sizeof(p),x,y,z,face,item,count,damage); return queue_bytes(c,p,n); }
+int network_click_window(NetworkClient *c,int window,int slot,int button,int action,int shift,InventorySlot expected)
+{
+    uint8_t p[13]; size_t n;
+    if(!c || c->state!=NETWORK_PLAY) return 0;
+    n=beta14_window_click(p,sizeof(p),window,slot,button,action,shift,expected.count>0 ? expected.id : -1,expected.count,expected.damage);
+    return n && queue_bytes(c,p,n);
+}
+int network_close_window(NetworkClient *c,int window)
+{ uint8_t p[2]={0x65,0}; if(!c || c->state!=NETWORK_PLAY || window<0 || window>255) return 0; p[1]=(uint8_t)window; return queue_bytes(c,p,2); }
+int network_confirm_window(NetworkClient *c,int window,int action)
+{
+    uint8_t p[5]={0x6a,0,0,0,1};
+    if(!c || c->state!=NETWORK_PLAY || window<0 || window>255) return 0;
+    p[1]=(uint8_t)window; p[2]=(uint8_t)((uint16_t)action>>8); p[3]=(uint8_t)action;
+    return queue_bytes(c,p,5);
+}
+int network_respawn(NetworkClient *c)
+{
+    uint8_t p[2]={0x09,0};
+    if(!c || c->state!=NETWORK_PLAY) return 0;
+    p[1]=(uint8_t)c->dimension; return queue_bytes(c,p,2);
+}

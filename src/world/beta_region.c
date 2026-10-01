@@ -1,4 +1,7 @@
 #include "beta_region.h"
+#include "block_entity.h"
+#include "entities.h"
+#include "ticks.h"
 #include "../nbt/nbt.h"
 
 #include <limits.h>
@@ -187,6 +190,10 @@ WorldError beta_region_read_chunk(const World *world,Chunk *chunk)
     }
     for (base=0;base<4;++base) chunk->beta_offsets[base]=tags.offsets[base];
     chunk->beta_raw=raw; chunk->beta_raw_size=raw_size;
+    if (!block_entities_read(chunk,raw,raw_size) || !world_entities_read(chunk,raw,raw_size) || !world_ticks_read(chunk,raw,raw_size)) {
+        chunk->beta_raw=NULL; chunk->beta_raw_size=0;
+        result=WORLD_ERROR_CORRUPT; goto done;
+    }
     chunk->beta_compression=compression;
     chunk->dirty_flags=CHUNK_DIRTY_MESH;
     chunk->revision=1;
@@ -227,7 +234,7 @@ WorldError beta_region_write_chunk(const World *world,const Chunk *chunk)
     char path[WORLD_PATH_MAX];
     FILE *file=NULL;
     uint8_t *raw=NULL,*compressed=NULL,header[5],location[4],timestamp[4];
-    size_t compressed_size,external,local;
+    size_t compressed_size,external,local,raw_size;
     unsigned index=location_index(chunk),sectors;
     long end,aligned;
     int x,y,z;
@@ -237,6 +244,7 @@ WorldError beta_region_write_chunk(const World *world,const Chunk *chunk)
     raw=(uint8_t *)malloc(chunk->beta_raw_size);
     if (!raw) return WORLD_ERROR_OUT_OF_MEMORY;
     memcpy(raw,chunk->beta_raw,chunk->beta_raw_size);
+    raw_size=chunk->beta_raw_size;
     for (x=0;x<16;++x) for (z=0;z<16;++z) for (y=0;y<128;++y) {
         external=(size_t)y+(size_t)z*128u+(size_t)x*2048u;
         local=(size_t)x+(size_t)z*16u+(size_t)y*256u;
@@ -245,7 +253,23 @@ WorldError beta_region_write_chunk(const World *world,const Chunk *chunk)
         nibble_put(raw+chunk->beta_offsets[2],external,nibble_at(chunk->block_light,local));
         nibble_put(raw+chunk->beta_offsets[3],external,nibble_at(chunk->sky_light,local));
     }
-    result=deflate_chunk(raw,chunk->beta_raw_size,chunk->beta_compression,
+    if (chunk->entities_modified) {
+        uint8_t *updated=NULL;
+        size_t size=0;
+        if (!block_entities_rewrite(chunk,raw,raw_size,&updated,&size)) {
+            result=WORLD_ERROR_CORRUPT; goto done;
+        }
+        free(raw); raw=updated; raw_size=size;
+        updated=NULL;
+        if(!world_entities_rewrite(chunk,raw,raw_size,&updated,&size)) { result=WORLD_ERROR_CORRUPT; goto done; }
+        free(raw); raw=updated; raw_size=size;
+    }
+    if(chunk->ticks_modified) {
+        uint8_t *updated=NULL; size_t size=0;
+        if(!world_ticks_rewrite(world,chunk,raw,raw_size,&updated,&size)) { result=WORLD_ERROR_CORRUPT; goto done; }
+        free(raw); raw=updated; raw_size=size;
+    }
+    result=deflate_chunk(raw,raw_size,chunk->beta_compression,
                           &compressed,&compressed_size);
     if (result!=WORLD_OK) goto done;
     result=WORLD_ERROR_IO;

@@ -1,3 +1,6 @@
+#include "../src/world/block_entity.h"
+#include "../src/world/entities.h"
+#include "../src/world/ticks.h"
 #include "../src/world/beta_region.h"
 
 #include <assert.h>
@@ -41,15 +44,28 @@ static void copy_region(const char *source,const char *target)
     assert(fclose(out)==0);
 }
 
-static int terrain_byte(size_t offset,const Chunk *chunk)
+typedef struct Unrelated { NbtWriter writer; int skip; } Unrelated;
+static int unrelated_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned depth)
 {
-    static const size_t lengths[4]={WORLD_CHUNK_VOLUME,WORLD_NIBBLE_BYTES,
-                                    WORLD_NIBBLE_BYTES,WORLD_NIBBLE_BYTES};
-    int i;
-    for (i=0;i<4;++i)
-        if (offset>=chunk->beta_offsets[i] &&
-            offset<chunk->beta_offsets[i]+lengths[i]) return 1;
-    return 0;
+    Unrelated *u=(Unrelated *)context;
+    if(depth==2 && tag->type==NBT_LIST && tag->name.size==9 && !memcmp(tag->name.data,"TileTicks",9)) {
+        u->skip=event==NBT_BEGIN; return 1;
+    }
+    if(u->skip) return 1;
+    if(depth==2 && tag->type==NBT_BYTE_ARRAY &&
+        ((tag->name.size==6 && !memcmp(tag->name.data,"Blocks",6)) ||
+         (tag->name.size==4 && !memcmp(tag->name.data,"Data",4)) ||
+         (tag->name.size==10 && !memcmp(tag->name.data,"BlockLight",10)) ||
+         (tag->name.size==8 && !memcmp(tag->name.data,"SkyLight",8)))) return 1;
+    return (event==NBT_FINISH ? nbt_writer_end(&u->writer) : nbt_writer_tag(&u->writer,tag))==NBT_OK;
+}
+static unsigned unrelated_hash(const uint8_t *raw,size_t size)
+{
+    Unrelated u={0}; uint8_t *bytes=(uint8_t *)malloc(size+64); size_t count,i; unsigned hash=2166136261u;
+    assert(bytes); nbt_writer_init(&u.writer,bytes,size+64,NULL);
+    assert(nbt_read(raw,size,NULL,unrelated_tag,&u,NULL)==NBT_OK && nbt_writer_finish(&u.writer,&count)==NBT_OK);
+    for(i=0;i<count;++i) hash=(hash^bytes[i])*16777619u;
+    free(bytes); return hash;
 }
 
 int main(int argc,char **argv)
@@ -66,14 +82,14 @@ int main(int argc,char **argv)
     chunk->x=4; chunk->z=1; /* Direct read: never attach originals to a save-capable cache. */
     assert(beta_region_read_chunk(&world,chunk)==WORLD_OK);
     assert(chunk->beta_raw && chunk->beta_raw_size>WORLD_CHUNK_VOLUME);
-    free(chunk->beta_raw); free(chunk);
+    block_entities_free(chunk); world_entities_free(chunk); world_ticks_free(chunk); free(chunk->beta_raw); free(chunk);
     assert(world_close(&world)==WORLD_OK);
     open_beta(&world,argv[2]);
     chunk=(Chunk *)calloc(1,sizeof(*chunk)); assert(chunk);
     chunk->x=-12; chunk->z=7;
     assert(beta_region_read_chunk(&world,chunk)==WORLD_OK);
     assert(chunk->beta_raw && chunk->beta_raw_size>WORLD_CHUNK_VOLUME);
-    free(chunk->beta_raw); free(chunk);
+    block_entities_free(chunk); world_entities_free(chunk); world_ticks_free(chunk); free(chunk->beta_raw); free(chunk);
     assert(world_close(&world)==WORLD_OK);
 
     snprintf(clone,sizeof(clone),"build/beta-region-test-%d",(int)test_pid());
@@ -93,14 +109,48 @@ int main(int argc,char **argv)
     before=world_get_block(&world,72,80,19);
     after=before==BLOCK_STONE ? BLOCK_GLASS : BLOCK_STONE;
     assert(world_set_block(&world,72,80,19,(uint8_t)after));
+    /* Light can reach a cached placeholder beyond the original region. No
+     * fabricated region chunk should be written, and exit must still succeed. */
+    {
+        Chunk *missing=world_get_chunk(&world,10000,10000);
+        assert(missing && !missing->beta_raw);
+        world_relight_chunk(&world,missing);
+    }
     assert(world_close(&world)==WORLD_OK);
     open_beta(&world,clone);
     chunk=world_get_chunk(&world,4,1);
-    assert(chunk && chunk->beta_raw && chunk->beta_raw_size==raw_size);
+    assert(chunk && chunk->beta_raw);
     assert(world_get_block(&world,72,80,19)==after);
-    for (i=0;i<raw_size;++i)
-        if (!terrain_byte(i,chunk)) assert(raw[i]==chunk->beta_raw[i]);
+    assert(unrelated_hash(raw,raw_size)==unrelated_hash(chunk->beta_raw,chunk->beta_raw_size));
     free(raw);
+    /* Real Minecraft lists, including a later terrain-only save of a cached chunk. */
+    {
+        BlockEntity *chest;
+        assert(world_set_block(&world,72,81,19,54));
+        chest=block_entity_get(&world,72,81,19,1); assert(chest);
+        chest->slots[0]=(InventorySlot){35,19,6}; block_entity_changed(&world,chest);
+        world_drop_stack(&world,74,82,19,(InventorySlot){278,1,123});
+        assert(world_save(&world)==WORLD_OK);
+        assert(world_set_block(&world,73,80,19,20)); assert(world_save(&world)==WORLD_OK);
+    }
+    assert(world_close(&world)==WORLD_OK);
+    open_beta(&world,clone);
+    {
+        BlockEntity *chest=block_entity_get(&world,72,81,19,0); ItemDrop items[128]; int count;
+        assert(chest && chest->slots[0].id==35 && chest->slots[0].count==19 && chest->slots[0].damage==6);
+        count=world_items_visible(&world,items,128);
+        for(i=0;i<(size_t)count;++i) if(items[i].id==278 && items[i].damage==123) break;
+        assert(i<(size_t)count && items[i].count==1);
+        assert(world_set_block(&world,72,81,19,0) && world_save(&world)==WORLD_OK);
+    }
+    assert(world_close(&world)==WORLD_OK);
+    open_beta(&world,clone);
+    assert(!block_entity_get(&world,72,81,19,0));
+    {
+        ItemDrop items[128]; int count=world_items_visible(&world,items,128);
+        for(i=0;i<(size_t)count;++i) if(items[i].id==35 && items[i].damage==6 && items[i].count==19) break;
+        assert(i<(size_t)count);
+    }
     assert(world_close(&world)==WORLD_OK);
     assert(remove(copy)==0);
     assert(test_rmdir(region)==0);

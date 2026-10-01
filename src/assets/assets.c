@@ -13,12 +13,17 @@ static const char *const files[ASSET_COUNT] = {
     "assets/gui/widgets.png", "assets/gui/background.png",
     "assets/gui/icons.png", "assets/gui/panorama.png",
     "assets/textures/terrain.png", "assets/fonts/ascii.png",
-    "assets/gui/inventory.png", "assets/gui/items.png"
+    "assets/gui/inventory.png", "assets/gui/items.png",
+    "assets/gui/crafting.png", "assets/gui/furnace.png", "assets/gui/container.png",
+    "assets/textures/mob/char.png"
 };
 static char root[512];
 static Texture2D textures[ASSET_COUNT];
 static unsigned char attempted[ASSET_COUNT];
 static Texture2D fallback;
+static Sound sounds[ASSET_SOUND_COUNT];
+static unsigned char sound_attempted[ASSET_SOUND_COUNT];
+static const char *const sound_files[ASSET_SOUND_COUNT]={"assets/sounds/portal/portal.ogg"};
 
 void assets_init(const char *game_root)
 {
@@ -26,6 +31,7 @@ void assets_init(const char *game_root)
     memset(textures, 0, sizeof(textures));
     memset(attempted, 0, sizeof(attempted));
     memset(&fallback, 0, sizeof(fallback));
+    memset(sounds,0,sizeof(sounds)); memset(sound_attempted,0,sizeof(sound_attempted));
 }
 
 const char *assets_path(AssetId id, char *buffer, size_t capacity)
@@ -85,6 +91,24 @@ Image assets_load_image(AssetId id)
     return image;
 }
 
+Sound assets_get_sound(AssetSoundId id)
+{
+    Sound empty={0}; char path[768]; FILE *file;
+    if(id<0 || id>=ASSET_SOUND_COUNT) return empty;
+    if(!sound_attempted[id]) {
+        sound_attempted[id]=1;
+        if(game_path_join(path,sizeof(path),root,sound_files[id]) && (file=fopen(path,"rb"))!=NULL) {
+            fclose(file); sounds[id]=LoadSound(path);
+        }
+        if(!sounds[id].source) fprintf(stderr,"Missing optional sound: %s\n",sound_files[id]);
+    }
+    return sounds[id];
+}
+void assets_release_sounds(void)
+{
+    int i; for(i=0;i<ASSET_SOUND_COUNT;++i) if(sounds[i].source) UnloadSound(sounds[i]);
+    memset(sounds,0,sizeof(sounds)); memset(sound_attempted,0,sizeof(sound_attempted));
+}
 void assets_shutdown(void)
 {
     int i;

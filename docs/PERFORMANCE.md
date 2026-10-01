@@ -26,13 +26,14 @@ needs a different texture strategy and a benchmark on the target hardware.
 
 The renderer's 16-byte local-coordinate vertex stores short positions and UVs
 plus RGBA8 colors. It does not send normals or expand positions to floats on
-the CPU for each draw. Its 512 x 512 RGBA atlas occupies 1 MiB at level zero;
-the full generated mip chain is 1,398,100 bytes. The added slots hold Beta
+the CPU for each draw. Its 1024 x 1024 RGBA atlas occupies 4 MiB at level zero;
+the full generated mip chain is 5,592,404 bytes. The added slots hold Beta
 wool colors, spruce/birch log sides, spruce leaves, planks, selected
-ore/stone/Nether cube textures, plant cutouts and the four Beta slab materials.
+ore/stone/Nether cube textures, plant cutouts, the four Beta slab materials, containers, cactus, torches and fluids.
 Slot zero carries the stone slab top because air has no rendered faces. Half
-slab faces and exposed cube faces share the cached opaque mesh. Mip levels are made once at
-atlas creation. Source pixels come from selected CoterieCraft Beta terrain
+slab faces and exposed cube faces share the cached opaque mesh. Static mip levels are made once at
+atlas creation. CPU animation uploads only visible fluid/portal cells and levels
+0-4; no animated cells are uploaded when none are visible. Source pixels come from selected CoterieCraft Beta terrain
 tiles when `build/assets/textures/terrain.png` is present; procedural pixels
 remain a missing-asset fallback. The default is mipmaps off for the pixel look, with levels
 0-4 selectable where the current OpenGL context supports the required texture
@@ -140,3 +141,22 @@ A subsequent 240-frame distance-8 streaming run measured 232.829 FPS average,
 126.411 FPS 1% low, with mean mesh time ~3.73 ms. These runs are not a controlled
 before/after comparison; earlier timing above remains historical. Mesh work
 continues to dominate this workload. No GMA performance result is claimed.
+
+## Gameplay additions
+
+Fluid shores use four shared corner heights and exposed side quads. Flat
+interiors retain greedy merging. Narrow torches, cactus and container faces
+stay in cached chunk meshes. Remote player models are limited to 64 visible
+entities per frame; local item drawing is bounded by the 128-item render list.
+Neither path uses shaders. The due-time block queue holds 4096 cells with hash
+deduplication and a per-tick update budget; supported sand is not continuously
+scheduled. Cactus random sampling is 80 positions per loaded chunk/tick.
+All GPU memory numbers remain requests, not verified physical VRAM residency.
+
+On the RTX 3060 Windows host, 300-frame uncapped runs on 2026-10-02 (first 100
+frames excluded) measured median CPU frame intervals of 0.311 ms for `bench_flat`
+and 0.323 ms for `bench_worstcase_transparency`; p95 was 0.454/0.398 ms.
+Their median terrain draw counts were 23/41 with 6,480/46,420 submitted vertices.
+These are CPU submission timings without a GPU completion fence, not sustained
+displayed FPS or a GMA result. They also exclude simulation and first-person
+rendering. Use normal play and `--profile-gpu` for those remaining workloads.

@@ -1,4 +1,7 @@
 #include "world.h"
+#include "block_entity.h"
+#include "entities.h"
+#include "ticks.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -47,7 +50,18 @@ static const BlockDef block_defs[BLOCK_COUNT] = {
     [BETA_BLOCK_RED_MUSHROOM] = {"Red mushroom",0,0,BLOCK_LAYER_CUTOUT,58,58,58,0},
     [BETA_BLOCK_REEDS] = {"Reeds",0,0,BLOCK_LAYER_CUTOUT,59,59,59,0},
     [BETA_BLOCK_DOUBLE_SLAB] = {"Double slab",1,1,BLOCK_LAYER_OPAQUE,0,60,0,0},
-    [BETA_BLOCK_SLAB] = {"Slab",1,0,BLOCK_LAYER_OPAQUE,0,60,0,0}
+    [BETA_BLOCK_SLAB] = {"Slab",1,0,BLOCK_LAYER_OPAQUE,0,60,0,0},
+    [BETA_BLOCK_CRAFTING_TABLE] = {"Crafting Table",1,1,BLOCK_LAYER_OPAQUE,70,71,17,0},
+    [BETA_BLOCK_CHEST] = {"Chest",1,1,BLOCK_LAYER_OPAQUE,73,74,73,0},
+    [BETA_BLOCK_FURNACE] = {"Furnace",1,1,BLOCK_LAYER_OPAQUE,76,77,76,0},
+    [BETA_BLOCK_BURNING_FURNACE] = {"Furnace",1,1,BLOCK_LAYER_OPAQUE,76,77,76,13},
+    [BETA_BLOCK_REDSTONE_TORCH] = {"Redstone Torch",0,0,BLOCK_LAYER_CUTOUT,80,80,80,7},
+    [BETA_BLOCK_UNLIT_REDSTONE_TORCH] = {"Redstone Torch",0,0,BLOCK_LAYER_CUTOUT,81,81,81,0},
+    [BETA_BLOCK_CACTUS] = {"Cactus",1,0,BLOCK_LAYER_OPAQUE,67,68,69,0},
+    [BETA_BLOCK_NETHER_PORTAL] = {"Nether Portal",0,0,BLOCK_LAYER_TRANSPARENT,66,66,66,11},
+    [BETA_BLOCK_FLOWING_LAVA] = {"Lava",0,0,BLOCK_LAYER_OPAQUE,64,65,64,15},
+    [BETA_BLOCK_STILL_LAVA] = {"Lava",0,0,BLOCK_LAYER_OPAQUE,64,65,64,15},
+    [BETA_BLOCK_REDSTONE_WIRE] = {"Redstone",0,0,BLOCK_LAYER_CUTOUT,82,82,82,0}
 };
 
 static const BlockDef unknown_solid = {"Unimplemented solid",1,1,BLOCK_LAYER_OPAQUE,1,1,1,0};
@@ -346,7 +360,7 @@ static void relight_block(World *world, Chunk *chunk)
         }
     }
     while (count) {
-        int x,y,z;
+        int x,z;
         uint8_t current;
         index=queue[head];
         head=(head+1)%WORLD_CHUNK_VOLUME;
@@ -503,6 +517,8 @@ WorldError world_init(World *world, uint64_t seed, int flat, size_t cache_capaci
     world->lookup_capacity=lookup_capacity;
     world->cache_capacity=cache_capacity;
     world->seed=seed;
+    world->random_seed=(seed^UINT64_C(0x5deece66d))&UINT64_C(0xffffffffffff);
+    world->random_tick=(uint32_t)seed;
     world->flat=(uint8_t)(flat != 0);
     world->structures=1;
     return WORLD_OK;
@@ -656,6 +672,9 @@ Chunk *world_get_chunk(World *world, int32_t cx, int32_t cz)
         err=WORLD_OK;
     }
     if (err!=WORLD_OK) {
+        block_entities_free(incoming);
+        world_entities_free(incoming);
+        world_ticks_free(incoming);
         free(incoming->beta_raw);
         if (incoming!=world->staging) free(incoming);
         world->error=err;
@@ -673,20 +692,31 @@ Chunk *world_get_chunk(World *world, int32_t cx, int32_t cz)
             }
         }
         outgoing=world->cache[victim];
-        if ((outgoing->dirty_flags&CHUNK_DIRTY_SAVE) && world->persistent) {
+        if(outgoing->ticks) world_ticks_dirty_countdowns(world);
+        if ((outgoing->dirty_flags&CHUNK_DIRTY_SAVE) && world->persistent &&
+            (!world->beta_format || outgoing->beta_raw)) {
             err=world->beta_format ? world->write_beta_chunk(world,outgoing) :
                 world_storage_write_chunk(world,outgoing);
             if (err!=WORLD_OK) {
+                block_entities_free(incoming);
+                world_entities_free(incoming);
+                world_ticks_free(incoming);
+                free(incoming->beta_raw); incoming->beta_raw=NULL;
                 if (incoming!=world->staging) free(incoming);
                 world->error=err;
                 return NULL;
             }
             outgoing->dirty_flags &= ~CHUNK_DIRTY_SAVE;
+            outgoing->ticks_saved_at=world->tick;
         }
         mark_mesh_neighbors(world,outgoing->x,outgoing->z);
         if (outgoing->render_data && world->destroy_render_data)
             world->destroy_render_data(outgoing->render_data);
         outgoing->render_data=NULL;
+        world_physics_forget_chunk(world,outgoing);
+        block_entities_free(outgoing);
+        world_entities_free(outgoing);
+        world_ticks_free(outgoing);
         free(outgoing->beta_raw);
         outgoing->beta_raw=NULL;
         world->cache[victim]=incoming;
@@ -694,6 +724,7 @@ Chunk *world_get_chunk(World *world, int32_t cx, int32_t cz)
         world->staging=outgoing;
     }
     world_touch_chunk(world,incoming);
+    world_physics_loaded(world,incoming);
     mark_mesh_neighbors(world,cx,cz);
     /* Original McRegion light is authoritative on initial load. In particular
      * an unloaded neighbour is not proof that an existing light source died.
@@ -745,7 +776,13 @@ size_t world_memory_bytes(const World *world)
     bytes=sizeof(*world) + world->cache_capacity*sizeof(Chunk *) +
            world->lookup_capacity*sizeof(Chunk *) +
            (world->cache_count + (world->staging!=NULL ? 1u : 0u))*sizeof(Chunk);
-    for (i=0;i<world->cache_count;++i) bytes+=world->cache[i]->beta_raw_size;
+    for (i=0;i<world->cache_count;++i) {
+        const BlockEntity *b; const SavedEntity *e; const Chunk *c=world->cache[i];
+        bytes+=c->beta_raw_size;
+        for(b=c->entities;b;b=b->next) bytes+=sizeof(*b)+b->raw_size;
+        for(e=c->saved_entities;e;e=e->next) bytes+=sizeof(*e)+e->raw_size;
+        { const SavedTick *t; for(t=c->ticks;t;t=t->next) bytes+=sizeof(*t)+t->raw_size; }
+    }
     return bytes;
 }
 void world_set_render_data_destroy(World *world, void (*destroy)(void *))
@@ -777,29 +814,6 @@ uint8_t world_peek_block(const World *world, int wx, int y, int wz)
     return chunk ? chunk_get_block(chunk,x,y,z) : BLOCK_AIR;
 }
 
-static void physics_enqueue(World *world, int x, int y, int z)
-{
-    unsigned tail;
-    if (world->network_mode || (unsigned)y>=WORLD_HEIGHT ||
-        world->physics_count>=WORLD_PHYSICS_QUEUE) return;
-    tail=(world->physics_head+world->physics_count)%WORLD_PHYSICS_QUEUE;
-    world->physics[tail].x=x;
-    world->physics[tail].y=(uint8_t)y;
-    world->physics[tail].z=z;
-    ++world->physics_count;
-}
-
-static void physics_neighbors(World *world, int x, int y, int z)
-{
-    physics_enqueue(world,x,y,z);
-    physics_enqueue(world,x,y+1,z);
-    physics_enqueue(world,x,y-1,z);
-    physics_enqueue(world,x+1,y,z);
-    physics_enqueue(world,x-1,y,z);
-    physics_enqueue(world,x,y,z+1);
-    physics_enqueue(world,x,y,z-1);
-}
-
 int world_set_block(World *world, int wx, int y, int wz, uint8_t id)
 {
     int32_t cx,cz;
@@ -812,6 +826,12 @@ int world_set_block(World *world, int wx, int y, int wz, uint8_t id)
     if (!chunk) return 0;
     if (world->beta_format && !chunk->beta_raw) return 0;
     if (chunk_get_block(chunk,x,y,z)==id) return 1;
+    {
+        uint8_t old=chunk_get_block(chunk,x,y,z);
+        if ((old==54 || old==61 || old==62) &&
+            !((old==61 || old==62) && (id==61 || id==62)))
+            block_entity_remove(world,wx,y,wz,!world->network_mode);
+    }
     chunk_set_block(chunk,x,y,z,id);
     /* A newly placed block starts with metadata zero. Network block-change
      * packets set their transmitted nibble immediately afterward. */
@@ -821,43 +841,25 @@ int world_set_block(World *world, int wx, int y, int wz, uint8_t id)
     if (!world->physics_processing) flush_block_light(world);
     chunk->dirty_flags|=CHUNK_DIRTY_MESH|CHUNK_DIRTY_SAVE;
     mark_mesh_neighbors(world,cx,cz);
-    physics_neighbors(world,wx,y,wz);
+    world_physics_notify(world,wx,y,wz);
     return 1;
 }
 
-static int physics_water(uint8_t id)
-{
-    return id==BETA_BLOCK_STILL_WATER || id==BETA_BLOCK_FLOWING_WATER;
-}
-
-static int physics_replaceable(const World *world, int x, int y, int z)
-{
-    int32_t cx,cz;
-    uint8_t id;
-    if ((unsigned)y>=WORLD_HEIGHT) return 0;
-    local_from_world(x,&cx); local_from_world(z,&cz);
-    if (!world_peek_chunk(world,cx,cz)) return 0;
-    id=world_peek_block(world,x,y,z);
-    return id==BLOCK_AIR || physics_water(id);
-}
-
-static int physics_chunk_loaded(const World *world,int x,int z)
-{
-    int32_t cx,cz;
-    local_from_world(x,&cx);
-    local_from_world(z,&cz);
-    return world_peek_chunk(world,cx,cz)!=NULL;
-}
-
-static void physics_drop(World *world,uint8_t id,int x,int y,int z)
+void world_drop_stack(World *world,int x,int y,int z,InventorySlot item)
 {
     unsigned index;
-    if (world->drop_count>=WORLD_DROP_QUEUE) return;
+    if (!world || world->network_mode || item.id<=0 || item.count<=0) return;
+    if(!world_item_spawn(world,x,y,z,item)) return;
+    /* The observer queue is separate from the saved entity. A full queue
+     * must never erase a stack dropped by a container or on player death. */
+    if(world->drop_count>=WORLD_DROP_QUEUE) return;
     index=(world->drop_head+world->drop_count)%WORLD_DROP_QUEUE;
     world->drops[index].x=x;
     world->drops[index].y=(uint8_t)y;
     world->drops[index].z=z;
-    world->drops[index].id=id;
+    world->drops[index].id=item.id;
+    world->drops[index].count=item.count;
+    world->drops[index].damage=item.damage;
     ++world->drop_count;
 }
 
@@ -870,61 +872,16 @@ int world_take_drop(World *world,WorldDropEvent *drop)
     return 1;
 }
 
-void world_step_physics(World *world, unsigned max_updates)
+void world_finish_light_updates(World *world) { flush_block_light(world); }
+uint8_t world_peek_metadata(const World *world,int wx,int y,int wz)
 {
-    unsigned done=0;
-    if (!world || world->network_mode) return;
-    world->physics_processing=1;
-    while (world->physics_count && done++<max_updates) {
-        WorldPhysicsCell cell=world->physics[world->physics_head];
-        int x=cell.x,y=cell.y,z=cell.z;
-        uint8_t id,meta;
-        world->physics_head=(world->physics_head+1u)%WORLD_PHYSICS_QUEUE;
-        --world->physics_count;
-        id=world_peek_block(world,x,y,z);
-        if (id==BLOCK_SAND || id==BETA_BLOCK_GRAVEL) {
-            if (y>0 && physics_replaceable(world,x,y-1,z)) {
-                world_set_block(world,x,y-1,z,id);
-                world_set_block(world,x,y,z,BLOCK_AIR);
-            }
-        } else if (id==BLOCK_TORCH || id==BETA_BLOCK_REDSTONE_TORCH ||
-                   id==BETA_BLOCK_UNLIT_REDSTONE_TORCH) {
-            int sx=x,sy=y-1,sz=z;
-            meta=world_get_metadata(world,x,y,z)&7u;
-            if (meta==1) { sx=x-1; sy=y; }
-            else if (meta==2) { sx=x+1; sy=y; }
-            else if (meta==3) { sz=z-1; sy=y; }
-            else if (meta==4) { sz=z+1; sy=y; }
-            if ((unsigned)sy<WORLD_HEIGHT &&
-                !physics_chunk_loaded(world,sx,sz)) continue;
-            if (!world_block_def(world_peek_block(world,sx,sy,sz))->opaque) {
-                physics_drop(world,id,x,y,z);
-                world_set_block(world,x,y,z,BLOCK_AIR);
-            }
-        } else if (physics_water(id)) {
-            static const int dx[4]={1,-1,0,0},dz[4]={0,0,1,-1};
-            int i,level;
-            meta=world_get_metadata(world,x,y,z);
-            if (y>0 && world_peek_block(world,x,y-1,z)==BLOCK_AIR &&
-                physics_replaceable(world,x,y-1,z)) {
-                world_set_block(world,x,y-1,z,BETA_BLOCK_FLOWING_WATER);
-                world_set_metadata(world,x,y-1,z,8);
-            } else {
-                level=id==BETA_BLOCK_STILL_WATER ? 0 : (meta&7u);
-                if (level>=7) continue;
-                for (i=0;i<4;++i) {
-                    int nx=x+dx[i],nz=z+dz[i];
-                    if (world_peek_block(world,nx,y,nz)==BLOCK_AIR &&
-                        physics_replaceable(world,nx,y,nz)) {
-                        world_set_block(world,nx,y,nz,BETA_BLOCK_FLOWING_WATER);
-                        world_set_metadata(world,nx,y,nz,(uint8_t)(level+1));
-                    }
-                }
-            }
-        }
-    }
-    world->physics_processing=0;
-    flush_block_light(world);
+    int32_t cx,cz;
+    int x,z;
+    Chunk *chunk;
+    if ((unsigned)y>=WORLD_HEIGHT) return 0;
+    x=local_from_world(wx,&cx); z=local_from_world(wz,&cz);
+    chunk=world_peek_chunk(world,cx,cz);
+    return chunk ? chunk_get_metadata(chunk,x,y,z) : 0;
 }
 
 uint8_t world_get_metadata(World *world, int wx, int y, int wz)
@@ -971,13 +928,21 @@ WorldError world_save(World *world)
     WorldError err;
     if (!world || !world->cache) return WORLD_ERROR_INVALID_ARGUMENT;
     if (!world->persistent) return world->error=WORLD_OK;
+    world_ticks_dirty_countdowns(world);
     for (i=0; i<world->cache_count; ++i) {
         Chunk *chunk=world->cache[i];
         if (!(chunk->dirty_flags&CHUNK_DIRTY_SAVE)) continue;
+        /* Missing Beta chunks are read-only empty cache entries. Derived light
+         * updates must never make these unsaveable entries block world exit. */
+        if (world->beta_format && !chunk->beta_raw) {
+            chunk->dirty_flags &= ~CHUNK_DIRTY_SAVE;
+            continue;
+        }
         err=world->beta_format ? world->write_beta_chunk(world,chunk) :
             world_storage_write_chunk(world,chunk);
         if (err!=WORLD_OK) return world->error=err;
-        chunk->dirty_flags &= ~CHUNK_DIRTY_SAVE;
+        chunk->dirty_flags &= ~(CHUNK_DIRTY_SAVE|CHUNK_DIRTY_ENTITIES|CHUNK_DIRTY_TICKS);
+        chunk->ticks_saved_at=world->tick;
     }
     err=world->beta_format ? WORLD_OK : world_storage_write_info(world);
     return world->error=err;
@@ -994,6 +959,9 @@ WorldError world_close(World *world)
         Chunk *chunk=world->cache[i];
         if (chunk->render_data && world->destroy_render_data)
             world->destroy_render_data(chunk->render_data);
+        block_entities_free(chunk);
+        world_entities_free(chunk);
+        world_ticks_free(chunk);
         free(chunk->beta_raw);
         free(chunk);
     }

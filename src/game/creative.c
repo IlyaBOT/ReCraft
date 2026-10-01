@@ -124,6 +124,15 @@ int beta_item_tile(int id,int damage)
 }
 const char *beta_item_name(int id)
 {
+    switch(id) {
+    case 58: return "Crafting Table";
+    case 54: return "Chest";
+    case 61: case 62: return "Furnace";
+    case 75: case 76: return "Redstone Torch";
+    case 81: return "Cactus";
+    case 90: return "Nether Portal";
+    default: break;
+    }
     size_t i;
     for (i=0;i<sizeof(icons)/sizeof(icons[0]);++i)
         if (icons[i].id==id) return icons[i].name;
@@ -148,7 +157,7 @@ int creative_get(int index,InventorySlot *out)
         if (id==360) id=2256;
         n=variants(id);
         if (index<n) {
-            out->id=id; out->damage=index; out->count=64;
+            out->id=id; out->damage=index; out->count=inventory_stack_limit(id);
             return 1;
         }
         index-=n;

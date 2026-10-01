@@ -7,8 +7,8 @@ of the main menu. `ReCraft --version` prints it without opening a window.
 GitHub Actions builds Windows/Linux and macOS on the local Vesper runner.
 See [CI, artifacts and host build instructions](docs/CI.md).
 
-The game has 16 x 16 x 128 chunk columns, deterministic terrain for ReCraft saves, walking and flying controls, block interaction, an inventory, menus, video settings, a debug overlay, and reproducible benchmark scenes. Chunk block bytes use the Beta 1.7.3 ID range 0..96 with separate metadata nibbles; native `.rcg` version 1 saves are migrated on load to version 2. Minecraft Beta 1.7.3 `level.dat` and existing McRegion `.mcr` chunks can also be opened for play. Edits to loaded Beta chunks are written back in McRegion format. Missing Beta chunks are not generated yet. Most Beta blocks still use placeholder geometry and behavior, and ReCraft's own terrain generator is not Beta-compatible. The per-block status is in the [Beta compatibility matrix](docs/BETA_COMPATIBILITY_MATRIX.md).
-The offline Minecraft Beta 1.7.3 protocol 14 client is experimental. It needs testing against a real compatible server; it does not authenticate to online servers. The interface uses selected user-provided CoterieCraft Beta textures and an original bitmap font atlas. Sound remains synthesized. See [asset sources](docs/ASSET_SOURCES.md).
+The game has 16 x 16 x 128 chunk columns, deterministic terrain for ReCraft saves, walking and flying controls, block interaction, crafting and chest/furnace inventories, survival health and mining, menus, video settings, a debug overlay, and reproducible benchmark scenes. Chunk block bytes use the Beta 1.7.3 ID range 0..96 with separate metadata nibbles; native `.rcg` version 1 saves are migrated on load to version 2. Minecraft Beta 1.7.3 `level.dat` and existing McRegion `.mcr` chunks can also be opened for play. Edits to loaded Beta chunks are written back in McRegion format. Missing Beta chunks are not generated yet. Most Beta blocks still use placeholder geometry and behavior, and ReCraft's own terrain generator is not Beta-compatible. The per-block status is in the [Beta compatibility matrix](docs/BETA_COMPATIBILITY_MATRIX.md).
+The offline Minecraft Beta 1.7.3 protocol 14 client is experimental. It needs testing against a real compatible server; it does not authenticate to online servers. The interface uses selected user-provided CoterieCraft Beta textures and an original bitmap font atlas. Portal ambience uses the original sound asset; other effects remain synthesized. See [asset sources](docs/ASSET_SOURCES.md).
 
 ## Build
 
@@ -38,7 +38,8 @@ See [runtime layout](docs/RUNTIME_LAYOUT.md).
 - Left/right mouse: break/place the selected block. Number keys 1-9 and the
   mouse wheel select the hotbar slot.
 - F: fly in creative worlds. Shift descends while flying.
-- E: open the inventory. Survival uses 36 slots (click two slots to swap).
+- E: open the inventory. Survival has 36 slots and a 2 x 2 crafting grid.
+  Left click moves/merges stacks; right click splits a stack or places one item.
   Creative opens a scrollable Beta block/item catalogue: select a hotbar slot,
   then click an item. The mouse wheel and right scrollbar browse the catalogue.
 - Esc: pause; F2: save a screenshot in `screenshots/`; F3: measurements and renderer state. While connected, T opens
@@ -46,8 +47,16 @@ See [runtime layout](docs/RUNTIME_LAYOUT.md).
 
 The local simulation runs at 20 Hz and interpolates the camera between ticks.
 Creative placement leaves stack counts unchanged; survival placement consumes a
-block and broken blocks can be picked up. Sand/gravel falling, torch support
-and water flow are local approximations; unsupported torches drop as items.
+block. Survival mining uses Beta hardness, tool speed, harvest and durability
+rules, with visible cracks and collectible drops. Workbenches open 3 x 3
+crafting (151 vanilla recipes); furnaces smelt using fuel/input/output slots.
+Chests store 27 slots or 54 in a valid adjacent pair and drop their contents
+when broken. Health, damage, air and death/respawn are present. Food heals
+immediately as in Beta; buckets collect sources and place water/lava.
+Water/lava use scheduled 5/30-tick updates, sloping surfaces and side faces.
+Pending updates, item entities and container contents survive saving. Redstone
+supports torch inversion/burnout and basic flat wire; other mechanisms remain
+incomplete. See [the gameplay milestone and checks](docs/GAMEPLAY_PARITY.md).
 Minecraft Beta worlds load their
 player position and inventory from `level.dat` and now save those fields back
 through a gzip temporary file. Reads fall back to `level.dat_old` when the primary
@@ -88,3 +97,19 @@ are in [ARCHITECTURE.md](docs/ARCHITECTURE.md). Implemented protocol traffic
 and its limits are in [NETWORK_PROTOCOLS.md](docs/NETWORK_PROTOCOLS.md). The
 original GMA 950 analysis is preserved in
 [OPTIMIZATION_NOTES.md](docs/OPTIMIZATION_NOTES.md).
+
+## Gameplay regression views
+
+These previews seed **in-memory** smoke worlds only; persistent worlds never
+receive sample inventory or fixture blocks:
+
+```powershell
+build\ReCraft.exe --smoke-test --screen crafting --no-audio --frames 40 --capture build/crafting.png
+build\ReCraft.exe --smoke-test --screen furnace --no-audio --frames 40 --capture build/furnace.png
+build\ReCraft.exe --smoke-test --screen large-chest --no-audio --frames 40 --capture build/chest.png
+build\ReCraft.exe --smoke-test --screen blocks --no-audio --frames 50 --capture build/blocks.png
+```
+
+Other views are `player` (2 x 2 crafting), `inventory` (Creative catalogue),
+`chest` and `health`. Smoke views ignore live movement/mouse input so captures
+are reproducible. Normal interactive play remains available from the menu.

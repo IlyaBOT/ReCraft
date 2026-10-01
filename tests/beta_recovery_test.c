@@ -99,6 +99,19 @@ static void corrupt(const char *path)
     assert(fwrite("invalid",1,7,file)==7 && fclose(file)==0);
 }
 
+static void fixture_without_player(const char *path)
+{
+    unsigned char bytes[256]; size_t size; NbtWriter writer; gzFile file;
+    nbt_writer_init(&writer,bytes,sizeof(bytes),NULL);
+    tag(&writer,NBT_COMPOUND,"",0); tag(&writer,NBT_COMPOUND,"Data",0);
+    tag(&writer,NBT_LONG,"RandomSeed",42); tag(&writer,NBT_INT,"version",19132);
+    tag(&writer,NBT_INT,"SpawnY",64);
+    assert(nbt_writer_end(&writer)==NBT_OK && nbt_writer_end(&writer)==NBT_OK);
+    assert(nbt_writer_finish(&writer,&size)==NBT_OK);
+    file=gzopen(path,"wb6"); assert(file);
+    assert(gzwrite(file,bytes,(unsigned)size)==(int)size && gzclose(file)==Z_OK);
+}
+
 static unsigned hash_file(const char *path)
 {
     FILE *file=fopen(path,"rb");
@@ -179,6 +192,20 @@ int main(void)
     primary_hash=hash_file(primary); state.world_time=4568;
     assert(beta_level_save(dir,&state));
     assert(hash_file(old)==primary_hash && hash_file(backup)==old_hash);
+    /* Imported saves can lack Player/Time entirely. Save and Exit must create
+     * the missing vanilla fields instead of leaving the pause screen stuck. */
+    fixture_without_player(primary);
+    assert(beta_world_discover(parent,worlds,2)==1 && !worlds[0].has_player);
+    state.has_vitals=1; state.health=13; state.air=150; state.fire=25; state.on_ground=1;
+    assert(beta_level_save(dir,&state));
+    assert(beta_world_discover(parent,worlds,2)==1 && worlds[0].has_player && worlds[0].seed==42);
+    assert(worlds[0].world_time==4568 && worlds[0].player_y==70.5);
+    assert(beta_world_read_inventory(dir,loaded) && loaded[1].id==1 && loaded[1].count==7);
+    {
+        int health,air,fire;
+        assert(beta_world_read_vitals(dir,&health,&air,&fire));
+        assert(health==13 && air==150 && fire==25);
+    }
     /* Neither reader nor writer changes an unusable world. */
     corrupt(primary); corrupt(old);
     memset(loaded,0x55,sizeof(loaded)); memcpy(unchanged,loaded,sizeof(loaded));

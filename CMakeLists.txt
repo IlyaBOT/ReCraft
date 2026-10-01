@@ -149,7 +149,8 @@ endif()
 # never removes saves or any other persistent runtime directory.
 add_custom_target(deploy_assets ALL)
 set(RECRAFT_ASSETS gui/widgets.png gui/background.png gui/icons.png gui/inventory.png
-    gui/items.png gui/panorama.png textures/terrain.png fonts/ascii.png)
+    gui/items.png gui/panorama.png gui/crafting.png gui/furnace.png gui/container.png
+    textures/terrain.png textures/mob/char.png fonts/ascii.png sounds/portal/portal.ogg)
 foreach(_asset ${RECRAFT_ASSETS})
     get_filename_component(_directory "${_asset}" DIRECTORY)
     add_custom_command(TARGET deploy_assets POST_BUILD
@@ -174,6 +175,18 @@ if(WIN32 AND OPENAL_RUNTIME)
 endif()
 
 enable_testing()
+add_executable(gameplay_test tests/gameplay_test.c src/world/world.c src/world/storage.c src/world/beta_blocks.c src/game/player.c)
+target_include_directories(gameplay_test PRIVATE src)
+target_link_libraries(gameplay_test m)
+add_test(NAME gameplay_test COMMAND gameplay_test)
+set_tests_properties(gameplay_test PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+add_executable(mining_test tests/mining_test.c src/game/mining.c src/game/inventory.c)
+target_include_directories(mining_test PRIVATE src)
+target_link_libraries(mining_test m)
+add_test(NAME mining_test COMMAND mining_test)
+add_executable(crafting_test tests/crafting_test.c src/game/crafting.c src/game/inventory.c src/world/beta_blocks.c)
+target_include_directories(crafting_test PRIVATE src)
+add_test(NAME crafting_test COMMAND crafting_test)
 add_executable(inventory_test tests/inventory_test.c src/game/inventory.c src/game/creative.c)
 target_include_directories(inventory_test PRIVATE src)
 add_test(NAME inventory_test COMMAND inventory_test)
@@ -195,7 +208,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/tests/nbt_test.c")
 endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests/renderer_test.c")
     add_executable(renderer_test tests/renderer_test.c src/world/world.c src/world/storage.c
-        src/world/beta_blocks.c src/assets/assets.c src/util/game_paths.c)
+        src/world/beta_blocks.c src/assets/assets.c src/util/game_paths.c src/renderer/texture_animation.c)
     target_include_directories(renderer_test PRIVATE src "${RAYLIB_ROOT}/src")
     target_compile_options(renderer_test PRIVATE -include "${CMAKE_SOURCE_DIR}/src/win_gl_compat.h")
     target_include_directories(renderer_test PRIVATE "${GLFW_ROOT}/include")
@@ -208,7 +221,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/tests/renderer_test.c")
 endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests/network_test.c")
     add_executable(network_test tests/network_test.c src/network/network.c
-        src/network/protocols/protocol_beta_14.c src/world/world.c src/world/storage.c)
+        src/network/protocols/protocol_beta_14.c src/world/world.c src/world/storage.c src/world/beta_blocks.c)
     target_include_directories(network_test PRIVATE src "${ZLIB_INCLUDE_DIRS}")
     target_compile_definitions(network_test PRIVATE RECRAFT_NO_WIN_SHIM)
     target_link_libraries(network_test ${ZLIB_LIBRARIES} Threads::Threads m)
@@ -254,6 +267,17 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/build/saves/New World/region/r.0.0.mcr" AND
         "${CMAKE_SOURCE_DIR}/build/saves/World1")
     set_tests_properties(beta_region_test PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endif()
+
+# Headless world tests use the same container persistence/smelting modules as
+# the client. None of these sources depend on raylib or a graphics context.
+foreach(_world_test world_test renderer_test network_test beta_region_test gameplay_test)
+    if(TARGET ${_world_test})
+        target_sources(${_world_test} PRIVATE src/world/block_entity.c
+            src/world/entities.c
+            src/world/physics.c src/world/ticks.c src/world/fluid.c src/game/mining.c
+            src/game/crafting.c src/game/inventory.c src/nbt/nbt.c)
+    endif()
+endforeach()
 
 # Tests use assert(), including calls with side effects. Keep them active in CI Release.
 add_executable(beta_recovery_test tests/beta_recovery_test.c src/world/beta_level.c

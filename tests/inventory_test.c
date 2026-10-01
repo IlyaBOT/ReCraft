@@ -25,7 +25,7 @@ int main(void)
         assert(!creative_get(creative_count(),&item));
         for (i=0;i<creative_count();++i) {
             assert(creative_get(i,&item));
-            assert(item.id>0 && item.count==64);
+        assert(item.id>0 && item.count==inventory_stack_limit(item.id));
             if (item.id==35) ++wool;
             if (item.id==44) ++slabs;
             if (item.id==351) ++dyes;

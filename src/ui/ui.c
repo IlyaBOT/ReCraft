@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "../game/crafting.h"
 #include "../config.h"
 #include "raylib.h"
 #include "pixel_font.h"
@@ -820,11 +821,21 @@ static UiAction pause_menu(Ui *ui)
         ui->options_parent = UI_SCREEN_PAUSE; ui_set_screen(ui, UI_SCREEN_OPTIONS);
     }
     if (button(ui, 190, 280, 260, 31, "Save and Return to Menu", 1)) {
-        ui->pending_confirm = 4; ui_set_screen(ui, UI_SCREEN_CONFIRM);
+        action.type=UI_ACTION_RETURN_TO_MENU;
     }
+    if (ui->status[0]) centered(ui->status,320,342,10,col(255,180,160,255));
     return action;
 }
 
+static UiAction death_menu(Ui *ui)
+{
+    UiAction action=empty_action();
+    rect(0,0,640,480,col(110,0,0,95));
+    centered("You died!",320,120,28,WHITE);
+    if (button(ui,120,215,400,36,"Respawn",1)) action.type=UI_ACTION_RESPAWN;
+    if (button(ui,120,260,400,36,"Title screen",1)) action.type=UI_ACTION_RETURN_TO_MENU;
+    return action;
+}
 static UiAction confirmation(Ui *ui, const UiWorldEntry *worlds, int world_count,
                              const UiServerEntry *servers, int server_count)
 {
@@ -899,6 +910,7 @@ UiAction ui_frame(Ui *ui, const UiWorldEntry *worlds, int world_count,
         case UI_SCREEN_OPTIONS: return options_menu(ui);
         case UI_SCREEN_VIDEO: return video_menu(ui);
         case UI_SCREEN_PAUSE: return pause_menu(ui);
+        case UI_SCREEN_DEATH: return death_menu(ui);
         case UI_SCREEN_CONFIRM: return confirmation(ui, worlds, world_count, servers, server_count);
         case UI_SCREEN_GAME: return action;
         default: ui_set_screen(ui, UI_SCREEN_MAIN); return main_menu(ui);
@@ -913,7 +925,9 @@ static void tile_quad(int tile, const float x[4], const float y[4], unsigned sha
     u1=((tile%16)*16+15.5f)/256.0f;
     v0=((tile/16)*16+0.5f)/256.0f;
     v1=((tile/16)*16+15.5f)/256.0f;
-    glColor4ub((unsigned char)shade,(unsigned char)shade,(unsigned char)shade,255);
+    if (tile==0 || tile==52 || tile==132)
+        glColor4ub((unsigned char)(shade*4/5),(unsigned char)shade,(unsigned char)(shade*2/3),255);
+    else glColor4ub((unsigned char)shade,(unsigned char)shade,(unsigned char)shade,255);
     glTexCoord2f(u0,v0); glVertex2f(x[0],y[0]);
     glTexCoord2f(u1,v0); glVertex2f(x[1],y[1]);
     glTexCoord2f(u1,v1); glVertex2f(x[2],y[2]);
@@ -1027,7 +1041,7 @@ static void draw_stack(const InventorySlot *item, int x, int y, int size)
 
 void ui_draw_hud(const Ui *ui, int selected_slot, const InventorySlot *hotbar,
                  const char *const labels[9],
-                 int debug_visible, const char *debug_text)
+                 int debug_visible, const char *debug_text,int health,int air,int hurt)
 {
     int i, cx = recraft_screen_width()/2, cy = recraft_screen_height()/2;
     Texture2D widgets = assets_get_texture(ASSET_GUI_WIDGETS);
@@ -1035,6 +1049,22 @@ void ui_draw_hud(const Ui *ui, int selected_slot, const InventorySlot *hotbar,
     Vector2 origin = {0,0};
     Rectangle src, dst;
     begin_layout(ui);
+    if (health>=0) {
+        for (i=0;i<10;++i) {
+            Rectangle heart={(float)(hurt>10 && (hurt/3)%2 ? 25 : 16),0,9,9};
+            Rectangle dest={(float)px(139+i*16),(float)py(414),(float)ps(18),(float)ps(18)};
+            DrawTexturePro(icons,heart,dest,origin,0,WHITE);
+            if (health>i*2) {
+                heart.x=health==i*2+1 ? 61 : 52;
+                DrawTexturePro(icons,heart,dest,origin,0,WHITE);
+            }
+        }
+        if (air<300) for (i=0;i<(air+29)/30 && i<10;++i) {
+            Rectangle bubble={16,18,9,9};
+            Rectangle dest={(float)px(139+i*16),(float)py(394),(float)ps(18),(float)ps(18)};
+            DrawTexturePro(icons,bubble,dest,origin,0,WHITE);
+        }
+    }
     src = (Rectangle){0,0,16,16}; dst = (Rectangle){(float)(cx-8),(float)(cy-8),16,16};
     DrawTexturePro(icons,src,dst,origin,0,WHITE);
     src = (Rectangle){0,0,182,22};
@@ -1049,7 +1079,7 @@ void ui_draw_hud(const Ui *ui, int selected_slot, const InventorySlot *hotbar,
         draw_stack(hotbar ? &hotbar[i] : NULL,x+5,439,29);
     }
     if (labels && selected_slot >= 0 && selected_slot < 9 && labels[selected_slot])
-        centered(labels[selected_slot], 320, 414, 12, col(244, 241, 221, 255));
+        centered(labels[selected_slot],320,health<0 ? 414 : air<300 ? 371 : 389,12,col(244,241,221,255));
     if (debug_visible && debug_text) {
         const char *p = debug_text;
         int row = 0;
@@ -1068,47 +1098,6 @@ void ui_draw_hud(const Ui *ui, int selected_slot, const InventorySlot *hotbar,
     }
 }
 
-static int inventory_slot_xy(int index, int *x, int *y)
-{
-    if (index<0 || index>=RECRAFT_INVENTORY_SLOTS) return 0;
-    *x=144+(8+(index%9)*18)*2;
-    *y=74+(index<9 ? 142 : 84+((index-9)/9)*18)*2;
-    return 1;
-}
-
-int ui_inventory_slot_at(const Ui *ui)
-{
-    int i,x,y;
-    begin_layout(ui);
-    for (i=0;i<RECRAFT_INVENTORY_SLOTS;++i) {
-        inventory_slot_xy(i,&x,&y);
-        if (inside(x,y,32,32)) return i;
-    }
-    return -1;
-}
-
-void ui_draw_inventory(const Ui *ui, const InventorySlot *slots, int selected_slot)
-{
-    Texture2D texture=assets_get_texture(ASSET_GUI_INVENTORY);
-    Rectangle src={0,0,176,166};
-    Rectangle dst;
-    Vector2 origin={0,0};
-    int i,x,y;
-    begin_layout(ui);
-    DrawRectangle(0,0,recraft_screen_width(),recraft_screen_height(),col(0,0,0,178));
-    DrawRectangle(px(144),py(74),ps(352),ps(332),col(52,47,43,255));
-    dst=(Rectangle){(float)px(144),(float)py(74),(float)ps(352),(float)ps(332)};
-    DrawTexturePro(texture,src,dst,origin,0,WHITE);
-    label("Inventory",309,85,12,WHITE);
-    for (i=0;i<RECRAFT_INVENTORY_SLOTS;++i) {
-        inventory_slot_xy(i,&x,&y);
-        if (selected_slot==i) linebox(x,y,32,32,col(255,239,136,255));
-        draw_stack(slots ? &slots[i] : NULL,x,y,31);
-    }
-    centered("Click a stack, then a slot to move it. E closes.",320,418,10,
-             col(244,241,221,255));
-}
-
 static void inventory_patch(int sx,int sy,int sw,int sh,int x,int y,int w,int h)
 {
     Texture2D texture=assets_get_texture(ASSET_GUI_INVENTORY);
@@ -1116,6 +1105,95 @@ static void inventory_patch(int sx,int sy,int sw,int sh,int x,int y,int w,int h)
     Rectangle dst={(float)px((float)x),(float)py((float)y),(float)ps((float)w),(float)ps((float)h)};
     Vector2 origin={0,0};
     DrawTexturePro(texture,src,dst,origin,0,WHITE);
+}
+
+/* Indices 0..35 inventory, 36..44 crafting, 45 result, 46..99 container. */
+static int container_xy(const ContainerSession *s,int index,int *x,int *y)
+{
+    int rows=s->size/9,height=s->kind==CONTAINER_CHEST ? 114+rows*18 : 166;
+    int left=144,top=(480-height*2)/2,ix,iy;
+    if (index<36) {
+        ix=8+(index%9)*18;
+        iy=index<9 ? 142 : 84+(index-9)/9*18;
+        if (s->kind==CONTAINER_CHEST) iy+=rows*18-53;
+    } else if (index<45) {
+        int n=index-36,width=s->kind==CONTAINER_WORKBENCH ? 3 : 2;
+        if ((s->kind!=CONTAINER_PLAYER && s->kind!=CONTAINER_WORKBENCH) || n>=width*width) return 0;
+        ix=(width==3 ? 30 : 88)+(n%width)*18;
+        iy=(width==3 ? 17 : 26)+(n/width)*18;
+    } else if (index==45) {
+        if (s->kind!=CONTAINER_PLAYER && s->kind!=CONTAINER_WORKBENCH) return 0;
+        ix=s->kind==CONTAINER_WORKBENCH ? 124 : 144;
+        iy=s->kind==CONTAINER_WORKBENCH ? 35 : 36;
+    } else if (s->kind==CONTAINER_CHEST) {
+        int n=index-46;
+        if (n>=s->size) return 0;
+        ix=8+(n%9)*18; iy=18+(n/9)*18;
+    } else if (s->kind==CONTAINER_FURNACE) {
+        int n=index-46;
+        if (n>2) return 0;
+        ix=n==2 ? 116 : 56; iy=n==0 ? 17 : n==1 ? 53 : 35;
+    } else return 0;
+    *x=left+ix*2; *y=top+iy*2;
+    return 1;
+}
+
+int ui_container_slot_at(const Ui *ui,const ContainerSession *session)
+{
+    int i,x,y;
+    begin_layout(ui);
+    for (i=0;i<100;++i) if (container_xy(session,i,&x,&y) && inside(x,y,32,32)) return i;
+    return -1;
+}
+
+static void container_texture(Texture2D texture,int sx,int sy,int width,int height,int x,int y)
+{
+    Rectangle src={(float)sx,(float)sy,(float)width,(float)height};
+    Rectangle dst={(float)px((float)x),(float)py((float)y),(float)ps((float)(width*2)),(float)ps((float)(height*2))};
+    Vector2 origin={0,0};
+    DrawTexturePro(texture,src,dst,origin,0,WHITE);
+}
+
+void ui_draw_container(const Ui *ui,const ContainerSession *s,const InventorySlot *inventory,
+                       const InventorySlot *contents,int burn,int fuel,int cook)
+{
+    int rows=s->size/9,height=s->kind==CONTAINER_CHEST ? 114+rows*18 : 166;
+    int left=144,top=(480-height*2)/2,i,x,y;
+    AssetId id=s->kind==CONTAINER_WORKBENCH ? ASSET_GUI_CRAFTING :
+        s->kind==CONTAINER_FURNACE ? ASSET_GUI_FURNACE :
+        s->kind==CONTAINER_CHEST ? ASSET_GUI_CONTAINER : ASSET_GUI_INVENTORY;
+    Texture2D texture=assets_get_texture(id);
+    InventorySlot result;
+    begin_layout(ui);
+    DrawRectangle(0,0,recraft_screen_width(),recraft_screen_height(),col(0,0,0,150));
+    if (s->kind==CONTAINER_CHEST) {
+        container_texture(texture,0,0,176,rows*18+17,left,top);
+        container_texture(texture,0,126,176,96,left,top+(rows*18+17)*2);
+        label(s->size==54 ? "Large Chest" : "Chest",left+16,top+12,12,col(64,64,64,255));
+    } else container_texture(texture,0,0,176,166,left,top);
+    if (s->kind==CONTAINER_FURNACE) {
+        label("Furnace",left+116,top+12,12,col(64,64,64,255));
+        if (burn>0) {
+            int n=fuel>0 ? burn*12/fuel : 0;
+            if (n>12) n=12;
+            container_texture(texture,176,12-n,14,n+2,left+112,top+(36+12-n)*2);
+        }
+        if (cook>0) container_texture(texture,176,14,cook*24/200+1,16,left+158,top+68);
+    }
+    if (s->kind==CONTAINER_PLAYER || s->kind==CONTAINER_WORKBENCH)
+        label("Crafting",left+(s->kind==CONTAINER_PLAYER ? 172 : 56),top+12,12,col(64,64,64,255));
+    label("Inventory",left+16,top+(s->kind==CONTAINER_CHEST ? rows*18+21 : 72)*2,12,col(64,64,64,255));
+    inventory_clear_slot(&result);
+    if (s->kind==CONTAINER_PLAYER || s->kind==CONTAINER_WORKBENCH)
+        crafting_match(s->grid,s->kind==CONTAINER_WORKBENCH ? 3 : 2,&result);
+    if(s->server) result=s->result;
+    for (i=0;i<100;++i) if (container_xy(s,i,&x,&y)) {
+        const InventorySlot *item=i<36 ? &inventory[i] : i<45 ? &s->grid[i-36] :
+            i==45 ? &result : contents ? &contents[i-46] : NULL;
+        draw_stack(item,x,y,31);
+        if (inside(x,y,32,32)) rect(x,y,32,32,col(255,255,255,70));
+    }
+    draw_stack(&s->cursor,(int)layout.mouse_x-16,(int)layout.mouse_y-16,31);
 }
 
 void ui_creative_input(Ui *ui,InventorySlot *slots,int *hotbar,int can_give)
