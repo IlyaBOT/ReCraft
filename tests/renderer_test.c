@@ -233,6 +233,7 @@ int main(int argc, char **argv)
 #else
     fprintf(stderr,"renderer_test: creating hidden OpenGL context\n");
     assert(glfwInit());
+    fprintf(stderr,"renderer_test: GLFW initialized\n");
     glfwWindowHint(GLFW_VISIBLE, 0); /* GLFW 3.1 predates GLFW_FALSE. */
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 1);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);

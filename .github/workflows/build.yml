@@ -123,6 +123,18 @@ jobs:
           cmake --build build/ci --parallel 2
       - name: Tests
         run: ctest --test-dir build/ci --timeout 60 --output-on-failure
+      - name: Diagnose renderer startup failure
+        if: failure()
+        run: |
+          build/ci/renderer_test > build/renderer-startup.log 2>&1 &
+          probe_pid=$!
+          trap 'kill "$probe_pid" 2>/dev/null || true' EXIT
+          sleep 5
+          if kill -0 "$probe_pid" 2>/dev/null; then
+            /usr/bin/sample "$probe_pid" 1 -file build/renderer-sample.txt || true
+            grep -E 'glfw|AppKit|NSApplication|OpenGL|CGL|mach_msg|HID|CoreGraphics' build/renderer-sample.txt || true
+          fi
+          cat build/renderer-startup.log
       - name: Version and menu smoke
         run: |
           test "$(build/ReCraft.app/Contents/MacOS/ReCraft --version)" = "ReCraft $(cat VERSION)"
