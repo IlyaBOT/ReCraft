@@ -197,7 +197,10 @@ int main(void)
     test_packet_boundaries();
     listener=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP); assert(listener!=TEST_INVALID);
     memset(&addr,0,sizeof(addr)); addr.sin_family=AF_INET;
-    addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK); addr.sin_port=0;
+    /* Darwin hides the BSD INADDR_LOOPBACK constant under _POSIX_C_SOURCE.
+     * inet_pton is available in the POSIX and Winsock APIs and writes network order. */
+    assert(inet_pton(AF_INET,"127.0.0.1",&addr.sin_addr)==1);
+    addr.sin_port=0;
     assert(bind(listener,(struct sockaddr *)&addr,sizeof(addr))==0);
     assert(listen(listener,1)==0);
     {
