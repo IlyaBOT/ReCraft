@@ -1,4 +1,5 @@
 #include "beta_discovery.h"
+#include "beta_level_io.h"
 #include "../nbt/nbt.h"
 #include "../util/game_paths.h"
 
@@ -6,7 +7,6 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include <zlib.h>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -14,8 +14,6 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #endif
-
-#define BETA_LEVEL_LIMIT (2u*1024u*1024u)
 
 static int tag_is(const NbtTag *tag, const char *name)
 {
@@ -26,7 +24,7 @@ static int tag_is(const NbtTag *tag, const char *name)
 typedef struct LevelRead {
     BetaWorldInfo *world;
     InventorySlot *inventory;
-    int player,pos,rotation,pos_count,rotation_count;
+    int data,player,pos,rotation,pos_count,rotation_count;
     int in_inventory,item_slot,item_id,item_count,item_damage;
     double xyz[3];
     float angles[2];
@@ -36,6 +34,9 @@ static int metadata_tag(void *context, NbtEvent event, const NbtTag *tag, unsign
 {
     LevelRead *read=(LevelRead *)context;
     BetaWorldInfo *world=read->world;
+    if (depth==1 && tag->type==NBT_COMPOUND && tag_is(tag,"Data"))
+        read->data=event==NBT_BEGIN;
+    if (!read->data) return 1;
     if (event==NBT_BEGIN && depth==2 && tag->type==NBT_COMPOUND &&
         tag_is(tag,"Player")) read->player=1;
     else if (event==NBT_FINISH && depth==2 && tag->type==NBT_COMPOUND &&
@@ -108,26 +109,16 @@ static int metadata_tag(void *context, NbtEvent event, const NbtTag *tag, unsign
     return 1;
 }
 
-static int read_level(const char *path, BetaWorldInfo *world,InventorySlot *inventory)
+static int read_level(const char *world_path, BetaWorldInfo *world,InventorySlot *inventory)
 {
-    gzFile file = gzopen(path,"rb");
     unsigned char *bytes;
     size_t size = 0;
-    int read_count, valid;
+    int valid;
     LevelRead parsed;
-    if (!file) return 0;
-    bytes = (unsigned char *)malloc(BETA_LEVEL_LIMIT+1u);
-    if (!bytes) { gzclose(file); return 0; }
-    while (size <= BETA_LEVEL_LIMIT) {
-        read_count = gzread(file,bytes+size,(unsigned)(BETA_LEVEL_LIMIT+1u-size));
-        if (read_count <= 0) break;
-        size += (size_t)read_count;
-    }
+    if (!beta_level_read(world_path,&bytes,&size,NULL)) return 0;
     memset(&parsed,0,sizeof(parsed)); parsed.world=world;
     parsed.inventory=inventory;
-    valid = read_count == 0 && size <= BETA_LEVEL_LIMIT &&
-        nbt_read(bytes,size,NULL,NULL,NULL,NULL) == NBT_OK &&
-        nbt_read(bytes,size,NULL,metadata_tag,&parsed,NULL) == NBT_OK;
+    valid = nbt_read(bytes,size,NULL,metadata_tag,&parsed,NULL) == NBT_OK;
     if (valid && parsed.pos_count==3 &&
         isfinite(parsed.xyz[0]) && isfinite(parsed.xyz[1]) && isfinite(parsed.xyz[2]) &&
         fabs(parsed.xyz[0])<10000000.0 && parsed.xyz[1]>=0 && parsed.xyz[1]<256 &&
@@ -143,7 +134,6 @@ static int read_level(const char *path, BetaWorldInfo *world,InventorySlot *inve
         }
     }
     free(bytes);
-    gzclose(file);
     return valid;
 }
 
@@ -181,14 +171,13 @@ static unsigned count_regions(const char *world_path)
 
 static int read_world(const char *saves, const char *directory, BetaWorldInfo *world)
 {
-    char world_path[512], level_path[512];
+    char world_path[512];
     if (!directory[0] || strcmp(directory,".") == 0 || strcmp(directory,"..") == 0 ||
         strlen(directory) >= sizeof(world->directory) ||
-        !game_path_join(world_path,sizeof(world_path),saves,directory) ||
-        !game_path_join(level_path,sizeof(level_path),world_path,"level.dat")) return 0;
+        !game_path_join(world_path,sizeof(world_path),saves,directory)) return 0;
     memset(world,0,sizeof(*world));
     snprintf(world->directory,sizeof(world->directory),"%s",directory);
-    if (!read_level(level_path,world,NULL)) return 0;
+    if (!read_level(world_path,world,NULL)) return 0;
     if (!world->name[0]) snprintf(world->name,sizeof(world->name),"%s",directory);
     world->region_files = count_regions(world_path);
     return 1;
@@ -197,14 +186,12 @@ static int read_world(const char *saves, const char *directory, BetaWorldInfo *w
 int beta_world_read_inventory(const char *world_path,
                               InventorySlot slots[RECRAFT_INVENTORY_SLOTS])
 {
-    char path[512];
     BetaWorldInfo ignored;
     InventorySlot loaded[RECRAFT_INVENTORY_SLOTS];
-    if (!world_path || !slots ||
-        !game_path_join(path,sizeof(path),world_path,"level.dat")) return 0;
+    if (!world_path || !slots) return 0;
     memset(&ignored,0,sizeof(ignored));
     inventory_init(loaded,0);
-    if (!read_level(path,&ignored,loaded)) return 0;
+    if (!read_level(world_path,&ignored,loaded)) return 0;
     memcpy(slots,loaded,sizeof(loaded));
     return 1;
 }

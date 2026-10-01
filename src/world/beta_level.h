@@ -13,8 +13,9 @@ typedef struct BetaLevelState {
     InventorySlot inventory[RECRAFT_INVENTORY_SLOTS];
 } BetaLevelState;
 
-/* Rewrite vanilla player state and time, preserving unrelated NBT. The input
- * level.dat is backed up once as level.dat.recraft.bak; writes use a temp file. */
+/* Rewrite player state/time while preserving unrelated NBT. Read fallback and
+ * level.dat_new -> level.dat_old -> level.dat follow Beta's SaveHandler.
+ * Also retain the first valid input as level.dat.recraft.bak. */
 int beta_level_save(const char *world_path,const BetaLevelState *state);
 
 #endif

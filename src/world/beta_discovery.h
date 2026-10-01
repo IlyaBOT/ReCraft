@@ -21,7 +21,7 @@ typedef struct BetaWorldInfo {
 
 /* Metadata only. No chunk allocation, migration, or writes to save files. */
 size_t beta_world_discover(const char *saves_dir, BetaWorldInfo *out, size_t capacity);
-/* Player Inventory slots 0..35 from level.dat; returns zero on invalid NBT. */
+/* Player slots 0..35 from level.dat (fallback level.dat_old). Zero on invalid NBT. */
 int beta_world_read_inventory(const char *world_path,
                               InventorySlot slots[RECRAFT_INVENTORY_SLOTS]);
 

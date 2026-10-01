@@ -8,6 +8,7 @@ if(NOT RECRAFT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+([.+-][A-Za-z0-9.+-]+)?
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/VERSION")
 configure_file(cmake/recraft_version.h.in generated/recraft_version.h @ONLY)
+include(cmake/legacy_source_compat.cmake)
 include_directories("${CMAKE_BINARY_DIR}/generated")
 set(RECRAFT_RUNTIME_DIR "${CMAKE_SOURCE_DIR}/build" CACHE PATH "Persistent game directory")
 
@@ -45,6 +46,7 @@ if(WIN32)
     set(GLFW_DEFINITIONS _GLFW_WIN32 _GLFW_WGL _GLFW_USE_OPENGL)
     set(PLATFORM_LIBRARIES opengl32 gdi32 user32 winmm ws2_32)
 elseif(APPLE)
+    add_definitions(-DGL_SILENCE_DEPRECATION)
     list(APPEND GLFW_SOURCES cocoa_init.m cocoa_monitor.m cocoa_window.m
         iokit_joystick.m mach_time.c posix_tls.c nsgl_context.m)
     set(GLFW_DEFINITIONS _GLFW_COCOA _GLFW_NSGL _GLFW_USE_OPENGL)
@@ -67,7 +69,12 @@ else()
         ${X11_Xxf86vm_LIB} ${CMAKE_DL_LIBS})
 endif()
 foreach(_source ${GLFW_SOURCES})
-    list(APPEND _glfw_files "${GLFW_ROOT}/src/${_source}")
+    if(WIN32 AND _source STREQUAL "wgl_context.c")
+        recraft_compat_source("${GLFW_ROOT}/src/${_source}" _compatible)
+        list(APPEND _glfw_files "${_compatible}")
+    else()
+        list(APPEND _glfw_files "${GLFW_ROOT}/src/${_source}")
+    endif()
     if(_source MATCHES "\\.m$")
         set_source_files_properties("${GLFW_ROOT}/src/${_source}"
             PROPERTIES LANGUAGE C COMPILE_FLAGS "-x objective-c")
@@ -83,7 +90,12 @@ set(RAYLIB_SOURCES
     core.c rlgl.c glad.c shapes.c text.c textures.c models.c audio.c
     utils.c camera.c gestures.c stb_vorbis.c)
 foreach(_source ${RAYLIB_SOURCES})
-    list(APPEND _raylib_files "${RAYLIB_ROOT}/src/${_source}")
+    if(_source STREQUAL "core.c" OR _source STREQUAL "rlgl.c")
+        recraft_compat_source("${RAYLIB_ROOT}/src/${_source}" _compatible)
+        list(APPEND _raylib_files "${_compatible}")
+    else()
+        list(APPEND _raylib_files "${RAYLIB_ROOT}/src/${_source}")
+    endif()
 endforeach()
 add_library(raylib_legacy STATIC ${_raylib_files})
 set_source_files_properties("${RAYLIB_ROOT}/src/gestures.c" PROPERTIES COMPILE_DEFINITIONS RECRAFT_NO_WIN_SHIM)
@@ -104,7 +116,7 @@ endif()
 message(STATUS "OpenAL library: ${OPENAL_LIBRARY}")
 message(STATUS "zlib library: ${ZLIB_LIBRARIES}")
 target_include_directories(raylib_legacy PRIVATE
-    "${RAYLIB_ROOT}/src" "${GLFW_ROOT}/include"
+    "${RAYLIB_ROOT}/src" "${CMAKE_SOURCE_DIR}/src" "${GLFW_ROOT}/include"
     "${OPENAL_INCLUDE_DIR}"
     "${RAYLIB_ROOT}/external/glew/include")
 target_compile_definitions(raylib_legacy PRIVATE PLATFORM_DESKTOP GRAPHICS_API_OPENGL_11)
@@ -212,7 +224,7 @@ add_test(NAME protocol_47_test COMMAND protocol_47_test)
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests/beta_discovery_test.c")
     add_executable(beta_discovery_test tests/beta_discovery_test.c
-        src/world/beta_discovery.c src/game/inventory.c src/nbt/nbt.c src/util/game_paths.c)
+        src/world/beta_discovery.c src/world/beta_level_io.c src/game/inventory.c src/nbt/nbt.c src/util/game_paths.c)
     target_include_directories(beta_discovery_test PRIVATE src "${ZLIB_INCLUDE_DIRS}")
     target_link_libraries(beta_discovery_test ${ZLIB_LIBRARIES} m)
     if(EXISTS "${CMAKE_SOURCE_DIR}/build/saves/New World/level.dat" AND
@@ -222,7 +234,7 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/tests/beta_discovery_test.c")
 endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/build/saves/World1/level.dat")
     add_executable(beta_level_test tests/beta_level_test.c
-        src/world/beta_level.c src/world/beta_discovery.c
+        src/world/beta_level.c src/world/beta_level_io.c src/world/beta_discovery.c
         src/game/inventory.c src/nbt/nbt.c src/util/game_paths.c)
     target_include_directories(beta_level_test PRIVATE src "${ZLIB_INCLUDE_DIRS}")
     target_link_libraries(beta_level_test ${ZLIB_LIBRARIES} m)
@@ -244,6 +256,13 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/build/saves/New World/region/r.0.0.mcr" AND
 endif()
 
 # Tests use assert(), including calls with side effects. Keep them active in CI Release.
+add_executable(beta_recovery_test tests/beta_recovery_test.c src/world/beta_level.c
+    src/world/beta_level_io.c src/world/beta_discovery.c src/game/inventory.c
+    src/nbt/nbt.c src/util/game_paths.c)
+target_include_directories(beta_recovery_test PRIVATE src "${ZLIB_INCLUDE_DIRS}")
+target_link_libraries(beta_recovery_test ${ZLIB_LIBRARIES} m)
+add_test(NAME beta_recovery_test COMMAND beta_recovery_test)
+
 get_property(_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(_target ${_targets})
     if(_target MATCHES "_test$" AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")

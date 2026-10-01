@@ -50,9 +50,12 @@ block and broken blocks can be picked up. Sand/gravel falling, torch support
 and water flow are local approximations; unsupported torches drop as items.
 Minecraft Beta worlds load their
 player position and inventory from `level.dat` and now save those fields back
-through a gzip temporary file. The first write retains `level.dat.recraft.bak`.
+through a gzip temporary file. Reads fall back to `level.dat_old` when the primary
+is missing or corrupt; writes rotate the previous valid primary into that file.
+The first write also retains `level.dat.recraft.bak`.
 Unrelated NBT, including armor slots, is preserved. Old ReCraft sidecars are
 left on disk but no longer override Beta player data.
+See [save recovery and its tests](docs/BETA_SAVE_RECOVERY.md).
 Make a backup before editing a Beta world. To open a particular save directly,
 use `--world "New World"` (the directory name under `build/saves/`).
 

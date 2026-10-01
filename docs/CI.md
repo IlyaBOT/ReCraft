@@ -28,6 +28,13 @@ Linux/macOS use tar archives to preserve executable permissions and app layout.
 User saves, options, server lists and `third_party` references are excluded.
 Linux requires system OpenAL, zlib, X11 and OpenGL libraries.
 
+`cmake/legacy_source_compat.cmake` prepares checked build-only copies of three
+upstream translation units. GLFW/WGL tries accelerated pixel formats first,
+then permits GDI OpenGL 1.1 when none exists (including Windows CI machines).
+raylib's window creation is checked before centering, and its fixed-function
+path no longer asks GL 1.1 for an unsupported GLSL version enum. The dependency
+checkouts and the native macOS GLFW archive remain untouched.
+
 The Vesper artifact targets its installed macOS SDK, **not Snow Leopard**.
 Native 10.6/i386 remains the separate [legacy Makefile recipe](SNOW_LEOPARD_BUILD.md),
 requiring the original SDK and toolchain; it is not yet tested in CI.

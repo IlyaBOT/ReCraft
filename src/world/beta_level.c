@@ -1,4 +1,5 @@
 #include "beta_level.h"
+#include "beta_level_io.h"
 #include "../nbt/nbt.h"
 #include "../util/game_paths.h"
 
@@ -13,7 +14,6 @@
 #include <windows.h>
 #endif
 
-#define LEVEL_INPUT_LIMIT (2u*1024u*1024u)
 #define LEVEL_OUTPUT_LIMIT (4u*1024u*1024u)
 #define LEVEL_EVENT_LIMIT 8192u
 #define LEVEL_ITEM_LIMIT 256u
@@ -29,7 +29,7 @@ typedef struct Capture {
     size_t used,capacity,item_start;
     size_t starts[LEVEL_ITEM_LIMIT],lengths[LEVEL_ITEM_LIMIT];
     unsigned preserved;
-    int player,inventory,item,slot;
+    int data,player,inventory,item,slot;
     int has_player,has_position,has_rotation,has_inventory,has_time;
     int failed;
 } Capture;
@@ -38,7 +38,7 @@ typedef struct Rewrite {
     NbtWriter writer;
     const BetaLevelState *state;
     const Capture *capture;
-    int player,skip_inventory,position,motion,rotation;
+    int data,player,skip_inventory,position,motion,rotation;
     unsigned coordinate,motion_index,angle;
     int64_t last_played;
 } Rewrite;
@@ -52,6 +52,9 @@ static int named(const NbtTag *tag,const char *name)
 static int capture_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned depth)
 {
     Capture *capture=(Capture *)context;
+    if (depth==1 && tag->type==NBT_COMPOUND && named(tag,"Data"))
+        capture->data=event==NBT_BEGIN;
+    if (!capture->data) return 1;
     if (event==NBT_BEGIN && depth==2 && tag->type==NBT_COMPOUND && named(tag,"Player")) {
         capture->player=1;
         capture->has_player=1;
@@ -131,6 +134,11 @@ static int rewrite_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned d
     NbtWriter *writer=&rewrite->writer;
     NbtTag changed=*tag;
     unsigned i,j;
+    if (depth==1 && tag->type==NBT_COMPOUND && named(tag,"Data"))
+        rewrite->data=event==NBT_BEGIN;
+    if (!rewrite->data)
+        return (event==NBT_FINISH ? nbt_writer_end(writer) :
+                nbt_writer_tag(writer,tag))==NBT_OK;
     if (rewrite->skip_inventory) {
         if (event==NBT_FINISH && depth==3 && tag->type==NBT_LIST && named(tag,"Inventory")) {
             rewrite->skip_inventory=0;
@@ -223,13 +231,22 @@ static int copy_once(const char *source,const char *backup,const char *temporary
     return valid;
 }
 
+static int replace_file(const char *source,const char *target)
+{
+#ifdef _WIN32
+    return MoveFileExA(source,target,MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;
+#else
+    return rename(source,target)==0;
+#endif
+}
+
 int beta_level_save(const char *world_path,const BetaLevelState *state)
 {
-    char path[512],temp[512],backup[512],backup_temp[512];
+    char path[512],old[512],temp[512],backup[512],backup_temp[512];
     gzFile file;
     unsigned char *input=NULL,*output=NULL;
     size_t size=0,written=0;
-    int n,close_status,valid=0,i;
+    int n,close_status,valid=0,i,used_old=0;
     Capture capture;
     Rewrite rewrite;
     if (!world_path || !state || !isfinite(state->x) || !isfinite(state->y) ||
@@ -237,6 +254,7 @@ int beta_level_save(const char *world_path,const BetaLevelState *state)
         !isfinite(state->motion_y) || !isfinite(state->motion_z) ||
         !isfinite(state->yaw) || !isfinite(state->pitch) ||
         !game_path_join(path,sizeof(path),world_path,"level.dat") ||
+        !game_path_join(old,sizeof(old),world_path,"level.dat_old") ||
         !game_path_join(temp,sizeof(temp),world_path,"level.dat_new") ||
         !game_path_join(backup,sizeof(backup),world_path,"level.dat.recraft.bak") ||
         !game_path_join(backup_temp,sizeof(backup_temp),world_path,
@@ -246,17 +264,7 @@ int beta_level_save(const char *world_path,const BetaLevelState *state)
         if (slot->id>32767 || slot->count<0 || slot->count>64 ||
             slot->damage<0 || slot->damage>65535) return 0;
     }
-    file=gzopen(path,"rb");
-    if (!file) return 0;
-    input=(unsigned char *)malloc(LEVEL_INPUT_LIMIT+1u);
-    if (!input) { gzclose(file); return 0; }
-    while (size<=LEVEL_INPUT_LIMIT) {
-        n=gzread(file,input+size,(unsigned)(LEVEL_INPUT_LIMIT+1u-size));
-        if (n<=0) break;
-        size+=(size_t)n;
-    }
-    if (gzclose(file)!=Z_OK || n!=0 || size>LEVEL_INPUT_LIMIT ||
-        nbt_read(input,size,NULL,NULL,NULL,NULL)!=NBT_OK) goto done;
+    if (!beta_level_read(world_path,&input,&size,&used_old)) return 0;
     memset(&capture,0,sizeof(capture));
     if (nbt_read(input,size,NULL,capture_tag,&capture,NULL)!=NBT_OK ||
         capture.failed || !capture.has_player || !capture.has_position ||
@@ -281,12 +289,11 @@ int beta_level_save(const char *world_path,const BetaLevelState *state)
         gzwrite(file,output,(unsigned)written) : -1;
     close_status=gzclose(file);
     valid=n==(int)written && close_status==Z_OK;
-    if (!valid || !copy_once(path,backup,backup_temp)) { valid=0; goto done; }
-#ifdef _WIN32
-    valid=MoveFileExA(temp,path,MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;
-#else
-    valid=rename(temp,path)==0;
-#endif
+    if (!valid || !copy_once(used_old?old:path,backup,backup_temp)) { valid=0; goto done; }
+    /* Rotate the last valid primary like Beta SaveHandler. When recovering,
+     * keep the valid old file instead of replacing it with a damaged primary. */
+    if (!used_old && !replace_file(path,old)) { valid=0; goto done; }
+    valid=replace_file(temp,path);
 done:
     free(input); free(output);
     return valid;

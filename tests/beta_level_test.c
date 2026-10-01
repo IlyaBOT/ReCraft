@@ -41,7 +41,7 @@ static int same_file(const char *left,const char *right)
 
 int main(int argc,char **argv)
 {
-    char dir[128],source[512],copy[512],backup[512],temporary[512];
+    char dir[128],source[512],copy[512],old[512],backup[512],temporary[512];
     BetaLevelState state;
     BetaWorldInfo worlds[64];
     InventorySlot loaded[RECRAFT_INVENTORY_SLOTS];
@@ -52,6 +52,7 @@ int main(int argc,char **argv)
     snprintf(dir,sizeof(dir),"build/beta-level-test-%d",(int)test_pid());
     snprintf(source,sizeof(source),"%s/level.dat",argv[1]);
     snprintf(copy,sizeof(copy),"%s/level.dat",dir);
+    snprintf(old,sizeof(old),"%s/level.dat_old",dir);
     snprintf(backup,sizeof(backup),"%s/level.dat.recraft.bak",dir);
     snprintf(temporary,sizeof(temporary),"%s/level.dat_new",dir);
     assert(test_mkdir(dir)==0);
@@ -69,6 +70,7 @@ int main(int argc,char **argv)
     state.inventory[1].damage=0;
     assert(beta_level_save(dir,&state));
     assert(same_file(source,backup));
+    assert(same_file(source,old));
     assert(beta_world_read_inventory(dir,loaded));
     assert(memcmp(loaded,state.inventory,sizeof(loaded))==0);
     count=beta_world_discover("build",worlds,64);
@@ -85,7 +87,7 @@ int main(int argc,char **argv)
     assert(found);
     file=fopen(temporary,"rb");
     assert(!file);
-    assert(remove(copy)==0 && remove(backup)==0 && test_rmdir(dir)==0);
+    assert(remove(copy)==0 && remove(old)==0 && remove(backup)==0 && test_rmdir(dir)==0);
     puts("Beta level.dat player, inventory and time roundtrip passed on copy");
     return 0;
 }

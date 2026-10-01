@@ -39,3 +39,11 @@ upstream notices when distributing binaries.
 
 Download instructions and target checks are in
 [SNOW_LEOPARD_BUILD.md](../docs/SNOW_LEOPARD_BUILD.md).
+# Host CI compatibility patches
+
+Modern host CMake builds apply the small, checked transformations in
+`cmake/legacy_source_compat.cmake` to generated copies. They allow the Windows
+GDI OpenGL fallback, check raylib window creation, and skip its GLSL version
+query for fixed-function GL. Upstream checkouts are not edited. Native
+Snow Leopard still uses the Makefile and the legacy GLFW archive below.
+
