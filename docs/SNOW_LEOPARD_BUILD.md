@@ -29,10 +29,16 @@ make legacy
 
 The project Makefile compiles raylib 1.4.0 and ReCraft from source with
 `-DGRAPHICS_API_OPENGL_11 -arch i386 -mmacosx-version-min=10.6`, then creates
-`build/ReCraft.app` plus the six runtime assets in `build/assets/`. It links
+`build/ReCraft.app` plus the eight runtime assets in `build/assets/`. It links
 the system OpenAL framework, zlib and
 pthread. Change the visible name and bundle name with
 `make legacy APP_NAME=YourName`.
+
+The client version comes from the root `VERSION` file. Make generates a C99
+header and the bundle version fields from it; changing VERSION rebuilds the
+client. `build/ReCraft.app/Contents/MacOS/ReCraft --version` works without a
+graphics window. The modern macOS build on Vesper is a separate x86-64 CI
+artifact and does not establish 10.6/i386 compatibility; see [CI.md](CI.md).
 
 Inspect the result on the target Mac:
 

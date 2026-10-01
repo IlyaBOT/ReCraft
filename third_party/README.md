@@ -5,8 +5,8 @@ reference files. They are development references only. The runtime reads only
 the selected normalized files deployed from `assets/` into `build/assets/`.
 
 The game source does not include either dependency. Place these exact tags in
-`third_party/` for a native build, or in ignored `.deps/` for the Windows
-development build:
+`third_party/` for a native build, or in ignored `.deps/` for modern host
+builds and CI:
 
 | Dependency | Tag | Commit | License |
 | --- | --- | --- | --- |
@@ -39,11 +39,11 @@ upstream notices when distributing binaries.
 
 Download instructions and target checks are in
 [SNOW_LEOPARD_BUILD.md](../docs/SNOW_LEOPARD_BUILD.md).
-# Host CI compatibility patches
+
+## Host CI compatibility patches
 
 Modern host CMake builds apply the small, checked transformations in
 `cmake/legacy_source_compat.cmake` to generated copies. They allow the Windows
 GDI OpenGL fallback, check raylib window creation, and skip its GLSL version
 query for fixed-function GL. Upstream checkouts are not edited. Native
-Snow Leopard still uses the Makefile and the legacy GLFW archive below.
-
+Snow Leopard still uses the Makefile and the legacy GLFW archive described above.
