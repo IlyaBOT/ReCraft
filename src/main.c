@@ -943,6 +943,10 @@ int main(int argc, char **argv)
     FILE *csv = NULL;
     unsigned frame = 0;
     int status = 0;
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        puts(RECRAFT_TITLE " " RECRAFT_VERSION);
+        return 0;
+    }
     memset(&app, 0, sizeof(app));
     if (!parse_options(argc, argv, &run)) {
         fprintf(stderr, "Usage: ReCraft [--smoke-test|--menu-smoke|--benchmark bench_torch|bench_stream|bench_flat|bench_forest|bench_caves|bench_chunk_updates|bench_worstcase_transparency]\n"

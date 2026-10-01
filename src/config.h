@@ -1,6 +1,8 @@
 #ifndef RECRAFT_CONFIG_H
 #define RECRAFT_CONFIG_H
 
+#include "recraft_version.h"
+
 /* Change this one constant to rename the executable's visible product name. */
 #ifndef RECRAFT_TITLE
 #define RECRAFT_TITLE "ReCraft"

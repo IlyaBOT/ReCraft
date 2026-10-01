@@ -1,6 +1,11 @@
 # ReCraft
 
-ReCraft is a voxel sandbox built around raylib 1.4, GLFW 3.1.2, and a fixed-function OpenGL renderer. Its target is an i386 Mac running Mac OS X 10.6.8 with Intel GMA 950. The Windows UCRT64 build is a development and test host; a native Snow Leopard build and GPU run remain unverified.
+ReCraft is a voxel sandbox built around raylib 1.4, GLFW 3.1.2, and a fixed-function OpenGL renderer. Its target is an i386 Mac running Mac OS X 10.6.8 with Intel GMA 950. Modern Windows, Linux and macOS builds are development/test hosts; a native Snow Leopard build and GPU run remain unverified.
+
+The build version is stored in [VERSION](VERSION) and appears at the bottom left
+of the main menu. `ReCraft --version` prints it without opening a window.
+GitHub Actions builds Windows/Linux and macOS on the local Vesper runner.
+See [CI, artifacts and host build instructions](docs/CI.md).
 
 The game has 16 x 16 x 128 chunk columns, deterministic terrain for ReCraft saves, walking and flying controls, block interaction, an inventory, menus, video settings, a debug overlay, and reproducible benchmark scenes. Chunk block bytes use the Beta 1.7.3 ID range 0..96 with separate metadata nibbles; native `.rcg` version 1 saves are migrated on load to version 2. Minecraft Beta 1.7.3 `level.dat` and existing McRegion `.mcr` chunks can also be opened for play. Edits to loaded Beta chunks are written back in McRegion format. Missing Beta chunks are not generated yet. Most Beta blocks still use placeholder geometry and behavior, and ReCraft's own terrain generator is not Beta-compatible. The per-block status is in the [Beta compatibility matrix](docs/BETA_COMPATIBILITY_MATRIX.md).
 The offline Minecraft Beta 1.7.3 protocol 14 client is experimental. It needs testing against a real compatible server; it does not authenticate to online servers. The interface uses selected user-provided CoterieCraft Beta textures and an original bitmap font atlas. Sound remains synthesized. See [asset sources](docs/ASSET_SOURCES.md).
@@ -13,6 +18,7 @@ In PowerShell:
 ```powershell
 & C:\msys64\usr\bin\pacman.exe -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-openal mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-ninja
 $env:PATH = 'C:\msys64\ucrt64\bin;' + $env:PATH
+cmake -P tools/fetch_dependencies.cmake
 cmake -S . -B build/windows-ucrt -G Ninja -DCMAKE_C_COMPILER=C:/msys64/ucrt64/bin/gcc.exe -DCMAKE_PREFIX_PATH=C:/msys64/ucrt64
 cmake --build build/windows-ucrt --parallel
 ctest --test-dir build/windows-ucrt --output-on-failure

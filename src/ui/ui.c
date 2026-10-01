@@ -217,7 +217,7 @@ static void title(const char *s)
 
 static void footer(void)
 {
-    label(RECRAFT_TITLE "  |  independent voxel sandbox", 8, 460, 9,
+    label(RECRAFT_TITLE " " RECRAFT_VERSION, 8, 460, 9,
           col(220, 220, 214, 220));
 }
 

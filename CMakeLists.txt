@@ -1,15 +1,21 @@
 cmake_minimum_required(VERSION 3.10)
 project(ReCraft C)
 set(CMAKE_C_STANDARD 99)
-
-# Convenience build for Windows development. Snow Leopard uses the Makefile.
-if(NOT WIN32)
-    message(FATAL_ERROR "Use 'make legacy' on Mac OS X 10.6")
+file(READ "${CMAKE_SOURCE_DIR}/VERSION" RECRAFT_VERSION)
+string(STRIP "${RECRAFT_VERSION}" RECRAFT_VERSION)
+if(NOT RECRAFT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+([.+-][A-Za-z0-9.+-]+)?$")
+    message(FATAL_ERROR "VERSION must contain a version such as 0.1.0-dev")
 endif()
-if(NOT MINGW OR NOT CMAKE_C_COMPILER_ID STREQUAL "GNU")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/VERSION")
+configure_file(cmake/recraft_version.h.in generated/recraft_version.h @ONLY)
+include_directories("${CMAKE_BINARY_DIR}/generated")
+set(RECRAFT_RUNTIME_DIR "${CMAKE_SOURCE_DIR}/build" CACHE PATH "Persistent game directory")
+
+# Modern host builds. The native Snow Leopard/i386 recipe stays in Makefile.
+if(WIN32 AND (NOT MINGW OR NOT CMAKE_C_COMPILER_ID STREQUAL "GNU"))
     message(FATAL_ERROR "The Windows development build requires MSYS2 UCRT64 GCC")
 endif()
-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+if(WIN32 AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "The Windows development build requires the x86-64 UCRT64 toolchain")
 endif()
 
@@ -29,18 +35,49 @@ if(NOT EXISTS "${RAYLIB_ROOT}/src/raylib.h" OR NOT EXISTS "${GLFW_ROOT}/src/inte
     message(FATAL_ERROR "Fetch the pinned sources described in third_party/README.md")
 endif()
 
-# Build GLFW 3.1.2's Win32 backend directly. Its old CMake project sets
+# Build GLFW 3.1.2's platform backend directly. Its old CMake project sets
 # CMP0042 to OLD, which CMake 4 rejects. This leaves the pinned source clean.
-set(GLFW_WIN32_SOURCES
-    context.c init.c input.c monitor.c window.c
-    win32_init.c win32_monitor.c win32_time.c win32_tls.c
-    win32_window.c winmm_joystick.c wgl_context.c)
-foreach(_source ${GLFW_WIN32_SOURCES})
+find_package(Threads REQUIRED)
+set(GLFW_SOURCES context.c init.c input.c monitor.c window.c)
+if(WIN32)
+    list(APPEND GLFW_SOURCES win32_init.c win32_monitor.c win32_time.c win32_tls.c
+        win32_window.c winmm_joystick.c wgl_context.c)
+    set(GLFW_DEFINITIONS _GLFW_WIN32 _GLFW_WGL _GLFW_USE_OPENGL)
+    set(PLATFORM_LIBRARIES opengl32 gdi32 user32 winmm ws2_32)
+elseif(APPLE)
+    list(APPEND GLFW_SOURCES cocoa_init.m cocoa_monitor.m cocoa_window.m
+        iokit_joystick.m mach_time.c posix_tls.c nsgl_context.m)
+    set(GLFW_DEFINITIONS _GLFW_COCOA _GLFW_NSGL _GLFW_USE_OPENGL)
+    set(PLATFORM_LIBRARIES "-framework Cocoa" "-framework OpenGL" "-framework IOKit"
+        "-framework CoreFoundation" "-framework CoreVideo")
+else()
+    find_package(OpenGL REQUIRED)
+    find_package(X11 REQUIRED)
+    foreach(_extension Xrandr Xinerama Xcursor Xi Xxf86vm)
+        if(NOT X11_${_extension}_LIB)
+            message(FATAL_ERROR "Missing X11 ${_extension} development library")
+        endif()
+    endforeach()
+    list(APPEND GLFW_SOURCES x11_init.c x11_monitor.c x11_window.c xkb_unicode.c
+        linux_joystick.c posix_time.c posix_tls.c glx_context.c)
+    set(GLFW_DEFINITIONS _GLFW_X11 _GLFW_GLX _GLFW_USE_OPENGL
+        _GLFW_HAS_XINPUT _GLFW_HAS_XF86VM)
+    set(PLATFORM_LIBRARIES ${OPENGL_LIBRARIES} ${X11_LIBRARIES}
+        ${X11_Xrandr_LIB} ${X11_Xinerama_LIB} ${X11_Xcursor_LIB} ${X11_Xi_LIB}
+        ${X11_Xxf86vm_LIB} ${CMAKE_DL_LIBS})
+endif()
+foreach(_source ${GLFW_SOURCES})
     list(APPEND _glfw_files "${GLFW_ROOT}/src/${_source}")
+    if(_source MATCHES "\\.m$")
+        set_source_files_properties("${GLFW_ROOT}/src/${_source}"
+            PROPERTIES LANGUAGE C COMPILE_FLAGS "-x objective-c")
+    endif()
 endforeach()
 add_library(glfw STATIC ${_glfw_files})
 target_include_directories(glfw PRIVATE "${GLFW_ROOT}/include" "${GLFW_ROOT}/src")
-target_compile_definitions(glfw PRIVATE _GLFW_WIN32 _GLFW_WGL _GLFW_USE_OPENGL)
+target_compile_definitions(glfw PRIVATE ${GLFW_DEFINITIONS})
+target_include_directories(glfw PRIVATE ${X11_INCLUDE_DIR})
+target_link_libraries(glfw PUBLIC ${PLATFORM_LIBRARIES} Threads::Threads)
 
 set(RAYLIB_SOURCES
     core.c rlgl.c glad.c shapes.c text.c textures.c models.c audio.c
@@ -52,8 +89,14 @@ add_library(raylib_legacy STATIC ${_raylib_files})
 set_source_files_properties("${RAYLIB_ROOT}/src/gestures.c" PROPERTIES COMPILE_DEFINITIONS RECRAFT_NO_WIN_SHIM)
 set_source_files_properties("${CMAKE_SOURCE_DIR}/src/network/network.c" PROPERTIES COMPILE_DEFINITIONS RECRAFT_NO_WIN_SHIM)
 
-find_path(OPENAL_INCLUDE_DIR NAMES AL/alc.h)
-find_library(OPENAL_LIBRARY NAMES openal)
+if(APPLE)
+    # raylib 1.4 includes AL/*.h; use its pinned headers with Apple's framework.
+    set(OPENAL_INCLUDE_DIR "${RAYLIB_ROOT}/external/openal_soft/include")
+    find_library(OPENAL_LIBRARY OpenAL REQUIRED)
+else()
+    find_path(OPENAL_INCLUDE_DIR NAMES AL/alc.h)
+    find_library(OPENAL_LIBRARY NAMES openal)
+endif()
 find_package(ZLIB REQUIRED)
 if(NOT OPENAL_INCLUDE_DIR OR NOT OPENAL_LIBRARY)
     message(FATAL_ERROR "Install x64 OpenAL Soft (for UCRT64: pacman -S mingw-w64-ucrt-x86_64-openal). Do not link raylib's bundled win32 import library in an x64 build.")
@@ -65,42 +108,55 @@ target_include_directories(raylib_legacy PRIVATE
     "${OPENAL_INCLUDE_DIR}"
     "${RAYLIB_ROOT}/external/glew/include")
 target_compile_definitions(raylib_legacy PRIVATE PLATFORM_DESKTOP GRAPHICS_API_OPENGL_11)
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(raylib_legacy PRIVATE -std=gnu99 -fgnu89-inline -include "${CMAKE_SOURCE_DIR}/src/win_gl_compat.h")
 endif()
 
 file(GLOB_RECURSE RECRAFT_SOURCES "${CMAKE_SOURCE_DIR}/src/*.c")
 add_executable(ReCraft ${RECRAFT_SOURCES})
-set_target_properties(ReCraft PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/build")
+set_target_properties(ReCraft PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${RECRAFT_RUNTIME_DIR}")
+if(APPLE)
+    set(APP_NAME ReCraft)
+    string(REGEX REPLACE "[-+].*" "" APP_VERSION "${RECRAFT_VERSION}")
+    if(CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(MIN_MACOS "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    else()
+        execute_process(COMMAND sw_vers -productVersion OUTPUT_VARIABLE MIN_MACOS OUTPUT_STRIP_TRAILING_WHITESPACE)
+    endif()
+    configure_file(assets/Info.plist.in generated/Info.plist @ONLY)
+    set_target_properties(ReCraft PROPERTIES MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_BINARY_DIR}/generated/Info.plist")
+endif()
 target_include_directories(ReCraft PRIVATE "${CMAKE_SOURCE_DIR}/src" "${RAYLIB_ROOT}/src" "${GLFW_ROOT}/include" "${OPENAL_INCLUDE_DIR}" "${ZLIB_INCLUDE_DIRS}")
 target_compile_definitions(ReCraft PRIVATE PLATFORM_DESKTOP GRAPHICS_API_OPENGL_11)
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(ReCraft PRIVATE -O2 -include "${CMAKE_SOURCE_DIR}/src/win_gl_compat.h")
 endif()
 
 # Only the files consumed by the current asset IDs are deployed. Rebuilding
 # never removes saves or any other persistent runtime directory.
-add_custom_target(deploy_assets ALL
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/build/assets/gui"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/build/assets/fonts"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_SOURCE_DIR}/build/assets/textures"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/assets/gui/widgets.png" "${CMAKE_SOURCE_DIR}/build/assets/gui/widgets.png"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/assets/gui/background.png" "${CMAKE_SOURCE_DIR}/build/assets/gui/background.png"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/assets/gui/icons.png" "${CMAKE_SOURCE_DIR}/build/assets/gui/icons.png"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/assets/gui/inventory.png" "${CMAKE_SOURCE_DIR}/build/assets/gui/inventory.png"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/assets/gui/items.png" "${CMAKE_SOURCE_DIR}/build/assets/gui/items.png"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/assets/gui/panorama.png" "${CMAKE_SOURCE_DIR}/build/assets/gui/panorama.png"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/assets/textures/terrain.png" "${CMAKE_SOURCE_DIR}/build/assets/textures/terrain.png"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/assets/fonts/ascii.png" "${CMAKE_SOURCE_DIR}/build/assets/fonts/ascii.png"
-    VERBATIM)
+add_custom_target(deploy_assets ALL)
+set(RECRAFT_ASSETS gui/widgets.png gui/background.png gui/icons.png gui/inventory.png
+    gui/items.png gui/panorama.png textures/terrain.png fonts/ascii.png)
+foreach(_asset ${RECRAFT_ASSETS})
+    get_filename_component(_directory "${_asset}" DIRECTORY)
+    add_custom_command(TARGET deploy_assets POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${RECRAFT_RUNTIME_DIR}/assets/${_directory}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/assets/${_asset}"
+            "${RECRAFT_RUNTIME_DIR}/assets/${_asset}" VERBATIM)
+endforeach()
+add_dependencies(ReCraft deploy_assets)
 target_link_libraries(ReCraft raylib_legacy glfw "${OPENAL_LIBRARY}" ${ZLIB_LIBRARIES}
-    opengl32 gdi32 user32 winmm ws2_32)
+    ${PLATFORM_LIBRARIES} Threads::Threads)
+if(NOT WIN32)
+    target_link_libraries(ReCraft m)
+endif()
 
 # Development convenience. The UCRT64 compiler runtime must also be on PATH.
 get_filename_component(_openal_lib_dir "${OPENAL_LIBRARY}" DIRECTORY)
 find_file(OPENAL_RUNTIME NAMES libopenal-1.dll OpenAL32.dll
     PATHS "${_openal_lib_dir}/../bin" NO_DEFAULT_PATH)
-if(OPENAL_RUNTIME)
+if(WIN32 AND OPENAL_RUNTIME)
     add_custom_command(TARGET ReCraft POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${OPENAL_RUNTIME}" "$<TARGET_FILE_DIR:ReCraft>")
 endif()
@@ -130,19 +186,30 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/tests/renderer_test.c")
         src/world/beta_blocks.c src/assets/assets.c src/util/game_paths.c)
     target_include_directories(renderer_test PRIVATE src "${RAYLIB_ROOT}/src")
     target_compile_options(renderer_test PRIVATE -include "${CMAKE_SOURCE_DIR}/src/win_gl_compat.h")
+    target_include_directories(renderer_test PRIVATE "${GLFW_ROOT}/include")
     target_link_libraries(renderer_test raylib_legacy glfw "${OPENAL_LIBRARY}"
-        opengl32 gdi32 user32 winmm m)
+        ${PLATFORM_LIBRARIES} m)
     add_test(NAME renderer_test COMMAND renderer_test)
-    add_test(NAME renderer_gl11_test COMMAND renderer_test --software-gl11)
+    if(WIN32)
+        add_test(NAME renderer_gl11_test COMMAND renderer_test --software-gl11)
+    endif()
 endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests/network_test.c")
     add_executable(network_test tests/network_test.c src/network/network.c
         src/network/protocols/protocol_beta_14.c src/world/world.c src/world/storage.c)
     target_include_directories(network_test PRIVATE src "${ZLIB_INCLUDE_DIRS}")
     target_compile_definitions(network_test PRIVATE RECRAFT_NO_WIN_SHIM)
-    target_link_libraries(network_test ${ZLIB_LIBRARIES} ws2_32 m)
+    target_link_libraries(network_test ${ZLIB_LIBRARIES} Threads::Threads m)
+    if(WIN32)
+        target_link_libraries(network_test ws2_32)
+    endif()
     add_test(NAME network_test COMMAND network_test)
 endif()
+add_executable(protocol_47_test tests/protocol_47_test.c src/network/protocols/protocol_1_8_47.c)
+target_include_directories(protocol_47_test PRIVATE src "${ZLIB_INCLUDE_DIRS}")
+target_link_libraries(protocol_47_test ${ZLIB_LIBRARIES})
+add_test(NAME protocol_47_test COMMAND protocol_47_test)
+
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests/beta_discovery_test.c")
     add_executable(beta_discovery_test tests/beta_discovery_test.c
         src/world/beta_discovery.c src/game/inventory.c src/nbt/nbt.c src/util/game_paths.c)
@@ -175,3 +242,11 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/build/saves/New World/region/r.0.0.mcr" AND
         "${CMAKE_SOURCE_DIR}/build/saves/World1")
     set_tests_properties(beta_region_test PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endif()
+
+# Tests use assert(), including calls with side effects. Keep them active in CI Release.
+get_property(_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_target ${_targets})
+    if(_target MATCHES "_test$" AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${_target} PRIVATE -UNDEBUG)
+    endif()
+endforeach()

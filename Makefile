@@ -8,6 +8,7 @@ CC ?= gcc
 AR ?= ar
 
 BUILD_DIR = build/legacy
+VERSION_HEADER = $(BUILD_DIR)/generated/recraft_version.h
 OUT_DIR = build
 APP_BUNDLE = $(OUT_DIR)/$(APP_NAME).app
 APP_EXE = $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
@@ -24,7 +25,7 @@ LEGACY_FLAGS = -O2 -Wall -std=gnu99 -fgnu89-inline -arch i386 -mmacosx-version-m
 RAYLIB_INCLUDES = -I$(RAYLIB_ROOT)/src -I$(GLFW_ROOT)/include \
                   -I$(RAYLIB_ROOT)/external/openal_soft/include \
                   -I$(RAYLIB_ROOT)/external/glew/include
-GAME_INCLUDES = -Isrc -I$(RAYLIB_ROOT)/src -I$(GLFW_ROOT)/include -I$(RAYLIB_ROOT)/external/openal_soft/include
+GAME_INCLUDES = -Isrc -I$(BUILD_DIR)/generated -I$(RAYLIB_ROOT)/src -I$(GLFW_ROOT)/include -I$(RAYLIB_ROOT)/external/openal_soft/include
 MAC_FRAMEWORKS = -framework Cocoa -framework OpenGL -framework IOKit \
                  -framework CoreFoundation -framework CoreVideo -framework OpenAL
 
@@ -50,6 +51,11 @@ $(RAYLIB_LIB): $(RAYLIB_OBJECTS)
 	@mkdir -p $(@D)
 	$(AR) rcs $@ $(RAYLIB_OBJECTS)
 
+$(VERSION_HEADER): VERSION tools/write_version_header.sh
+	@sh tools/write_version_header.sh VERSION $@
+
+$(GAME_OBJECTS): $(VERSION_HEADER)
+
 $(BUILD_DIR)/game/%.o: src/%.c
 	@mkdir -p $(@D)
 	$(CC) $(LEGACY_FLAGS) $(GAME_INCLUDES) -c $< -o $@
@@ -61,9 +67,9 @@ $(APP_EXE): $(GAME_OBJECTS) $(RAYLIB_LIB) $(GLFW_LIB)
 	$(CC) -arch i386 -mmacosx-version-min=10.6 -o $@ $(GAME_OBJECTS) \
 	    $(RAYLIB_LIB) $(GLFW_LIB) $(MAC_FRAMEWORKS) -lm -lz -lpthread
 
-$(APP_BUNDLE)/Contents/Info.plist: assets/Info.plist.in
+$(APP_BUNDLE)/Contents/Info.plist: assets/Info.plist.in VERSION
 	@mkdir -p $(@D)
-	@sed 's/@APP_NAME@/$(APP_NAME)/g' $< > $@
+	@version=$$(sed 's/[-+].*//' VERSION); sed -e 's/@APP_NAME@/$(APP_NAME)/g' -e "s/@APP_VERSION@/$$version/g" -e 's/@MIN_MACOS@/10.6/g' $< > $@
 
 clean:
 	rm -rf $(BUILD_DIR)

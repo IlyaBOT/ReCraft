@@ -1,6 +1,10 @@
 #include "../src/renderer/renderer.c"
 #include "../src/renderer/menu_background.c"
 #include <assert.h>
+#ifndef _WIN32
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+#endif
 
 static void equal_matrix(const GLfloat *a, const GLfloat *b)
 {
@@ -16,11 +20,16 @@ int main(int argc, char **argv)
     ChunkMesh *greedy, *plain;
     uint32_t g, p;
     int x, y, z, i;
+#ifdef _WIN32
     WNDCLASSA klass = {0};
     HWND window;
     HDC dc;
     HGLRC context;
     PIXELFORMATDESCRIPTOR pfd = {0};
+#else
+    GLFWwindow *window;
+    (void)argc; (void)argv;
+#endif
     Renderer *renderer;
     RendererCamera camera = {8.0f, 8.0f, 22.0f, 0.7f, 0.4f, 70.0f};
     GLfloat before_model[16], before_projection[16], after[16], width;
@@ -193,6 +202,7 @@ int main(int argc, char **argv)
     assert(chunk_in_view(&probe_chunk, &camera, 8, &frustum));
     probe_chunk.x = -4;
     assert(!chunk_in_view(&probe_chunk, &camera, 8, &frustum));
+#ifdef _WIN32
     klass.lpfnWndProc = DefWindowProcA;
     klass.hInstance = GetModuleHandleA(NULL);
     klass.lpszClassName = "ReCraftRendererCheck";
@@ -220,6 +230,15 @@ int main(int argc, char **argv)
     assert(i && SetPixelFormat(dc, i, &pfd));
     context = wglCreateContext(dc);
     assert(context && wglMakeCurrent(dc, context));
+#else
+    assert(glfwInit());
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 1);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+    window = glfwCreateWindow(320, 240, "Hidden renderer check", NULL, NULL);
+    assert(window);
+    glfwMakeContextCurrent(window);
+#endif
     renderer = renderer_init();
     assert(renderer);
     assert(renderer_stats(renderer).vbo_budget_bytes == 16u * 1024u * 1024u);
@@ -380,8 +399,13 @@ int main(int argc, char **argv)
         assert(bg.texture_width==512 && bg.texture_height==512);
         menu_background_clear(&bg);
     }
+#ifdef _WIN32
     wglMakeCurrent(NULL, NULL); wglDeleteContext(context);
     ReleaseDC(window, dc); DestroyWindow(window);
     UnregisterClassA(klass.lpszClassName, klass.hInstance);
+#else
+    glfwDestroyWindow(window);
+    glfwTerminate();
+#endif
     return 0;
 }

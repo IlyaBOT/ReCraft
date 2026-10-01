@@ -1,0 +1,134 @@
+name: Build client
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows UCRT64
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-openal
+            mingw-w64-ucrt-x86_64-zlib
+      - name: Fetch pinned sources
+        run: cmake -P tools/fetch_dependencies.cmake
+      - name: Configure and build
+        run: |
+          cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/ci --parallel 4
+      - name: Tests and menu smoke
+        run: |
+          ctest --test-dir build/ci --output-on-failure
+          test "$(build/ReCraft.exe --version)" = "ReCraft $(cat VERSION)"
+          build/ReCraft.exe --menu-smoke --no-audio --frames 30 --capture build/menu.png
+      - name: Package runtime
+        run: |
+          cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$PWD/build/package" -DRUNTIME_DLL_DIR="$(cygpath -m "$MINGW_PREFIX/bin")" -P tools/package_runtime.cmake
+          echo "version=$(cat VERSION)" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ReCraft-${{ env.version }}-windows-x64
+          path: build/package/
+          if-no-files-found: error
+
+  linux:
+    name: Linux X11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgl1-mesa-dev libopenal-dev zlib1g-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxxf86vm-dev xvfb xauth
+      - name: Fetch pinned sources
+        run: cmake -P tools/fetch_dependencies.cmake
+      - name: Configure and build
+        run: |
+          cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/ci --parallel 4
+      - name: Tests and menu smoke
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          xvfb-run -a ctest --test-dir build/ci --output-on-failure
+          test "$(build/ReCraft --version)" = "ReCraft $(cat VERSION)"
+          xvfb-run -a build/ReCraft --menu-smoke --no-audio --frames 30 --capture build/menu.png
+      - name: Package runtime
+        run: |
+          cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$PWD/build/package" -P tools/package_runtime.cmake
+          tar -czf build/ReCraft-linux-x64.tar.gz -C build/package .
+          echo "version=$(cat VERSION)" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ReCraft-${{ env.version }}-linux-x64
+          path: build/ReCraft-linux-x64.tar.gz
+          if-no-files-found: error
+
+  macos:
+    name: macOS Vesper
+    # Only trusted pushes/manual runs execute code on the user's local machine.
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, macOS, X64, Vesper]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          clean: false
+      - name: Check toolchain
+        run: |
+          export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+          xcode-select -p
+          if ! command -v cmake >/dev/null; then
+            brew install cmake
+          fi
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+          sw_vers
+          clang --version
+      - name: Fetch pinned sources
+        run: cmake -P tools/fetch_dependencies.cmake
+      - name: Configure and build
+        run: |
+          cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64
+          cmake --build build/ci --parallel 2
+      - name: Tests and menu smoke
+        run: |
+          ctest --test-dir build/ci --output-on-failure
+          test "$(build/ReCraft.app/Contents/MacOS/ReCraft --version)" = "ReCraft $(cat VERSION)"
+          build/ReCraft.app/Contents/MacOS/ReCraft --menu-smoke --no-audio --frames 30 --capture build/menu.png
+      - name: Package runtime
+        run: |
+          cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$PWD/build/package" -P tools/package_runtime.cmake
+          tar -czf build/ReCraft-macos-x64.tar.gz -C build/package .
+          echo "version=$(cat VERSION)" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ReCraft-${{ env.version }}-macos-x64
+          path: build/ReCraft-macos-x64.tar.gz
+          if-no-files-found: error
