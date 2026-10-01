@@ -23,7 +23,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
         with:
           msystem: UCRT64
@@ -31,6 +31,7 @@ jobs:
           install: >-
             git
             mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-gdb
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-openal
@@ -45,12 +46,15 @@ jobs:
         run: |
           ctest --test-dir build/ci --output-on-failure
           test "$(build/ReCraft.exe --version)" = "ReCraft $(cat VERSION)"
-          build/ReCraft.exe --menu-smoke --no-audio --frames 30 --capture build/menu.png
+          if ! build/ReCraft.exe --menu-smoke --no-audio --frames 30 --capture build/menu.png; then
+            gdb --batch -ex run -ex 'thread apply all bt' --args build/ReCraft.exe --menu-smoke --no-audio --frames 30
+            exit 1
+          fi
       - name: Package runtime
         run: |
           cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$PWD/build/package" -DRUNTIME_DLL_DIR="$(cygpath -m "$MINGW_PREFIX/bin")" -P tools/package_runtime.cmake
           echo "version=$(cat VERSION)" >> "$GITHUB_ENV"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ReCraft-${{ env.version }}-windows-x64
           path: build/package/
@@ -61,7 +65,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install build libraries
         run: |
           sudo apt-get update
@@ -84,7 +88,7 @@ jobs:
           cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$PWD/build/package" -P tools/package_runtime.cmake
           tar -czf build/ReCraft-linux-x64.tar.gz -C build/package .
           echo "version=$(cat VERSION)" >> "$GITHUB_ENV"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ReCraft-${{ env.version }}-linux-x64
           path: build/ReCraft-linux-x64.tar.gz
@@ -97,7 +101,7 @@ jobs:
     runs-on: [self-hosted, macOS, X64, Vesper]
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           clean: false
       - name: Check toolchain
@@ -127,7 +131,7 @@ jobs:
           cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$PWD/build/package" -P tools/package_runtime.cmake
           tar -czf build/ReCraft-macos-x64.tar.gz -C build/package .
           echo "version=$(cat VERSION)" >> "$GITHUB_ENV"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ReCraft-${{ env.version }}-macos-x64
           path: build/ReCraft-macos-x64.tar.gz

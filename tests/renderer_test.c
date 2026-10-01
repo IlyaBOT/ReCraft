@@ -232,7 +232,7 @@ int main(int argc, char **argv)
     assert(context && wglMakeCurrent(dc, context));
 #else
     assert(glfwInit());
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_VISIBLE, 0); /* GLFW 3.1 predates GLFW_FALSE. */
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 1);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     window = glfwCreateWindow(320, 240, "Hidden renderer check", NULL, NULL);
