@@ -218,6 +218,7 @@ uint8_t world_peek_metadata(const World *world,int x,int y,int z);
 void world_finish_light_updates(World *world);
 int world_take_drop(World *world, WorldDropEvent *drop);
 void world_drop_stack(World *world,int x,int y,int z,InventorySlot item);
+void world_drop_stack_at(World *world,int x,int y,int z,float dx,float dy,float dz,InventorySlot item);
 void world_sound(World *world,const char *key,float x,float y,float z,float volume,float pitch);
 /* Rebuild local sky and block light once after a batch of chunk edits. */
 void world_relight_chunk(World *world, Chunk *chunk);

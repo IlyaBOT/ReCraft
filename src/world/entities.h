@@ -20,6 +20,7 @@ int world_entities_read(Chunk *chunk,const uint8_t *input,size_t size);
 int world_entities_write_list(const Chunk *chunk,NbtWriter *writer);
 int world_entities_rewrite(const Chunk *chunk,const uint8_t *input,size_t size,uint8_t **output,size_t *output_size);
 int world_item_spawn(World *world,int x,int y,int z,InventorySlot item);
+int world_item_spawn_at(World *world,float x,float y,float z,InventorySlot item);
 void world_items_tick(World *world,const struct Player *player,InventorySlot *inventory);
 int world_items_visible(const World *world,ItemDrop *out,int count);
 #endif

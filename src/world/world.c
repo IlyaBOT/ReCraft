@@ -874,11 +874,11 @@ int world_set_block(World *world,int wx,int y,int wz,uint8_t id)
     return world_set_state(world,wx,y,wz,(BetaBlockState){id,metadata});
 }
 
-void world_drop_stack(World *world,int x,int y,int z,InventorySlot item)
+void world_drop_stack_at(World *world,int x,int y,int z,float dx,float dy,float dz,InventorySlot item)
 {
     unsigned index;
     if (!world || world->network_mode || item.id<=0 || item.count<=0) return;
-    if(!world_item_spawn(world,x,y,z,item)) return;
+    if(!world_item_spawn_at(world,x+dx,y+dy,z+dz,item)) return;
     /* The observer queue is separate from the saved entity. A full queue
      * must never erase a stack dropped by a container or on player death. */
     if(world->drop_count>=WORLD_DROP_QUEUE) return;
@@ -891,6 +891,8 @@ void world_drop_stack(World *world,int x,int y,int z,InventorySlot item)
     world->drops[index].damage=item.damage;
     ++world->drop_count;
 }
+void world_drop_stack(World *world,int x,int y,int z,InventorySlot item)
+{ world_drop_stack_at(world,x,y,z,.5f,.35f,.5f,item); }
 void world_sound(World *w,const char *key,float x,float y,float z,float volume,float pitch)
 {
     unsigned i;

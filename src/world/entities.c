@@ -243,17 +243,19 @@ int world_entities_rewrite(const Chunk *chunk,const uint8_t *in,size_t size,uint
     if(nbt_read(in,size,NULL,rewrite_tag,&r,NULL)!=NBT_OK || nbt_writer_finish(&r.w,out_size)!=NBT_OK) { free(*out); *out=NULL; return 0; }
     return 1;
 }
-int world_item_spawn(World *w,int x,int y,int z,InventorySlot item)
+int world_item_spawn_at(World *w,float x,float y,float z,InventorySlot item)
 {
-    Chunk *c=owner(w,x,z); SavedEntity *e;
+    Chunk *c=owner(w,(int)floorf(x),(int)floorf(z)); SavedEntity *e;
     if(!c || item.id<=0 || item.count<=0) return 0;
     e=(SavedEntity *)calloc(1,sizeof(*e)); if(!e) { w->error=WORLD_ERROR_OUT_OF_MEMORY; return 0; }
     e->item_entity=e->item.active=1; e->item.id=item.id; e->item.count=item.count; e->item.damage=item.damage;
-    e->item.x=x+.5f; e->item.y=y+.35f; e->item.z=z+.5f;
+    e->item.x=x; e->item.y=y; e->item.z=z;
     e->item.vy=4; e->item.health=5; e->item.pickup_delay=10;
     e->next=c->saved_entities; c->saved_entities=e; c->entities_modified=1; c->dirty_flags|=CHUNK_DIRTY_SAVE|CHUNK_DIRTY_ENTITIES;
     return 1;
 }
+int world_item_spawn(World *w,int x,int y,int z,InventorySlot item)
+{ return world_item_spawn_at(w,x+.5f,y+.35f,z+.5f,item); }
 void world_items_tick(World *w,const Player *player,InventorySlot *inventory)
 {
     size_t i;

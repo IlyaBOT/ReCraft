@@ -52,6 +52,9 @@ static void jukebox_test(void)
         assert(held.count==0 && block_entity_get(&w,8,64,8,0)->record==disc && world_peek_metadata(&w,8,64,8)==1);
         assert(jukebox_use(&w,8,64,8,&held));
         assert(block_entity_get(&w,8,64,8,0)->record==0 && !world_peek_metadata(&w,8,64,8));
+        { const SavedEntity *item=world_peek_chunk(&w,0,0)->saved_entities;
+          assert(item->item_entity && item->item.id==disc && item->item.pickup_delay==10);
+          assert(item->item.x>=8.15f && item->item.x<8.85f && item->item.y>=64.66f && item->item.y<65.36f && item->item.z>=8.15f && item->item.z<8.85f); }
     }
     held=(InventorySlot){2257,1,0}; assert(jukebox_use(&w,8,64,8,&held));
     assert(world_set_block(&w,8,64,8,0)); assert(!block_entity_get(&w,8,64,8,0));

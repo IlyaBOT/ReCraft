@@ -72,6 +72,8 @@ Vanilla TileEntity **RecordPlayer**, поле **Record: Int** — Item ID.
 RMB вставляет, следующий RMB извлекает в ItemEntity; разрушение тоже извлекает
 содержимое. Survival расходует предмет, Creative сохраняет стек. Стороны
 используют tile 74, верх — 75. Пути задаёт asset manager.
+Пластинка выбрасывается с исходными случайными смещениями Beta: X/Z=.15+.7×random,
+Y=.66+.7×random относительно блока, pickup delay — 10 тиков.
 Один global positional streaming source, volume=.5×sound volume, радиус 64.
 Новый диск заменяет старый, eject останавливает этот поток даже после запуска
 другого jukebox, как SoundManager Beta. Начало пластинки прерывает background

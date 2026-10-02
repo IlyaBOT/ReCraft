@@ -1,6 +1,7 @@
 #include "block_entity.h"
 #include "world.h"
 #include "entities.h"
+#include "environment.h"
 #include "ticks.h"
 #include "../game/crafting.h"
 #include "../game/sign.h"
@@ -65,13 +66,20 @@ void block_entity_changed(World *world,BlockEntity *entity)
     chunk=owner(world,entity->x,entity->z);
     if (chunk) { chunk->entities_modified=1; chunk->dirty_flags|=CHUNK_DIRTY_SAVE|CHUNK_DIRTY_ENTITIES; }
 }
+static void record_drop(World *w,int x,int y,int z,int id)
+{
+    float dx=.15f+.7f*world_random(w,16777216)/16777216.0f;
+    float dy=.66f+.7f*world_random(w,16777216)/16777216.0f;
+    float dz=.15f+.7f*world_random(w,16777216)/16777216.0f;
+    world_drop_stack_at(w,x,y,z,dx,dy,dz,(InventorySlot){id,1,0});
+}
 int jukebox_use(World *w,int x,int y,int z,InventorySlot *held)
 {
     BlockEntity *e;
     if(w->network_mode || world_peek_block(w,x,y,z)!=84 || !(e=block_entity_get(w,x,y,z,1))) return 0;
     if(e->record) {
         world_sound(w,"records.stop",x+.5f,y+.5f,z+.5f,1,1);
-        world_drop_stack(w,x,y,z,(InventorySlot){e->record,1,0}); e->record=0;
+        record_drop(w,x,y,z,e->record); e->record=0;
     } else {
         if(!held || held->count<=0 || (held->id!=2256 && held->id!=2257)) return 0;
         e->record=held->id;
@@ -91,7 +99,7 @@ void block_entity_remove(World *world,int x,int y,int z,int drop_contents)
         if (e->x!=x || e->y!=y || e->z!=z) continue;
         if(e->kind==BLOCK_ENTITY_JUKEBOX && e->record) {
             world_sound(world,"records.stop",x+.5f,y+.5f,z+.5f,1,1);
-            if(drop_contents) world_drop_stack(world,x,y,z,(InventorySlot){e->record,1,0});
+            if(drop_contents) record_drop(world,x,y,z,e->record);
         }
         if (drop_contents && (e->kind==BLOCK_ENTITY_CHEST || e->kind==BLOCK_ENTITY_FURNACE))
             for (i=0;i<(e->kind==BLOCK_ENTITY_FURNACE ? 3 : 27);++i)
