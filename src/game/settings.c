@@ -17,7 +17,7 @@ static const OptionField fields[] = {
     FIELD(alternate_blocks,0,0), FIELD(entity_shadows,0,0), FIELD(use_vbo,0,2),
     FIELD(vbo_budget_mb,4,32),
     FIELD(greedy_mesh,0,1), FIELD(chunk_build_budget,1,8), FIELD(fog,0,1),
-    FIELD(fancy_leaves,0,1), FIELD(dynamic_updates,1,8), FIELD(debug_statistics,0,1)
+    FIELD(fancy_leaves,0,1), FIELD(reduced_transparency,0,1), FIELD(dynamic_updates,1,8), FIELD(debug_statistics,0,1)
 };
 #undef FIELD
 

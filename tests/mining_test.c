@@ -19,7 +19,15 @@ int main(void)
     drop=mining_drop((BetaBlockState){1,0},0,1); assert(drop.count==0);
     drop=mining_drop((BetaBlockState){17,2},0,1); assert(drop.id==17 && drop.damage==2);
     drop=mining_drop((BetaBlockState){20,0},278,1); assert(drop.count==0);
-    mining_wear(&tool,1); assert(tool.count==0);
+    assert(mining_wear(&tool,1) && tool.count==0);
+    tool=(InventorySlot){-1,0,0}; assert(!mining_wear(&tool,3));
+    tool=(InventorySlot){3,64,0}; assert(!mining_wear(&tool,3) && tool.count==64 && tool.damage==0);
+    tool=(InventorySlot){270,1,58};
+    assert(!mining_wear(&tool,1) && tool.damage==59 && tool.count==1);
+    assert(mining_wear(&tool,1) && tool.count==0);
+    tool=(InventorySlot){268,1,57};
+    assert(!mining_wear(&tool,1) && tool.damage==59);
+    assert(mining_wear(&tool,1) && tool.count==0);
     tool=(InventorySlot){359,1,0};
     mining_wear(&tool,35); assert(tool.damage==0);
     mining_wear(&tool,18); mining_wear(&tool,30); assert(tool.damage==2);

@@ -22,10 +22,12 @@
 #include "world/redstone.h"
 #include "renderer/weather.h"
 #include "game/bed.h"
+#include "game/sign.h"
 #include "world/mobs.h"
 #include "ui/ui.h"
 #include "audio/audio.h"
 #include "network/network.h"
+#include "network/server_status.h"
 #include "util/clock.h"
 #include "util/server_list.h"
 #include "util/game_paths.h"
@@ -69,6 +71,9 @@ typedef struct App {
     Player player;
     Player previous_player;
     NetworkClient *network;
+    ServerStatusBrowser *status_browser;
+    unsigned status_revisions[RECRAFT_MAX_SERVERS];
+    int status_visible;
     int has_world, network_position, quit, chat_open, debug, skip_ui_frame;
     int health, entity_count, rendered_entities;
     Entity entities[ENTITY_LIMIT];
@@ -77,6 +82,10 @@ typedef struct App {
     uint64_t frame_vbo_bytes, frame_client_bytes;
     InventorySlot inventory[RECRAFT_INVENTORY_SLOTS];
     int inventory_open, inventory_pick;
+    int sign_editing,sign_row,sign_x,sign_y,sign_z;
+    int pending_sign,pending_sign_x,pending_sign_y,pending_sign_z;
+    double pending_sign_until;
+    char sign_lines[SIGN_LINES][SIGN_LINE_BYTES];
     ContainerSession container;
     InventorySlot server_player_slots[9];
     BlockHit mining_hit;
@@ -85,7 +94,10 @@ typedef struct App {
     uint64_t animation_tick;
     char inventory_labels[9][32];
     const char *inventory_label_ptrs[9];
-    char chat[128], message[256];
+    char chat[401], message[256];
+    UiChatLine chat_lines[UI_CHAT_LINES];
+    int chat_count;
+    int status_preview,roster_preview;
     double message_until;
     Vector2 last_mouse;
     int mouse_settle;
@@ -101,13 +113,16 @@ typedef struct App {
 
 typedef struct RunOptions {
     int frames, width, height, smoke, menu, no_audio, client_arrays, basic, fullscreen;
-    int distance, mipmaps, smooth, blur, leaves, budget, vbo_budget, debug, profile_gpu;
+    int distance, mipmaps, smooth, blur, leaves, reduced, budget, vbo_budget, debug, profile_gpu;
     const char *benchmark, *csv, *capture, *screen, *connect, *data_dir, *world_id;
 } RunOptions;
 
 static void close_inventory(App *app);
 static void cancel_mining(App *app);
 static void open_inventory(App *app,ContainerKind kind,BlockHit hit,int size);
+static void start_server_queries(App *app);
+static void finish_sign_edit(App *app);
+static void reset_modal_inputs(App *app,int preserve_sign);
 
 static void copy_text(char *dst, size_t size, const char *src)
 {
@@ -198,10 +213,12 @@ static void refresh_lists(App *app)
         memset(entry, 0, sizeof(*entry));
         copy_text(entry->name, sizeof(entry->name), app->servers.entries[i].name);
         copy_text(entry->address, sizeof(entry->address), app->servers.entries[i].address);
-        copy_text(entry->version, sizeof(entry->version), "Beta 1.7.3 / 14");
-        copy_text(entry->motd, sizeof(entry->motd), "Status not queried; offline-mode protocol 14");
+        entry->protocol=app->servers.entries[i].protocol==47 ? 47 : 14;
+        copy_text(entry->version, sizeof(entry->version), entry->protocol==47 ? "Modern status (1.8+)" : "Beta 1.7.3 / 14");
+        copy_text(entry->motd, sizeof(entry->motd), "Status not queried");
         entry->ping_ms = -1;
-        entry->compatible = 1;
+        entry->connect_ms=-1; entry->players=entry->max_players=-1;
+        entry->compatible = entry->protocol==14;
         entry->hide_address = app->servers.entries[i].hide_address;
     }
 }
@@ -236,6 +253,7 @@ static void apply_options(App *app)
     r.mipmap = o->mipmaps;
     r.smooth_lighting = o->smooth_lighting;
     r.transparent_leaves = o->fancy_leaves;
+    r.reduced_transparency = o->reduced_transparency;
     r.brightness = o->brightness;
     renderer_set_options(app->renderer, app->has_world ? &app->world : NULL, r);
     if (o->fullscreen != app->applied.fullscreen)
@@ -348,6 +366,7 @@ static void load_inventory(App *app)
 
 static int leave_world(App *app)
 {
+    if(app->sign_editing) finish_sign_edit(app);
     if (app->has_world) {
         BetaLevelState beta_state;
         if(app->world.beta_format && !beta_session_check(app->world.path,app->world.beta_session)) {
@@ -390,6 +409,9 @@ static int leave_world(App *app)
     capture_cursor(app, 0);
     menu_background_clear(&app->menu_background);
     app->chat_open = 0;
+    app->chat_count=0;
+    app->sign_editing=0;
+    app->pending_sign=0;
     app->entity_count = 0;
     memset(app->entities, 0, sizeof(app->entities));
     memset(app->drops,0,sizeof(app->drops));
@@ -479,14 +501,25 @@ static void network_event(void *user, const NetworkEvent *event)
         app->player.pitch = -event->pitch * PI_F / 180.0f;
         app->player.vx = app->player.vy = app->player.vz = 0;
         app->network_position = 1;
-    } else if (event->type == NETWORK_EVENT_CHAT) notice(app, event->text);
+    } else if (event->type == NETWORK_EVENT_CHAT) {
+        if(app->chat_count==UI_CHAT_LINES) {
+            memmove(app->chat_lines,app->chat_lines+1,sizeof(UiChatLine)*(UI_CHAT_LINES-1));
+            --app->chat_count;
+        }
+        copy_text(app->chat_lines[app->chat_count].text,sizeof(app->chat_lines[0].text),event->text);
+        app->chat_lines[app->chat_count++].arrived=recraft_now_seconds();
+    }
+    else if(event->type==NETWORK_EVENT_SIGN)
+        sign_text_receive(&app->world,event->block_x,event->block_y,event->block_z,event->sign_lines);
     else if (event->type == NETWORK_EVENT_DISCONNECT) {
+        reset_modal_inputs(app,0);
         notice(app, event->text);
         ui_set_screen(&app->ui, UI_SCREEN_PAUSE);
         capture_cursor(app, 0);
     } else if (event->type == NETWORK_EVENT_HEALTH) {
         app->health=app->player.health=event->health;
     } else if (event->type==NETWORK_EVENT_RESPAWN) {
+        reset_modal_inputs(app,0);
         app->player.vx=app->player.vy=app->player.vz=0;
         app->player.fall_distance=0; app->player.health=app->health=20;
         app->player.air=300; app->player.fire=app->player.hurt_ticks=0;
@@ -545,19 +578,108 @@ static void network_event(void *user, const NetworkEvent *event)
 
 static int parse_address(const char *address, char *host, size_t capacity, uint16_t *port)
 {
-    const char *colon = strrchr(address, ':');
-    size_t n = colon ? (size_t)(colon - address) : strlen(address), i;
-    if (n == 0 || n >= capacity) return 0;
-    for (i = 0; i < n; ++i) if ((unsigned char)address[i] <= 32 || address[i] == ':') return 0;
-    memcpy(host, address, n); host[n] = 0;
-    *port = 25565;
-    if (colon) {
-        char *end;
-        unsigned long p = strtoul(colon + 1, &end, 10);
-        if (!colon[1] || *end || p == 0 || p > 65535) return 0;
-        *port = (uint16_t)p;
+    return server_address_parse(address,host,capacity,port);
+}
+
+static void start_server_queries(App *app)
+{
+    size_t i;
+    if(!app->status_browser || app->status_preview) return;
+    server_status_clear(app->status_browser);
+    memset(app->status_revisions,0,sizeof(app->status_revisions));
+    assets_clear_server_icons();
+    for(i=0;i<app->servers.count;++i) {
+        char host[256]; uint16_t port;
+        if(parse_address(app->servers.entries[i].address,host,sizeof(host),&port))
+            server_status_request(app->status_browser,(unsigned)i,host,port,app->server_ui[i].protocol);
+        else {
+            app->server_ui[i].query_state=SERVER_STATUS_ERROR;
+            copy_text(app->server_ui[i].motd,sizeof(app->server_ui[i].motd),"Invalid server address");
+        }
     }
-    return 1;
+}
+
+static void poll_server_queries(App *app)
+{
+    size_t i;
+    if(app->status_preview) return;
+    server_status_tick(app->status_browser);
+    if(app->ui.screen!=UI_SCREEN_MULTIPLAYER) return;
+    for(i=0;i<app->servers.count;++i) {
+        const ServerStatusResult *result=server_status_get(app->status_browser,(unsigned)i);
+        UiServerEntry *entry=&app->server_ui[i];
+        if(!result || result->state==SERVER_STATUS_IDLE) continue;
+        entry->query_state=result->state;
+        entry->ping_ms=result->ping_ms; entry->connect_ms=result->connect_ms;
+        entry->players=result->online; entry->max_players=result->maximum;
+        if(result->state==SERVER_STATUS_ERROR) copy_text(entry->motd,sizeof(entry->motd),result->error);
+        else if(result->state==SERVER_STATUS_ONLINE) {
+            copy_text(entry->motd,sizeof(entry->motd),result->reachability_only ?
+                "Reachable; Beta does not report MOTD or player count" : result->motd);
+            copy_text(entry->version,sizeof(entry->version),result->version);
+        } else copy_text(entry->motd,sizeof(entry->motd),"Querying server...");
+        if(result->revision!=app->status_revisions[i]) {
+            app->status_revisions[i]=result->revision;
+            if(result->state==SERVER_STATUS_ONLINE)
+                assets_set_server_icon((int)i,result->icon,result->icon_size);
+        }
+    }
+}
+
+static void text_backspace(char *text)
+{
+    size_t n=strlen(text);
+    if(!n) return;
+    do { --n; } while(n && ((unsigned char)text[n]&0xc0)==0x80);
+    text[n]=0;
+}
+
+static void text_append(char *text,size_t capacity,unsigned codepoint,int limit)
+{
+    const char *p=text; int units=0; size_t n=strlen(text),count=0; char bytes[4];
+    if(codepoint<32 || codepoint==127 || codepoint==0xa7 || codepoint>0x10ffff ||
+       (codepoint>=0xd800 && codepoint<=0xdfff)) return;
+    while(*p) units+=MinecraftTextCodepoint(&p)>0xffff ? 2 : 1;
+    if(units+(codepoint>0xffff ? 2 : 1)>limit) return;
+    if(codepoint<128) { bytes[0]=(char)codepoint; count=1; }
+    else if(codepoint<0x800) { bytes[0]=(char)(0xc0|(codepoint>>6)); bytes[1]=(char)(0x80|(codepoint&63)); count=2; }
+    else if(codepoint<0x10000) { bytes[0]=(char)(0xe0|(codepoint>>12)); bytes[1]=(char)(0x80|((codepoint>>6)&63)); bytes[2]=(char)(0x80|(codepoint&63)); count=3; }
+    else { bytes[0]=(char)(0xf0|(codepoint>>18)); bytes[1]=(char)(0x80|((codepoint>>12)&63)); bytes[2]=(char)(0x80|((codepoint>>6)&63)); bytes[3]=(char)(0x80|(codepoint&63)); count=4; }
+    if(n+count>=capacity) return;
+    memcpy(text+n,bytes,count); text[n+count]=0;
+}
+
+static void open_sign_edit(App *app,int x,int y,int z)
+{
+    const char (*lines)[SIGN_LINE_BYTES]=sign_text_get(&app->world,x,y,z);
+    app->sign_x=x; app->sign_y=y; app->sign_z=z; app->sign_row=0;
+    memset(app->sign_lines,0,sizeof(app->sign_lines));
+    if(lines) memcpy(app->sign_lines,lines,sizeof(app->sign_lines));
+    app->sign_editing=1;
+    cancel_mining(app); capture_cursor(app,0);
+}
+
+static void finish_sign_edit(App *app)
+{
+    if(!app->sign_editing) return;
+    if(app->network) {
+        if(!network_send_sign_update(app->network,app->sign_x,app->sign_y,app->sign_z,app->sign_lines))
+            notice(app,"Unable to send sign text; server owns the sign.");
+    } else if(!sign_text_set(&app->world,app->sign_x,app->sign_y,app->sign_z,app->sign_lines))
+        notice(app,"The sign no longer exists.");
+    app->sign_editing=0;
+    capture_cursor(app,1);
+}
+
+static void reset_modal_inputs(App *app,int preserve_sign)
+{
+    if(preserve_sign && app->sign_editing) finish_sign_edit(app);
+    app->sign_editing=app->pending_sign=app->chat_open=0;
+    app->chat[0]=0;
+    close_inventory(app);
+    cancel_mining(app);
+    app->attack=app->attack_pressed=0;
+    memset(&app->input,0,sizeof(app->input));
 }
 
 static void join_server(App *app, const char *address)
@@ -675,7 +797,10 @@ static void handle_action(App *app, UiAction action)
             app->ui.create_creative = action.creative;
             app->ui.create_flat = action.flat;
             break;
-        case UI_ACTION_JOIN_SERVER: join_server(app, action.server_address); break;
+        case UI_ACTION_JOIN_SERVER:
+            if(action.server_protocol==47) notice(app,"Modern servers support status queries only; gameplay requires Beta 1.7.3.");
+            else join_server(app, action.server_address);
+            break;
         case UI_ACTION_SAVE_SERVER:
             index = action.index < 0 ? app->servers.count : (size_t)action.index;
             if (index >= RECRAFT_MAX_SERVERS || index > app->servers.count) {
@@ -684,9 +809,10 @@ static void handle_action(App *app, UiAction action)
             copy_text(app->servers.entries[index].name, sizeof(app->servers.entries[index].name), action.server_name);
             copy_text(app->servers.entries[index].address, sizeof(app->servers.entries[index].address), action.server_address);
             app->servers.entries[index].hide_address = action.hide_address;
+            app->servers.entries[index].protocol = action.server_protocol==47 ? 47 : 14;
             if (index == app->servers.count) ++app->servers.count;
             if (!server_list_save(&app->servers, app->servers_path)) notice(app, "Unable to save server list.");
-            refresh_lists(app); break;
+            refresh_lists(app); start_server_queries(app); break;
         case UI_ACTION_DELETE_SERVER:
             if (action.index >= 0 && (size_t)action.index < app->servers.count) {
                 index = (size_t)action.index;
@@ -694,15 +820,17 @@ static void handle_action(App *app, UiAction action)
                     (app->servers.count - index - 1)*sizeof(SavedServer));
                 --app->servers.count;
                 if (!server_list_save(&app->servers, app->servers_path)) notice(app, "Unable to save server list.");
-                refresh_lists(app);
+                refresh_lists(app); start_server_queries(app);
             }
             break;
         case UI_ACTION_REFRESH_SERVERS:
-            refresh_lists(app); notice(app, "Saved servers reloaded. Legacy status ping is not implemented."); break;
+            server_list_load(&app->servers,app->servers_path);
+            refresh_lists(app); start_server_queries(app); break;
         case UI_ACTION_RESUME:
             ui_set_screen(&app->ui, UI_SCREEN_GAME); capture_cursor(app, 1); break;
         case UI_ACTION_RESPAWN:
             if (!app->network) {
+                reset_modal_inputs(app,0);
                 player_respawn(&app->player,&app->world);
                 app->previous_player=app->player; app->health=20;
                 ui_set_screen(&app->ui,UI_SCREEN_GAME); capture_cursor(app,1);
@@ -865,16 +993,27 @@ static void game_input(App *app)
         return;
     }
     if (IsKeyPressed(KEY_F3)) app->debug = !app->debug;
+    if(app->sign_editing) {
+        int key=GetKeyPressed();
+        if(IsKeyPressed(KEY_ESCAPE)) finish_sign_edit(app);
+        else if(IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_DOWN)) app->sign_row=(app->sign_row+1)%4;
+        else if(IsKeyPressed(KEY_UP)) app->sign_row=(app->sign_row+3)%4;
+        else if(IsKeyPressed(KEY_BACKSPACE) || key==3) text_backspace(app->sign_lines[app->sign_row]);
+        else if(key>0) text_append(app->sign_lines[app->sign_row],SIGN_LINE_BYTES,(unsigned)key,SIGN_LINE_UNITS);
+        memset(&app->input,0,sizeof(app->input)); app->last_mouse=mouse;
+        return;
+    }
     if (app->chat_open) {
-        size_t n = strlen(app->chat);
         int key = GetKeyPressed();
-        if (key >= 32 && key < 127 && n + 1 < sizeof(app->chat)) { app->chat[n] = (char)key; app->chat[n+1] = 0; }
-        if (IsKeyPressed(KEY_BACKSPACE) && n) app->chat[n-1] = 0;
+        if (IsKeyPressed(KEY_BACKSPACE) || key==3) text_backspace(app->chat);
+        else if(key>0) text_append(app->chat,sizeof(app->chat),(unsigned)key,100);
         if (IsKeyPressed(KEY_ENTER)) {
-            if (app->network && app->chat[0]) network_send_chat(app->network, app->chat);
+            if (app->network && app->chat[0] && !network_send_chat(app->network, app->chat))
+                notice(app,"Unable to send chat message.");
             app->chat_open = 0; app->chat[0] = 0;
+            capture_cursor(app,1);
         }
-        if (IsKeyPressed(KEY_ESCAPE)) app->chat_open = 0;
+        if (IsKeyPressed(KEY_ESCAPE)) { app->chat_open = 0; capture_cursor(app,1); }
         memset(&app->input, 0, sizeof(app->input));
         app->last_mouse = mouse;
         return;
@@ -904,7 +1043,9 @@ static void game_input(App *app)
         app->last_mouse=mouse;
         return;
     }
-    if (IsKeyPressed(KEY_T) && app->network) { app->chat_open = 1; app->chat[0] = 0; return; }
+    if (IsKeyPressed(KEY_T) && app->network && network_state(app->network)==NETWORK_PLAY) {
+        app->chat_open = 1; app->chat[0] = 0; cancel_mining(app); capture_cursor(app,0); return;
+    }
     if(app->mouse_settle) --app->mouse_settle;
     else {
         app->input.look_dx += mouse.x - app->last_mouse.x;
@@ -933,6 +1074,19 @@ static void game_input(App *app)
     }
     app->attack=IsMouseButtonDown(MOUSE_LEFT_BUTTON)!=0;
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) app->attack_pressed=1;
+    if(app->network && app->attack) {
+        BlockHit hit=player_raycast(&app->player,&app->world,4);
+        RendererCamera camera={app->player.x,app->player.y+1.62f,app->player.z,app->player.yaw,app->player.pitch,70};
+        int target=entity_pick(app->entities,ENTITY_LIMIT,&camera,3,hit.hit ? hit.distance : 3);
+        if(target>=0) {
+            if(app->attack_pressed) {
+                network_use_entity(app->network,target,1); network_send_animation(app->network,1);
+                app->swing_ticks=6;
+            }
+            /* Holding attack on an entity must not mine the block behind it. */
+            app->attack=app->attack_pressed=0; cancel_mining(app);
+        }
+    }
     if(app->attack_pressed && !app->network && world_mobs_attack(&app->world,&app->player,
         &app->inventory[app->player.selected_slot],3)) {
         app->attack=app->attack_pressed=0; cancel_mining(app); app->swing_ticks=6;
@@ -941,8 +1095,20 @@ static void game_input(App *app)
         if (app->network) {
             BlockHit hit = player_raycast(&app->player, &app->world, 5);
             const InventorySlot *item = &app->inventory[app->player.selected_slot];
-            if (hit.hit) network_place_block(app->network, hit.x, hit.y, hit.z, hit_face(hit),
-                item->id, item->count, item->damage);
+            RendererCamera camera={app->player.x,app->player.y+1.62f,app->player.z,app->player.yaw,app->player.pitch,70};
+            int target=entity_pick(app->entities,ENTITY_LIMIT,&camera,3,hit.hit ? hit.distance : 3);
+            if(target>=0) { network_use_entity(app->network,target,0); return; }
+            if (hit.hit) {
+                int face=hit_face(hit);
+                int sent=network_place_block(app->network, hit.x, hit.y, hit.z, face,item->id, item->count, item->damage);
+                if(sent && item->id==323 && item->count>0 && face>0 && beta_material_solid(hit.block)) {
+                    unsigned old=world_peek_block(&app->world,hit.place_x,hit.place_y,hit.place_z);
+                    if(old==0 || old==78 || fluid_kind(old)) {
+                        app->pending_sign=1; app->pending_sign_until=recraft_now_seconds()+3;
+                        app->pending_sign_x=hit.place_x; app->pending_sign_y=hit.place_y; app->pending_sign_z=hit.place_z;
+                    }
+                }
+            }
             else network_place_block(app->network,-1,255,-1,255,item->id,item->count,item->damage);
         } else {
             BlockHit hit=player_raycast(&app->player,&app->world,5);
@@ -970,6 +1136,15 @@ static void game_input(App *app)
                 if(world_redstone_activate(&app->world,hit.x,hit.y,hit.z)) return;
             }
             if(player_use_item(&app->player,&app->world,item)) { app->health=app->player.health; app->swing_ticks=6; return; }
+            if(item->id==323 && item->count>0 && hit.hit) {
+                int x,y,z;
+                if(sign_place(&app->world,hit.x,hit.y,hit.z,(unsigned)hit_face(hit),
+                    app->player.yaw*180/PI_F+180,&x,&y,&z)) {
+                    inventory_take(app->inventory,app->player.selected_slot,app->player.creative);
+                    open_sign_edit(app,x,y,z);
+                }
+                return;
+            }
             if (item->id>0 && item->id<BETA_BLOCK_COUNT && item->count>0 &&
                 player_place_block_state(&app->player,&app->world,
                     (BetaBlockState){(uint8_t)item->id,(uint8_t)item->damage})) {
@@ -996,10 +1171,10 @@ static void tick_mining(App *app)
     float strength;
     app->attack_pressed=0;
     if (app->swing_ticks>0) --app->swing_ticks;
-    if (!held || app->inventory_open || app->chat_open || app->ui.screen!=UI_SCREEN_GAME) {
+    if (!held || app->inventory_open || app->chat_open || app->sign_editing || app->ui.screen!=UI_SCREEN_GAME) {
         cancel_mining(app); app->mining_wait=0; return;
     }
-    if (!app->swing_ticks) app->swing_ticks=6;
+    if (!app->swing_ticks) { app->swing_ticks=6; if(app->network) network_send_animation(app->network,1); }
     if (app->mining_wait>0) { --app->mining_wait; return; }
     hit=player_raycast(&app->player,&app->world,app->player.creative ? 5 : 4);
     if (!hit.hit) { cancel_mining(app); return; }
@@ -1028,8 +1203,8 @@ static void tick_mining(App *app)
         if (world_set_block(&app->world,hit.x,hit.y,hit.z,0)) {
             if (!app->player.creative) {
                 world_drop_stack(&app->world,hit.x,hit.y,hit.z,drop);
-                mining_wear(item,hit.block);
-                if(item->count<=0) audio_named(&app->audio,"random.break",.8f,1,1,app->player.x,app->player.y,app->player.z);
+                if(mining_wear(item,hit.block))
+                    audio_named(&app->audio,"random.break",.8f,1,1,app->player.x,app->player.y,app->player.z);
             }
             audio_block(&app->audio,hit.block,2,hit.x+.5f,hit.y+.5f,hit.z+.5f);
         }
@@ -1054,7 +1229,7 @@ static void tick_game(App *app)
     app->health=app->player.health;
     if (app->health<=0 && !app->player.creative) {
         int i;
-        close_inventory(app);
+        reset_modal_inputs(app,1);
         if (!app->network) for (i=0;i<36;++i) {
             world_drop_stack(&app->world,(int)floorf(app->player.x),(int)floorf(app->player.y+1),
                 (int)floorf(app->player.z),app->inventory[i]);
@@ -1188,7 +1363,7 @@ static int parse_options(int argc, char **argv, RunOptions *o)
 {
     int i;
     memset(o, 0, sizeof(*o)); o->width = 960; o->height = 720;
-    o->blur = o->mipmaps = o->smooth = o->leaves = o->budget = o->vbo_budget = -1;
+    o->blur = o->mipmaps = o->smooth = o->leaves = o->reduced = o->budget = o->vbo_budget = -1;
     for (i = 1; i < argc; ++i) {
         const char *s = argv[i];
         if (!strcmp(s, "--smoke-test")) o->smoke = 1;
@@ -1205,6 +1380,7 @@ static int parse_options(int argc, char **argv, RunOptions *o)
         else if (!strcmp(s, "--menu-blur") && i+1 < argc) o->blur = atoi(argv[++i]);
         else if (!strcmp(s, "--smooth-lighting") && i+1 < argc) o->smooth = atoi(argv[++i]);
         else if (!strcmp(s, "--fancy-leaves") && i+1 < argc) o->leaves = atoi(argv[++i]);
+        else if (!strcmp(s, "--reduced-transparency") && i+1 < argc) o->reduced = atoi(argv[++i]);
         else if (!strcmp(s, "--chunk-budget") && i+1 < argc) o->budget = atoi(argv[++i]);
         else if (!strcmp(s, "--vbo-budget") && i+1 < argc) o->vbo_budget = atoi(argv[++i]);
         else if (!strcmp(s, "--window") && i+1 < argc) {
@@ -1229,7 +1405,7 @@ static int parse_options(int argc, char **argv, RunOptions *o)
         o->frames >= 0 && o->frames <= 1000000 && (o->distance == 0 ||
         (o->distance >= 2 && o->distance <= 12)) &&
         o->mipmaps >= -1 && o->mipmaps <= 4 && o->smooth >= -1 && o->smooth <= 1 && o->blur>=-1 && o->blur<=1 &&
-        o->leaves >= -1 && o->leaves <= 1 && (o->budget == -1 ||
+        o->leaves >= -1 && o->leaves <= 1 && o->reduced>=-1 && o->reduced<=1 && (o->budget == -1 ||
         (o->budget >= 1 && o->budget <= 8)) &&
         (o->vbo_budget == -1 || o->vbo_budget == 4 || o->vbo_budget == 8 ||
          o->vbo_budget == 16 || o->vbo_budget == 32);
@@ -1303,6 +1479,56 @@ static int gameplay_preview(App *app,const char *name)
             app->entity_count=world_mobs_visible(&app->world,app->entities,ENTITY_LIMIT);
         }
         world_environment_refresh(&app->world); app->previous_player=app->player;
+    } else if(!strcmp(name,"materials") || !strcmp(name,"sign-edit")) {
+        int x,y,z;
+        char lines[4][61]={"ReCraft", "Beta 1.7.3", "Signs & leaves", "Hello world"};
+        for(i=0;i<4;++i) bed_place(&app->world,2+i*4,64,5,(unsigned)i);
+        for(x=2;x<4;++x) for(z=10;z<12;++z) for(y=64;y<66;++y) world_set_block(&app->world,x,y,z,18);
+        for(i=0;i<2;++i) {
+            world_set_block(&app->world,7+i*3,64,10,(uint8_t)(i ? 71 : 64));
+            world_set_metadata(&app->world,7+i*3,64,10,1);
+            world_set_block(&app->world,7+i*3,65,10,(uint8_t)(i ? 71 : 64));
+            world_set_metadata(&app->world,7+i*3,65,10,9);
+        }
+        world_set_block(&app->world,13,64,10,30);
+        sign_place(&app->world,6,63,13,1,180,&x,&y,&z);
+        sign_text_set(&app->world,x,y,z,lines);
+        world_set_block(&app->world,10,65,13,5);
+        sign_place(&app->world,10,65,13,3,180,&x,&y,&z);
+        sign_text_set(&app->world,x,y,z,lines);
+        app->player.x=8.5f; app->player.y=65; app->player.z=21;
+        app->player.yaw=0; app->player.pitch=-.18f; app->player.flying=1;
+        app->previous_player=app->player;
+        if(!strcmp(name,"sign-edit")) open_sign_edit(app,6,64,13);
+        app->inventory[0]=(InventorySlot){270,1,40};
+        app->inventory[1]=(InventorySlot){278,1,1000};
+        app->inventory[2]=(InventorySlot){359,1,180};
+        app->inventory[3]=(InventorySlot){323,1,0};
+    } else if(!strcmp(name,"multiplayer-demo")) {
+        app->status_preview=1; app->servers.count=3;
+        memset(app->server_ui,0,sizeof(app->server_ui));
+        for(i=0;i<3;++i) {
+            UiServerEntry *entry=&app->server_ui[i];
+            copy_text(entry->name,sizeof(entry->name),i==0 ? "Beta TCP fixture" : i==1 ? "Modern status fixture" : "Offline fixture");
+            copy_text(entry->address,sizeof(entry->address),"127.0.0.1:25565");
+            copy_text(entry->version,sizeof(entry->version),i==1 ? "1.8+ status only" : "Beta 1.7.3 / 14");
+            copy_text(entry->motd,sizeof(entry->motd),i==0 ? "Reachable; Beta has no server-list status" : i==1 ? "\xc2\xa7" "aWelcome! \xc2\xa7" "6Modern MOTD\nSecond line keeps its color" : "Cannot query server");
+            entry->protocol=i==1 ? 47 : 14; entry->compatible=i!=1;
+            entry->query_state=i==2 ? SERVER_STATUS_ERROR : SERVER_STATUS_ONLINE;
+            entry->ping_ms=i==1 ? 45 : -1; entry->connect_ms=i==0 ? 12 : -1;
+            entry->players=i==1 ? 5 : -1; entry->max_players=i==1 ? 20 : -1;
+        }
+        copy_text(app->ui.status,sizeof(app->ui.status),"In-memory status fixture; no remote queries");
+        ui_set_screen(&app->ui,UI_SCREEN_MULTIPLAYER); capture_cursor(app,0);
+        return 1;
+    } else if(!strcmp(name,"chat") || !strcmp(name,"players")) {
+        app->chat_count=2;
+        copy_text(app->chat_lines[0].text,sizeof(app->chat_lines[0].text),"<Steve> Hello, ReCraft!");
+        copy_text(app->chat_lines[1].text,sizeof(app->chat_lines[1].text),"\xc2\xa7" "eA colored server message\xc2\xa7" "r with a longer line that wraps above the hotbar.");
+        app->chat_lines[0].arrived=app->chat_lines[1].arrived=recraft_now_seconds();
+        app->chat_open=!strcmp(name,"chat");
+        app->roster_preview=!strcmp(name,"players");
+        copy_text(app->chat,sizeof(app->chat),"Hello from the client");
     } else if(!strcmp(name,"blocks")) {
         static const uint8_t ids[6]={58,61,62,54,54,76};
         for(i=0;i<6;++i) { world_set_block(&app->world,i*2,64,4,ids[i]); world_set_metadata(&app->world,i*2,64,4,ids[i]==76 ? 5 : 3); }
@@ -1338,9 +1564,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "Usage: ReCraft [--smoke-test|--menu-smoke|--benchmark bench_torch|bench_stream|bench_flat|bench_forest|bench_caves|bench_chunk_updates|bench_worstcase_transparency]\n"
             "  [--frames N] [--window 960x720] [--capture file.png] [--csv file.csv]\n"
             "  [--client-arrays] [--basic-mesh] [--distance 2..12] [--mipmaps 0..4]\n"
-            "  [--smooth-lighting 0|1] [--menu-blur 0|1] [--fancy-leaves 0|1] [--chunk-budget 1..8] [--vbo-budget 4|8|16|32]\n"
+            "  [--smooth-lighting 0|1] [--menu-blur 0|1] [--fancy-leaves 0|1] [--reduced-transparency 0|1] [--chunk-budget 1..8] [--vbo-budget 4|8|16|32]\n"
             "  [--screen main|worlds|create|multiplayer|add|direct|video|inventory|pause]\n"
             "  [--smoke-test --screen player|crafting|furnace|chest|large-chest|health|blocks|day|night|rain|snow|bed|mobs]\n"
+            "  [--smoke-test --screen materials|sign-edit|multiplayer-demo|chat|players]\n"
             "  [--no-audio] [--debug] [--fullscreen]\n"
             "  [--connect host:port] [--world save-directory] [--data-dir directory] [--profile-gpu]\n");
         return 2;
@@ -1356,6 +1583,7 @@ int main(int argc, char **argv)
         app.ui.options.max_framerate = 0;
     }
     server_list_load(&app.servers, app.servers_path);
+    app.status_browser=server_status_create();
     refresh_lists(&app);
     if (run.client_arrays) app.ui.options.use_vbo = 2;
     if (run.basic) app.ui.options.greedy_mesh = 0;
@@ -1364,6 +1592,7 @@ int main(int argc, char **argv)
     if (run.blur >= 0) app.ui.options.menu_blur = run.blur;
     if (run.smooth >= 0) app.ui.options.smooth_lighting = run.smooth;
     if (run.leaves >= 0) app.ui.options.fancy_leaves = run.leaves;
+    if (run.reduced >= 0) app.ui.options.reduced_transparency = run.reduced;
     if (run.budget >= 1) app.ui.options.chunk_build_budget = app.ui.options.dynamic_updates = run.budget;
     if (run.vbo_budget >= 0) app.ui.options.vbo_budget_mb = run.vbo_budget;
     if (run.benchmark) { app.ui.options.max_framerate = 0; app.ui.options.vsync = 0; }
@@ -1456,12 +1685,27 @@ int main(int argc, char **argv)
             if (leave_world(&app)) break;
         }
         last = start;
+        if(app.ui.screen==UI_SCREEN_MULTIPLAYER && !app.status_visible) start_server_queries(&app);
+        app.status_visible=app.ui.screen==UI_SCREEN_MULTIPLAYER;
+        poll_server_queries(&app);
         if (elapsed > 0.25) elapsed = 0.25;
         app.ui.network_mode=app.network!=NULL;
         audio_listener(&app.audio,app.player.x,app.player.y+1.62f,app.player.z,app.player.yaw);
         audio_update(&app.audio,elapsed,app.has_world && (app.network || app.ui.screen==UI_SCREEN_GAME),
             app.ui.options.music_volume,app.ui.options.sound_volume);
         if (app.network) network_tick(app.network);
+        if(app.pending_sign) {
+            if(!app.network || network_state(app.network)!=NETWORK_PLAY || app.player.health<=0)
+                app.pending_sign=0;
+            else if(sign_is_block(world_peek_block(&app.world,app.pending_sign_x,app.pending_sign_y,app.pending_sign_z))) {
+                /* A confirmed placement remains editable after closing chat,
+                 * inventory or Pause; never open two modal screens together. */
+                if(app.ui.screen==UI_SCREEN_GAME && !app.inventory_open && !app.chat_open && !app.sign_editing) {
+                    app.pending_sign=0;
+                    open_sign_edit(&app,app.pending_sign_x,app.pending_sign_y,app.pending_sign_z);
+                }
+            } else if(start>app.pending_sign_until) app.pending_sign=0;
+        }
         if (app.has_world && app.ui.screen == UI_SCREEN_GAME && !run.benchmark && !run.smoke) game_input(&app);
         app.ui.world_background=app.has_world && app.ui.screen!=UI_SCREEN_GAME;
         if (app.ui.world_background) {
@@ -1657,9 +1901,18 @@ int main(int argc, char **argv)
                 if(app.player.sleeping && ui_draw_sleep(&app.ui,app.player.sleep_ticks)) {
                     player_wake(&app.player,&app.world,0); capture_cursor(&app,1);
                 }
-                if (app.chat_open) {
-                    DrawRectangle(8,recraft_screen_height()-145,recraft_screen_width()-16,24,(Color){0,0,0,210});
-                    DrawMinecraftText(app.chat,12,recraft_screen_height()-141,16,WHITE,1);
+                ui_draw_chat(&app.ui,app.chat_lines,app.chat_count,app.chat,app.chat_open,start);
+                if(app.roster_preview) {
+                    UiPlayerEntry entries[3]={{"Steve",-1},{"Alex",-1},{"ReCraft",-1}};
+                    ui_draw_player_list(&app.ui,entries,3,0);
+                }
+                if(app.sign_editing && ui_draw_sign_editor(&app.ui,app.sign_lines,&app.sign_row)) finish_sign_edit(&app);
+                if(app.network && !app.chat_open && !app.inventory_open && !app.sign_editing && IsKeyDown(GLFW_KEY_TAB)) {
+                    NetworkPlayerInfo roster[80]; UiPlayerEntry entries[80];
+                    size_t i,count=network_player_list(app.network,roster,80);
+                    if(count>80) count=80;
+                    for(i=0;i<count;++i) { copy_text(entries[i].name,sizeof(entries[i].name),roster[i].name); entries[i].ping_ms=roster[i].ping_ms; }
+                    ui_draw_player_list(&app.ui,entries,(int)count,0);
                 }
                 hud_ms=(recraft_now_seconds()-hud_start)*1000;
             }
@@ -1710,6 +1963,7 @@ int main(int argc, char **argv)
     if (!leave_world(&app)) { fprintf(stderr,"Unsaved world remains in memory; shutdown aborted.\n"); return 1; }
     if (!app.transient && !settings_save(&app.ui.options,app.settings_path)) status=1;
     audio_shutdown(&app.audio);
+    server_status_destroy(app.status_browser);
     ui_shutdown();
     renderer_shutdown(app.renderer);
     assets_shutdown();

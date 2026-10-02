@@ -2,6 +2,7 @@
 #include "../src/renderer/menu_background.c"
 #include "../src/game/entity_render.h"
 #include <assert.h>
+#include "png_fixture.h"
 #ifndef _WIN32
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -11,6 +12,45 @@ static void equal_matrix(const GLfloat *a, const GLfloat *b)
 {
     int i;
     for (i = 0; i < 16; ++i) assert(fabsf(a[i] - b[i]) < 0.00001f);
+}
+
+static void entity_pick_test(void)
+{
+    RenderEntity entities[4]={{0}};
+    RendererCamera camera={0,1.6f,0,0,0,70};
+    entities[0].active=entities[1].active=1;
+    entities[0].id=11; entities[0].z=-4;
+    entities[1].id=22; entities[1].z=-2;
+    assert(entity_pick(entities,4,&camera,6,6)==22);
+    assert(entity_pick(entities,4,&camera,6,1)==-1); /* Wall occludes both. */
+    assert(entity_pick(entities,4,&camera,1,6)==-1); /* Reach is independent. */
+    entities[1].active=0;
+    assert(entity_pick(entities,4,&camera,6,6)==11);
+    entities[1].active=1; entities[1].type=255; /* Dropped items aren't attack targets. */
+    assert(entity_pick(entities,4,&camera,6,6)==11);
+    camera.yaw=3.14159265359f;
+    assert(entity_pick(entities,4,&camera,6,6)==-1);
+    camera.yaw=0; entities[0].y=4;
+    assert(entity_pick(entities,4,&camera,6,6)==-1);
+    assert(entity_pick(entities,0,&camera,6,6)==-1);
+}
+
+static void pixel_text_test(void)
+{
+    const char *text="A\xd0\xaf\xf0\x9f\x98\x80";
+    assert(MinecraftTextCodepoint(&text)=='A');
+    assert(MinecraftTextCodepoint(&text)==0x42f);
+    assert(MinecraftTextCodepoint(&text)==0x1f600);
+    assert(MinecraftTextCodepoint(&text)==0);
+    text="\xe2\x82"; /* Incomplete sequence has bounded reads. */
+    assert(MinecraftTextCodepoint(&text)=='?');
+    assert(MinecraftTextCodepoint(&text)=='?');
+    assert(MinecraftTextCodepoint(&text)==0);
+    assets_init(RECRAFT_TEST_ASSET_ROOT);
+    assert(MeasureMinecraftText("\xc2\xa7" "aHello\xc2\xa7" "r",16)==MeasureMinecraftText("Hello",16));
+    assert(MeasureMinecraftText("\xd0\xaf",16)==MeasureMinecraftText("?",16));
+    assert(MeasureMinecraftText("Hello\nx",16)==MeasureMinecraftText("Hello",16));
+    assets_shutdown();
 }
 
 static void inventory_preview_test(void)
@@ -59,6 +99,81 @@ static void inventory_preview_test(void)
     puts("Inventory biped: textured pixels, cursor pose and GL state preservation passed");
 }
 
+static void sign_render_test(void)
+{
+    static GLubyte board[320*240*3],text[320*240*3];
+    World w; Chunk *chunk; Renderer r={0}; ChunkMesh mesh={0};
+    SignInstance sign={0,0,0,0,BETA_BLOCK_STANDING_SIGN};
+    VisibleChunk visible={&mesh,0}; RendererCamera camera={.5f,.5f,2,0,0,70};
+    GLfloat texture_matrix[16],after[16]; int i,colored=0,difference=0; GLuint probe; GLint binding;
+    const char lines[SIGN_LINES][SIGN_LINE_BYTES]={"ReCraft","Beta 1.7.3","Hello","World"};
+    assert(world_init(&w,1,1,4)==WORLD_OK); chunk=world_get_chunk(&w,0,0);
+    memset(chunk->blocks,0,sizeof(chunk->blocks)); memset(chunk->sky_light,255,sizeof(chunk->sky_light));
+    chunk_set_block(chunk,0,0,0,BETA_BLOCK_STANDING_SIGN);
+    mesh.signs=&sign; mesh.sign_count=1; r.options.brightness=100;
+    assets_init(RECRAFT_TEST_ASSET_ROOT);
+    glDisable(GL_SCISSOR_TEST); glViewport(0,0,320,240); glClearColor(0,0,0,1);
+    glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthMask(GL_TRUE); glClearDepth(1);
+    glEnable(GL_TEXTURE_2D); glDisable(GL_LIGHTING); glDisable(GL_FOG);
+    glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_MODULATE);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity(); glOrtho(-.2,1.2,-.1,1.3,-2,2);
+    glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+    glMatrixMode(GL_TEXTURE); glLoadIdentity(); glTranslatef(.125f,.25f,0);
+    glGetFloatv(GL_TEXTURE_MATRIX,texture_matrix); glMatrixMode(GL_MODELVIEW);
+    glGenTextures(1,&probe); glBindTexture(GL_TEXTURE_2D,probe);
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); draw_signs(&r,&w,&camera,&visible,1);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D,&binding); assert((GLuint)binding==probe);
+    glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,board);
+    for(i=0;i<(int)sizeof(board);i+=3) if(board[i] || board[i+1] || board[i+2]) ++colored;
+    assert(colored>1000 && r.stats.quads_opaque==12); /* Real board and post pixels. */
+    assert(sign_text_set(&w,0,0,0,lines));
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); draw_signs(&r,&w,&camera,&visible,1);
+    glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,text);
+    for(i=0;i<(int)sizeof(text);++i) if(text[i]!=board[i]) ++difference;
+    assert(difference>100 && r.stats.quads_cutout>0); /* Four visible, depth-tested lines. */
+    glGetFloatv(GL_TEXTURE_MATRIX,after); equal_matrix(texture_matrix,after);
+    assert(glGetError()==GL_NO_ERROR);
+    glBindTexture(GL_TEXTURE_2D,0); glDeleteTextures(1,&probe);
+    assets_shutdown(); assert(world_close(&w)==WORLD_OK);
+    puts("Sign rendering: original textured board/post, four text lines and texture state passed");
+}
+
+static void server_icon_test(void)
+{
+    unsigned char png[300];static GLubyte pixels[64*64*4];size_t n=test_png_fixture(png),i;
+    Texture2D fallback,icon,other;GLint value;
+    assets_init(RECRAFT_TEST_ASSET_ROOT);
+    fallback=assets_get_texture(ASSET_SERVER_DEFAULT_ICON);
+    assert(fallback.id && fallback.width==128 && fallback.height==128);
+    assert(assets_get_server_icon(0).id==fallback.id);
+    assert(assets_set_server_icon(0,png,n));icon=assets_get_server_icon(0);
+    assert(icon.id && icon.id!=fallback.id && icon.width==64 && icon.height==64);
+    assert(assets_get_server_icon(0).id==icon.id); /* Fetch uses the uploaded cache. */
+    glBindTexture(GL_TEXTURE_2D,icon.id);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH,&value);assert(value==64);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT,&value);assert(value==64);
+    glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,&value);assert(value==GL_NEAREST);
+    glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,&value);assert(value==GL_NEAREST);
+    glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels);
+    for(i=0;i<sizeof(pixels);i+=4)
+        assert(pixels[i]==48 && pixels[i+1]==96 && pixels[i+2]==192 && pixels[i+3]==255);
+    glBindTexture(GL_TEXTURE_2D,0);
+    png[29]^=1; /* Bad IHDR CRC must discard the old icon and use the fallback. */
+    assert(!assets_set_server_icon(0,png,n));assert(!glIsTexture(icon.id));
+    assert(assets_get_server_icon(0).id==fallback.id);png[29]^=1;
+    assert(!assets_set_server_icon(0,png,32));assert(assets_get_server_icon(0).id==fallback.id);
+    assert(!assets_set_server_icon(64,png,n));assert(assets_get_server_icon(64).id==fallback.id);
+    assert(assets_set_server_icon(0,png,n) && assets_set_server_icon(63,png,n));
+    icon=assets_get_server_icon(0);other=assets_get_server_icon(63);
+    assert(icon.id!=other.id && glIsTexture(icon.id) && glIsTexture(other.id));
+    assets_clear_server_icons();
+    assert(!glIsTexture(icon.id) && !glIsTexture(other.id) && glIsTexture(fallback.id));
+    assert(assets_get_server_icon(0).id==fallback.id && assets_get_server_icon(63).id==fallback.id);
+    assert(glGetError()==GL_NO_ERROR);
+    assets_shutdown();assert(!glIsTexture(fallback.id));
+    puts("Server favicon: decoded RGBA pixels, nearest filters, cache, fallback and GL disposal passed");
+}
+
 int main(int argc, char **argv)
 {
     World world;
@@ -87,6 +202,7 @@ int main(int argc, char **argv)
     const GLvoid *pointer;
     ViewFrustum frustum;
     Chunk probe_chunk;
+    entity_pick_test();
     {
         World light_world;
         Chunk *a,*b;
@@ -112,7 +228,7 @@ int main(int argc, char **argv)
     assert(world_init(&world, 1, 1, 8) == WORLD_OK);
     chunk = world_get_chunk(&world, 0, 0);
     assert(chunk);
-    assert(!visible_face(BETA_BLOCK_FLOWING_WATER, BETA_BLOCK_STILL_WATER));
+    assert(!visible_face(&basic,BETA_BLOCK_FLOWING_WATER, BETA_BLOCK_STILL_WATER));
     assert(beta_source_tile(14)==116 && beta_source_tile(15)==117);
     assert(beta_source_tile(16)==132 && beta_source_tile(17)==4);
     assert(beta_source_tile(18)==64 && beta_source_tile(19)==210 &&
@@ -127,6 +243,100 @@ int main(int argc, char **argv)
            beta_source_tile(61)==208 && beta_source_tile(62)==176 &&
            beta_source_tile(63)==192);
     assert(atlas_upload_bytes()==5592404u);
+    /* Fancy leaves retain crisp opaque pixels and expose interior surfaces.
+     * Reduced transparency uses the original opaque foliage tiles while
+     * leaving glass, water and cobweb transparency essential. */
+    {
+        Renderer policy={0}; ChunkMesh *fast,*fancy,*reduced;
+        memset(chunk->blocks,0,sizeof(chunk->blocks));
+        chunk_set_block(chunk,4,100,4,BLOCK_LEAVES);
+        chunk_set_block(chunk,5,100,4,BLOCK_LEAVES);
+        fast=build_chunk_mesh(&policy,&world,chunk);
+        policy.options.transparent_leaves=1;
+        fancy=build_chunk_mesh(&policy,&world,chunk);
+        policy.options.reduced_transparency=1;
+        reduced=build_chunk_mesh(&policy,&world,chunk);
+        assert(fast && fancy && reduced);
+        assert(fast->layers[1].vertex_count==40 && fast->layers[2].vertex_count==0);
+        assert(fancy->layers[1].vertex_count==48 && fancy->layers[2].vertex_count==0);
+        for(i=0;i<48;++i) assert(fancy->layers[1].vertices[i].a==255);
+        assert(reduced->layers[0].vertex_count==40 && reduced->layers[1].vertex_count==0);
+        assert(((face_key(&policy,BLOCK_LEAVES,0,1,1,15)>>8)&255)==99);
+        assert(((face_key(&policy,BLOCK_LEAVES,1,1,1,15)>>8)&255)==100);
+        assert(render_layer(&policy,BLOCK_GLASS)==BLOCK_LAYER_CUTOUT);
+        assert(render_layer(&policy,BLOCK_WATER)==BLOCK_LAYER_TRANSPARENT);
+        assert(render_layer(&policy,BETA_BLOCK_WEB)==BLOCK_LAYER_CUTOUT);
+        assert(render_layer(&policy,BETA_BLOCK_BED)==BLOCK_LAYER_CUTOUT);
+        chunk_mesh_destroy(fast); chunk_mesh_destroy(fancy); chunk_mesh_destroy(reduced);
+        memset(chunk->blocks,0,sizeof(chunk->blocks));
+        chunk_set_block(chunk,4,100,4,BETA_BLOCK_WEB);
+        reduced=build_chunk_mesh(&policy,&world,chunk);
+        assert(reduced && reduced->layers[1].vertex_count==16 && !reduced->layers[0].vertex_count);
+        chunk_mesh_destroy(reduced);
+        {
+            ChunkMesh normal={0},opaque={0};
+            policy.options.reduced_transparency=0;
+            emit_decorative_plane(&policy,&normal,4,100,4,66,2,0);
+            policy.options.reduced_transparency=1;
+            emit_decorative_plane(&policy,&opaque,4,100,4,66,2,0);
+            assert(normal.layers[2].vertex_count==8 && opaque.layers[0].vertex_count==8);
+            for(i=0;i<8;++i) assert(opaque.layers[0].vertices[i].a==255);
+            free(normal.layers[2].vertices); free(opaque.layers[0].vertices);
+        }
+    }
+    /* Bed frame V uses atlas rows 7..16, not the mattress's top strip.
+     * Both halves share Beta's top rotation and omit their joining face. */
+    memset(chunk->blocks,0,sizeof(chunk->blocks));
+    for(x=0;x<4;++x) for(y=0;y<=8;y+=8) {
+        ChunkMesh bed_mesh={0}; unsigned top_tile=beta_render_tile(y ? 135 : 134);
+        int top_vertices=0,bottom_vertices=0,side_vertices=0;
+        emit_bed(&basic,&world,&bed_mesh,chunk,4,100,4,(uint8_t)(x|y));
+        assert(bed_mesh.layers[1].vertex_count==20 && !bed_mesh.layers[0].vertex_count);
+        for(i=0;i<20;++i) {
+            const VoxelVertex *v=&bed_mesh.layers[1].vertices[i];
+            int quad=i&~3,j,is_top=1,is_bottom=1;
+            for(j=0;j<4;++j) {
+                int height=bed_mesh.layers[1].vertices[quad+j].y-100*128;
+                if(height!=72) is_top=0;
+                if(height!=24) is_bottom=0;
+            }
+            if(is_top) {
+                float a=(float)v->x/128-4,b=(float)v->z/128-4,u,t;
+                if(x==0) { u=b; t=a; }
+                else if(x==1) { u=1-a; t=b; }
+                else if(x==2) { u=1-b; t=1-a; }
+                else { u=a; t=1-b; }
+                assert(v->u==partial_texcoord(top_tile,u,0,0));
+                assert(v->v==partial_texcoord(top_tile,t,0,1)); ++top_vertices;
+            } else if(is_bottom) ++bottom_vertices;
+            else {
+                float atlas_v=v->v*(float)ATLAS_PIXELS/32767;
+                float local_v=fmodf(atlas_v+.02f,ATLAS_SLOT_PIXELS);
+                assert(local_v>6.95f && local_v<16.06f); ++side_vertices;
+            }
+        }
+        assert(top_vertices==4 && bottom_vertices==4 && side_vertices==12);
+        free(bed_mesh.layers[1].vertices);
+    }
+    for(x=0;x<16;++x) {
+        ChunkMesh door_mesh={0}; BetaBlockBox box; Renderer policy={0};
+        assert(beta_block_selection_box((BetaBlockState){BETA_BLOCK_WOOD_DOOR,(uint8_t)x},&box));
+        assert(fabsf((box.max_x-box.min_x)*(box.max_z-box.min_z)-.1875f)<1e-6f);
+        emit_door(&policy,&world,&door_mesh,chunk,4,100,4,BETA_BLOCK_WOOD_DOOR,(uint8_t)x);
+        assert(door_mesh.layers[1].vertex_count==24 && !door_mesh.layers[0].vertex_count);
+        for(i=0;i<24;++i) assert(door_mesh.layers[1].vertices[i].a==255);
+        free(door_mesh.layers[1].vertices);
+        memset(&door_mesh,0,sizeof(door_mesh)); policy.options.reduced_transparency=1;
+        emit_door(&policy,&world,&door_mesh,chunk,4,100,4,BETA_BLOCK_IRON_DOOR,(uint8_t)x);
+        assert(door_mesh.layers[0].vertex_count==24 && !door_mesh.layers[1].vertex_count);
+        free(door_mesh.layers[0].vertices);
+    }
+    chunk_set_block(chunk,4,100,4,BETA_BLOCK_STANDING_SIGN); chunk_set_metadata(chunk,4,100,4,11);
+    chunk_set_block(chunk,7,100,4,BETA_BLOCK_WALL_SIGN); chunk_set_metadata(chunk,7,100,4,3);
+    greedy=build_chunk_mesh(&basic,&world,chunk);
+    assert(greedy && greedy->sign_count==2 && !greedy->layers[0].vertex_count && !greedy->layers[1].vertex_count);
+    assert(greedy->signs[0].metadata==11 && greedy->signs[1].metadata==3);
+    chunk_mesh_destroy(greedy);
     /* UV phase and texel density cannot change when an edit splits a greedy
      * face. One block must span exactly 16 texels at every rectangle width. */
     for(x=1;x<=4;++x) {
@@ -484,7 +694,10 @@ int main(int argc, char **argv)
         assert(bg.texture_width==512 && bg.texture_height==512);
         menu_background_clear(&bg);
     }
+    pixel_text_test();
     inventory_preview_test();
+    sign_render_test();
+    server_icon_test();
 #ifdef _WIN32
     wglMakeCurrent(NULL, NULL); wglDeleteContext(context);
     ReleaseDC(window, dc); DestroyWindow(window);

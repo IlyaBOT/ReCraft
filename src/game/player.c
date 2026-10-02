@@ -2,6 +2,7 @@
 #include "../world/block_entity.h"
 #include "../world/fluid.h"
 #include "bed.h"
+#include "sign.h"
 
 #include <math.h>
 #include <string.h>
@@ -21,10 +22,11 @@ static int body_intersects_block(const Player *player, int bx, int by, int bz,
            player->z - PLAYER_RADIUS < (float)bz + box->max_z;
 }
 
-static void collision_box(uint8_t id, BetaBlockBox *box)
+static void collision_box(BetaBlockState state, BetaBlockBox *box)
 {
-    BetaBlockState state = { id, 0 };
-    if ((id==BETA_BLOCK_SLAB || id==BETA_BLOCK_CACTUS || id==26 || id==93 || id==94) && beta_block_selection_box(state,box)) return;
+    unsigned id=state.id;
+    if ((id==BETA_BLOCK_SLAB || id==BETA_BLOCK_CACTUS || id==26 || id==93 || id==94 ||
+         id==BETA_BLOCK_WOOD_DOOR || id==BETA_BLOCK_IRON_DOOR) && beta_block_selection_box(state,box)) return;
     box->min_x = box->min_y = box->min_z = 0.0f;
     box->max_x = box->max_y = box->max_z = 1.0f;
 }
@@ -44,7 +46,7 @@ static int body_collides(const Player *player, World *world)
                 uint8_t id = world_get_block(world, x, y, z);
                 if (world_block_def(id)->solid) {
                     BetaBlockBox box;
-                    collision_box(id, &box);
+                    collision_box((BetaBlockState){id,world_get_metadata(world,x,y,z)}, &box);
                     if (body_intersects_block(player, x, y, z, &box)) return 1;
                 }
             }
@@ -283,7 +285,8 @@ static BlockHit raycast(const Player *player, World *world, float reach,int sour
                 id == BETA_BLOCK_TORCH ||
                 id == BETA_BLOCK_UNLIT_REDSTONE_TORCH ||
                 id == BETA_BLOCK_REDSTONE_TORCH || id==BETA_BLOCK_CACTUS || id==BETA_BLOCK_NETHER_PORTAL ||
-                id==26 || id==93 || id==94 || id==69 || id==77 || id==78) {
+                id==26 || id==93 || id==94 || id==69 || id==77 || id==78 || sign_is_block(id) ||
+                id==BETA_BLOCK_WOOD_DOOR || id==BETA_BLOCK_IRON_DOOR) {
                 BetaBlockState state = { id, world_get_metadata(world, x, y, z) };
                 float end = fminf(reach, fminf(tx, fminf(ty, tz)));
                 place[0] = x; place[1] = y; place[2] = z;
@@ -380,8 +383,7 @@ int player_place_block_state(Player *player, World *world, BetaBlockState state)
     if (!hit.hit || state.id == BLOCK_AIR || !beta_block_state_valid(state) ||
         hit.place_y < 0 || hit.place_y >= WORLD_HEIGHT) return 0;
     old = world_get_block(world, hit.place_x, hit.place_y, hit.place_z);
-    if (old != BLOCK_AIR && old != BLOCK_WATER &&
-        old != BETA_BLOCK_FLOWING_WATER) return 0;
+    if (old != BLOCK_AIR && !fluid_kind(old)) return 0;
     if ((state.id==BETA_BLOCK_TORCH || state.id==BETA_BLOCK_REDSTONE_TORCH ||
          state.id==BETA_BLOCK_UNLIT_REDSTONE_TORCH) && state.metadata==0) {
         /* vm.e maps the clicked face to the attachment metadata. Metadata
@@ -431,7 +433,7 @@ int player_place_block_state(Player *player, World *world, BetaBlockState state)
         world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z) == BETA_BLOCK_SLAB &&
         world_get_metadata(world,hit.place_x,hit.place_y-1,hit.place_z) == state.metadata) {
         BetaBlockBox full;
-        collision_box(BETA_BLOCK_DOUBLE_SLAB,&full);
+        collision_box((BetaBlockState){BETA_BLOCK_DOUBLE_SLAB,0},&full);
         if (body_intersects_block(player,hit.place_x,hit.place_y-1,
                                   hit.place_z,&full)) return 0;
         if (!world_set_block(world,hit.place_x,hit.place_y-1,hit.place_z,
@@ -446,7 +448,7 @@ int player_place_block_state(Player *player, World *world, BetaBlockState state)
     }
     if (world_block_def(state.id)->solid) {
         BetaBlockBox box;
-        collision_box(state.id, &box);
+        collision_box(state, &box);
         if (body_intersects_block(player, hit.place_x, hit.place_y,
                                   hit.place_z, &box)) return 0;
     }

@@ -179,6 +179,14 @@ size_t beta14_login(uint8_t *out,size_t cap,const char *username)
 { size_t n; if(!out || cap<14) return 0; n=write_string(out+5,cap-14,username,16); if(!n) return 0; out[0]=1; put32(out+1,14); memset(out+5+n,0,9); return n+14; }
 size_t beta14_chat(uint8_t *out,size_t cap,const char *message)
 { size_t n; if(!out || cap<1) return 0; n=write_string(out+1,cap-1,message,119); if(!n) return 0; out[0]=3; return n+1; }
+size_t beta14_sign_update(uint8_t *out,size_t cap,int x,int y,int z,const char lines[4][61])
+{
+    size_t at=11,n;int i;
+    if(!out||!lines||cap<19||y<0||y>=128)return 0;
+    out[0]=0x82;put32(out+1,(uint32_t)x);put16(out+5,(unsigned)y);put32(out+7,(uint32_t)z);
+    for(i=0;i<4;++i){if(!memchr(lines[i],0,61))return 0;n=write_string(out+at,cap-at,lines[i],15);if(!n)return 0;at+=n;}
+    return at;
+}
 size_t beta14_held_item(uint8_t *out,size_t cap,int slot)
 { if(!out || cap<3 || slot<0 || slot>8) return 0; out[0]=0x10; put16(out+1,(unsigned)slot); return 3; }
 size_t beta14_movement(uint8_t *out,size_t cap,double x,double y,double z,float yaw,float pitch,int ground)

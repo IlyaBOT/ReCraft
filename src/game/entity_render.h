@@ -11,6 +11,10 @@ typedef struct RenderEntity {
     int positioned;
     int color,sheared;
 } RenderEntity;
+/* Pick the nearest supported living entity; block_distance occludes targets.
+ * Returns an entity id, or -1. Camera yaw/pitch follow local Player radians. */
+int entity_pick(const RenderEntity *entities,int count,const RendererCamera *camera,
+                float reach,float block_distance);
 
 /* One depth-tested fixed-function batch of simple geometry for remote entities.
    Returns the number actually drawn. The backend owns no textures or buffers. */

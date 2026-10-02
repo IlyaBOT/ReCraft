@@ -63,14 +63,19 @@ static const BlockDef block_defs[BLOCK_COUNT] = {
     [BETA_BLOCK_FLOWING_LAVA] = {"Lava",0,0,BLOCK_LAYER_OPAQUE,64,65,64,15},
     [BETA_BLOCK_STILL_LAVA] = {"Lava",0,0,BLOCK_LAYER_OPAQUE,64,65,64,15},
     [BETA_BLOCK_REDSTONE_WIRE] = {"Redstone",0,0,BLOCK_LAYER_CUTOUT,82,82,82,0},
-    [BETA_BLOCK_BED] = {"Bed",1,0,BLOCK_LAYER_OPAQUE,88,89,17,0},
-    [BETA_BLOCK_UNPOWERED_REPEATER] = {"Redstone Repeater",1,0,BLOCK_LAYER_OPAQUE,94,60,17,0},
-    [BETA_BLOCK_POWERED_REPEATER] = {"Redstone Repeater",1,0,BLOCK_LAYER_OPAQUE,95,60,17,0},
+    [BETA_BLOCK_BED] = {"Bed",1,0,BLOCK_LAYER_CUTOUT,89,92,17,0},
+    [BETA_BLOCK_UNPOWERED_REPEATER] = {"Redstone Repeater",1,0,BLOCK_LAYER_OPAQUE,95,60,17,0},
+    [BETA_BLOCK_POWERED_REPEATER] = {"Redstone Repeater",1,0,BLOCK_LAYER_OPAQUE,96,60,17,0},
     [BETA_BLOCK_LEVER] = {"Lever",0,0,BLOCK_LAYER_CUTOUT,7,7,7,0},
     [BETA_BLOCK_STONE_BUTTON] = {"Stone Button",0,0,BLOCK_LAYER_CUTOUT,1,1,1,0},
-    [BETA_BLOCK_SNOW_LAYER] = {"Snow",0,0,BLOCK_LAYER_OPAQUE,96,96,96,0},
-    [BETA_BLOCK_SNOW_BLOCK] = {"Snow Block",1,1,BLOCK_LAYER_OPAQUE,96,96,96,0},
-    [BETA_BLOCK_ICE] = {"Ice",1,0,BLOCK_LAYER_TRANSPARENT,97,97,97,0}
+    [BETA_BLOCK_SNOW_LAYER] = {"Snow",0,0,BLOCK_LAYER_OPAQUE,97,97,97,0},
+    [BETA_BLOCK_SNOW_BLOCK] = {"Snow Block",1,1,BLOCK_LAYER_OPAQUE,97,97,97,0},
+    [BETA_BLOCK_ICE] = {"Ice",1,0,BLOCK_LAYER_TRANSPARENT,98,98,98,0},
+    [BETA_BLOCK_WOOD_DOOR] = {"Wooden Door",1,0,BLOCK_LAYER_CUTOUT,103,103,103,0},
+    [BETA_BLOCK_IRON_DOOR] = {"Iron Door",1,0,BLOCK_LAYER_CUTOUT,105,105,105,0},
+    [BETA_BLOCK_WEB] = {"Cobweb",0,0,BLOCK_LAYER_CUTOUT,101,101,101,0},
+    [BETA_BLOCK_STANDING_SIGN] = {"Sign",0,0,BLOCK_LAYER_NONE,0,0,0,0},
+    [BETA_BLOCK_WALL_SIGN] = {"Sign",0,0,BLOCK_LAYER_NONE,0,0,0,0}
 };
 
 static const BlockDef unknown_solid = {"Unimplemented solid",1,1,BLOCK_LAYER_OPAQUE,1,1,1,0};
@@ -843,7 +848,7 @@ int world_set_block(World *world, int wx, int y, int wz, uint8_t id)
     if (chunk_get_block(chunk,x,y,z)==id) return 1;
     {
         uint8_t old=chunk_get_block(chunk,x,y,z);
-        if ((old==54 || old==61 || old==62) &&
+        if ((old==54 || old==61 || old==62 || old==63 || old==68) &&
             !((old==61 || old==62) && (id==61 || id==62)))
             block_entity_remove(world,wx,y,wz,!world->network_mode);
     }

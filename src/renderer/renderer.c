@@ -3,6 +3,8 @@
 #include "../world/fluid.h"
 #include "../world/environment.h"
 #include "../world/block_entity.h"
+#include "../game/sign.h"
+#include "../ui/pixel_font.h"
 #include "texture_animation.h"
 
 #if defined(_WIN32)
@@ -88,7 +90,11 @@ typedef struct ChunkMesh {
     int32_t chunk_x, chunk_z;
     uint32_t revision;
     uint8_t animations;
+    struct SignInstance *signs;
+    unsigned sign_count;
 } ChunkMesh;
+
+typedef struct SignInstance { uint8_t x,y,z,metadata,id; } SignInstance;
 
 typedef struct VisibleChunk {
     const ChunkMesh *mesh;
@@ -398,9 +404,20 @@ static GLuint make_atlas(void)
                     unsigned sx = ((unsigned)source_tile % 16u)*16u + x % TILE_PIXELS;
                     unsigned sy = ((unsigned)source_tile / 16u)*16u + y % TILE_PIXELS;
                     memcpy(pixels + offset, beta_pixels + ((size_t)sy*256u+sx)*4u, 4u);
+                    /* Reduced-transparency door variants keep the original
+                     * panel pixels and fill its holes with matching material.
+                     * Runtime-only atlas slots leave pack images untouched. */
+                    if(tile>=106 && tile<=109) {
+                        unsigned background=tile<=107 ? 4u : 22u,alpha=pixels[offset+3],channel;
+                        unsigned bx=(background%16)*16+x%16,by=(background/16)*16+y%16;
+                        const uint8_t *solid=beta_pixels+((size_t)by*256+bx)*4;
+                        for(channel=0;channel<3;++channel)
+                            pixels[offset+channel]=(uint8_t)((pixels[offset+channel]*alpha+solid[channel]*(255-alpha)+127)/255);
+                        pixels[offset+3]=255;
+                    }
                     /* Beta biome-neutral grass/leaves are grayscale. Apply a
                        fixed plains tint once, without per-frame work. */
-                    if (tile == 3 || tile == 10 || tile == 52 || tile == 54) {
+                    if (tile == 3 || tile == 10 || tile == 16 || tile == 52 || tile == 54 || tile==99 || tile==100) {
                         pixels[offset+0] = clamp_byte(pixels[offset+0]*4/5);
                         pixels[offset+1] = clamp_byte(pixels[offset+1]*5/4);
                         pixels[offset+2] = clamp_byte(pixels[offset+2]*2/3);
@@ -476,6 +493,7 @@ static void chunk_mesh_destroy(void *pointer)
                 mesh->owner->vbo_live_bytes -= mesh->layers[layer].vbo_bytes;
         }
     }
+    free(mesh->signs);
     free(mesh);
 }
 
@@ -618,6 +636,7 @@ void renderer_set_options(Renderer *renderer, World *world, RendererOptions opti
     options.fog = !!options.fog;
     options.smooth_lighting = !!options.smooth_lighting;
     options.transparent_leaves = !!options.transparent_leaves;
+    options.reduced_transparency = !!options.reduced_transparency;
     if (options.mipmap < 0) options.mipmap = 0;
     if (options.mipmap > 4) options.mipmap = 4;
     if (options.brightness < 0) options.brightness = 0;
@@ -629,6 +648,7 @@ void renderer_set_options(Renderer *renderer, World *world, RendererOptions opti
     mesh_change = options.greedy != previous.greedy ||
                   options.smooth_lighting != previous.smooth_lighting ||
                   options.transparent_leaves != previous.transparent_leaves ||
+                  options.reduced_transparency != previous.reduced_transparency ||
                   options.brightness != previous.brightness ||
                   options.vbo_mode != previous.vbo_mode ||
                   options.vbo_budget_mb != previous.vbo_budget_mb;
@@ -670,13 +690,15 @@ static uint8_t block_at(const World *world, const Chunk *chunk, int x, int y, in
                             y, chunk->z * WORLD_CHUNK_SIZE + z);
 }
 
-static int visible_face(uint8_t self, uint8_t neighbor)
+static int visible_face(const Renderer *renderer, uint8_t self, uint8_t neighbor)
 {
     const BlockDef *self_def, *neighbor_def;
     if (self == BLOCK_AIR || self == BLOCK_TORCH || self == BETA_BLOCK_SLAB ||
         self==BETA_BLOCK_REDSTONE_TORCH || self==BETA_BLOCK_UNLIT_REDSTONE_TORCH ||
         self==BETA_BLOCK_CACTUS || self==BETA_BLOCK_NETHER_PORTAL || self==BETA_BLOCK_REDSTONE_WIRE ||
         self==26 || self==93 || self==94 || self==69 || self==77 || self==78 ||
+        self==BETA_BLOCK_WOOD_DOOR || self==BETA_BLOCK_IRON_DOOR ||
+        self==BETA_BLOCK_STANDING_SIGN || self==BETA_BLOCK_WALL_SIGN || self==BETA_BLOCK_WEB ||
         beta_block_cross_plant(self))
         return 0;
     if (fluid_kind(self) && fluid_kind(self)==fluid_kind(neighbor))
@@ -687,6 +709,9 @@ static int visible_face(uint8_t self, uint8_t neighbor)
     neighbor_def = world_block_def(neighbor);
     if (!neighbor_def || neighbor_def->render_layer == BLOCK_LAYER_NONE) return 1;
     if (neighbor_def->opaque) return 0;
+    if (self==BLOCK_LEAVES && neighbor==BLOCK_LEAVES &&
+        renderer->options.transparent_leaves && !renderer->options.reduced_transparency)
+        return 1;
     if (self == neighbor) return 0;
     return 1;
 }
@@ -702,17 +727,29 @@ static uint8_t block_face_tile(const BlockDef *definition, uint8_t block,
     return definition->texture_side;
 }
 
+static uint8_t render_layer(const Renderer *renderer,uint8_t block)
+{
+    if (renderer->options.reduced_transparency &&
+        (block==BLOCK_LEAVES || block==BETA_BLOCK_NETHER_PORTAL ||
+         block==BETA_BLOCK_WOOD_DOOR || block==BETA_BLOCK_IRON_DOOR))
+        return BLOCK_LAYER_OPAQUE;
+    if (block==BLOCK_LEAVES || block==BETA_BLOCK_WOOD_DOOR || block==BETA_BLOCK_IRON_DOOR ||
+        block==BETA_BLOCK_WEB || block==BETA_BLOCK_BED)
+        return BLOCK_LAYER_CUTOUT;
+    return world_block_def(block)->render_layer;
+}
+
 static uint32_t face_key(const Renderer *renderer, uint8_t block, uint8_t metadata,
                          int axis, int direction, uint8_t light)
 {
     const BlockDef *definition = world_block_def(block);
-    uint8_t tile, render_layer = definition->render_layer;
-    if (block == BLOCK_LEAVES && renderer->options.transparent_leaves)
-        render_layer = BLOCK_LAYER_TRANSPARENT;
+    uint8_t tile, layer = render_layer(renderer,block);
     tile = block_face_tile(definition, block, metadata, axis, direction);
+    if (block==BLOCK_LEAVES && renderer->options.reduced_transparency)
+        tile=(uint8_t)beta_render_tile((metadata&3u)==1u ? 133 : 53);
     return (uint32_t)block | ((uint32_t)tile << 8) |
            ((uint32_t)(light & 15u) << 16) |
-           ((uint32_t)render_layer << 20) |
+           ((uint32_t)layer << 20) |
            ((uint32_t)(fluid_kind(block) ?
                         metadata&15u : 0u) << 24);
 }
@@ -843,8 +880,7 @@ static void emit_quad(const Renderer *renderer, const World *world,
         vertex->r = color;
         vertex->g = color;
         vertex->b = color;
-        vertex->a = ((uint8_t)key == BLOCK_LEAVES &&
-                     renderer->options.transparent_leaves) ? 170 : 255;
+        vertex->a = 255;
     }
     target->vertex_count += 4u;
 }
@@ -936,6 +972,7 @@ static unsigned cross_slot(uint8_t id, uint8_t metadata)
     case BETA_BLOCK_BROWN_MUSHROOM: return 57u;
     case BETA_BLOCK_RED_MUSHROOM: return 58u;
     case BETA_BLOCK_REEDS: return 59u;
+    case BETA_BLOCK_WEB: return (unsigned)beta_render_tile(11);
     default: return 0u;
     }
 }
@@ -1004,7 +1041,7 @@ static void emit_partial_face(const Renderer *renderer, const World *world,
 {
     static const int u_axis[3] = {1,2,0};
     static const int v_axis[3] = {2,0,1};
-    MeshLayer *layer = &mesh->layers[BLOCK_LAYER_OPAQUE - 1];
+    MeshLayer *layer = &mesh->layers[render_layer(renderer,id) - 1];
     float corners[4][3];
     int adjacent[3] = {x,y,z};
     int u = u_axis[axis], v = v_axis[axis], i;
@@ -1012,6 +1049,8 @@ static void emit_partial_face(const Renderer *renderer, const World *world,
     uint8_t light, color;
     float ambient, illumination, shade;
     int16_t us[4], vs[4];
+    if(renderer->options.reduced_transparency &&
+       (id==BETA_BLOCK_WOOD_DOOR || id==BETA_BLOCK_IRON_DOOR)) tile+=4;
     if (!layer_reserve(layer,layer->vertex_count+4u)) { layer->overflow=1; return; }
     adjacent[axis] += direction;
     light = light_at(world,chunk,adjacent[0],adjacent[1],adjacent[2]);
@@ -1099,14 +1138,6 @@ static void emit_low_block(const Renderer *r,const World *w,ChunkMesh *mesh,cons
     for(axis=0;axis<3;++axis) for(sign=-1;sign<=1;sign+=2) {
         MeshLayer *layer=&mesh->layers[BLOCK_LAYER_OPAQUE-1]; unsigned before=layer->vertex_count,i;
         emit_partial_face(r,w,mesh,chunk,x,y,z,id,metadata,axis,sign,lo,hi);
-        /* Bed/repeater sides occupy the top strip of their own atlas tile. */
-        if(axis!=1 && id==26) {
-            unsigned tile=block_face_tile(world_block_def(id),id,metadata,axis,sign);
-            for(i=before;i<layer->vertex_count;++i) {
-                float height=(float)layer->vertices[i].y/VERTEX_COORD_SCALE-y;
-                layer->vertices[i].v=partial_texcoord(tile,.5625f-height,0,1);
-            }
-        }
         if(axis==1 && sign==1) {
             unsigned tile=block_face_tile(world_block_def(id),id,metadata,axis,sign);
             for(i=before;i<layer->vertex_count;++i) {
@@ -1121,9 +1152,77 @@ static void emit_low_block(const Renderer *r,const World *w,ChunkMesh *mesh,cons
     }
 }
 
-static void emit_decorative_plane(ChunkMesh *mesh,int x,int y,int z,unsigned tile,int axis,int power)
+/* RenderBlocks.renderBlockBed uses a separate top UV orientation, lower
+ * atlas rows for the wooden frame, and no face between the two bed halves. */
+static void emit_bed(const Renderer *r,const World *w,ChunkMesh *mesh,const Chunk *chunk,
+                     int x,int y,int z,uint8_t metadata)
 {
-    MeshLayer *layer=&mesh->layers[axis==1 ? BLOCK_LAYER_CUTOUT-1 : BLOCK_LAYER_TRANSPARENT-1];
+    static const unsigned hidden[2][4]={{3,4,2,5},{2,5,3,4}};
+    static const unsigned flipped[4]={5,3,4,2};
+    int axis,sign;
+    unsigned direction=metadata&3;
+    MeshLayer *layer=&mesh->layers[BLOCK_LAYER_CUTOUT-1];
+    for(axis=0;axis<3;++axis) for(sign=-1;sign<=1;sign+=2) {
+        float lo[3]={0,0,0},hi[3]={1,.5625f,1};
+        unsigned face=axis==1 ? (sign>0 ? 1u : 0u) : axis==2 ? (sign>0 ? 3u : 2u) : (sign>0 ? 5u : 4u);
+        unsigned before=layer->vertex_count,i,tile;
+        if(face==hidden[(metadata>>3)&1][direction]) continue;
+        if(axis!=1) {
+            int p[3]={x,y,z}; p[axis]+=sign;
+            if(world_block_def(block_at(w,chunk,p[0],p[1],p[2]))->opaque) continue;
+        } else if(sign<0) lo[1]=hi[1]=.1875f;
+        emit_partial_face(r,w,mesh,chunk,x,y,z,BETA_BLOCK_BED,metadata,axis,sign,lo,hi);
+        tile=block_face_tile(world_block_def(BETA_BLOCK_BED),BETA_BLOCK_BED,metadata,axis,sign);
+        for(i=before;i<layer->vertex_count;++i) {
+            VoxelVertex *v=&layer->vertices[i];
+            float a=(float)v->x/VERTEX_COORD_SCALE-x,b=(float)v->z/VERTEX_COORD_SCALE-z;
+            float u=a,t=b;
+            if(axis==1 && sign>0) {
+                if(direction==0) { u=b; t=a; }
+                else if(direction==1) { u=1-a; t=b; }
+                else if(direction==2) { u=1-b; t=1-a; }
+                else { u=a; t=1-b; }
+            } else if(axis!=1) {
+                u=axis==0 ? (sign>0 ? 1-b : b) : (sign>0 ? a : 1-a);
+                if(face==flipped[direction]) u=1-u;
+                t=1-((float)v->y/VERTEX_COORD_SCALE-y);
+            }
+            v->u=partial_texcoord(tile,u,0,0); v->v=partial_texcoord(tile,t,0,1);
+        }
+    }
+}
+
+static void emit_door(const Renderer *r,const World *w,ChunkMesh *mesh,const Chunk *chunk,
+                      int x,int y,int z,uint8_t id,uint8_t metadata)
+{
+    BetaBlockBox box; float lo[3],hi[3]; int axis,sign;
+    unsigned direction=((metadata&4) ? metadata : metadata-1)&3;
+    MeshLayer *layer=&mesh->layers[render_layer(r,id)-1];
+    if(!beta_block_selection_box((BetaBlockState){id,metadata},&box)) return;
+    lo[0]=box.min_x; lo[1]=box.min_y; lo[2]=box.min_z;
+    hi[0]=box.max_x; hi[1]=box.max_y; hi[2]=box.max_z;
+    for(axis=0;axis<3;++axis) for(sign=-1;sign<=1;sign+=2) {
+        unsigned before=layer->vertex_count,i,tile;
+        unsigned face=axis==1 ? (sign>0 ? 1u : 0u) : axis==2 ? (sign>0 ? 3u : 2u) : (sign>0 ? 5u : 4u);
+        int flip=0;
+        if(face>1 && !((direction==0 || direction==2)!=(face<=3)))
+            flip=((direction/2+((face&1)^direction)+(metadata&4)/4)&1)!=0;
+        emit_partial_face(r,w,mesh,chunk,x,y,z,id,metadata,axis,sign,lo,hi);
+        tile=block_face_tile(world_block_def(id),id,metadata,axis,sign);
+        if(r->options.reduced_transparency) tile+=4;
+        for(i=before;i<layer->vertex_count && axis!=1;++i) {
+            VoxelVertex *v=&layer->vertices[i];
+            float a=(float)v->x/VERTEX_COORD_SCALE-x,b=(float)v->z/VERTEX_COORD_SCALE-z;
+            float u=axis==0 ? (sign>0 ? 1-b : b) : (sign>0 ? a : 1-a);
+            if(flip) u=1-u;
+            v->u=partial_texcoord(tile,u,0,0);
+        }
+    }
+}
+
+static void emit_decorative_plane(const Renderer *r,ChunkMesh *mesh,int x,int y,int z,unsigned tile,int axis,int power)
+{
+    MeshLayer *layer=&mesh->layers[axis==1 ? BLOCK_LAYER_CUTOUT-1 : render_layer(r,BETA_BLOCK_NETHER_PORTAL)-1];
     int side,corner,u=axis==0 ? 2 : 0,v=axis==1 ? 2 : 1;
     if (!layer_reserve(layer,layer->vertex_count+(axis==1 ? 4u : 8u))) { layer->overflow=1; return; }
     for (side=0;side<(axis==1 ? 1 : 2);++side) for (corner=0;corner<4;++corner) {
@@ -1139,7 +1238,7 @@ static void emit_decorative_plane(ChunkMesh *mesh,int x,int y,int z,unsigned til
         vertex->v=texcoord(tile,axis==1 ? c>=2 : c<2,1,1);
         vertex->r=axis==1 ? (uint8_t)(power>0 ? 100+power*155/15 : 75) : 255;
         vertex->g=axis==1 ? 0 : 255; vertex->b=axis==1 ? 0 : 255;
-        vertex->a=axis==1 ? 255 : 180;
+        vertex->a=axis==1 || r->options.reduced_transparency ? 255 : 180;
     }
 }
 /* Keep the large, level interior of an ocean greedy. Only shorelines, falling
@@ -1265,7 +1364,7 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                         adjacent[axis] += direction;
                         block = chunk_get_block(chunk, point[0], point[1], point[2]);
                         neighbor = block_at(world, chunk, adjacent[0], adjacent[1], adjacent[2]);
-                        face_visible = visible_face(block, neighbor);
+                        face_visible = visible_face(renderer, block, neighbor);
                         if (face_visible && fluid_kind(block) && !uniform_liquid(world,chunk,point[0],point[1],point[2],block)) face_visible=0;
                         if (face_visible &&
                             neighbor==BETA_BLOCK_SLAB && world_block_def(block)->opaque &&
@@ -1352,10 +1451,25 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                     else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_CACTUS)
                         emit_cactus(renderer,world,mesh,chunk,x,y,z);
                     else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_NETHER_PORTAL)
-                        emit_decorative_plane(mesh,x,y,z,66,
+                        emit_decorative_plane(renderer,mesh,x,y,z,66,
                             block_at(world,chunk,x-1,y,z)==90 || block_at(world,chunk,x+1,y,z)==90 ? 2 : 0,0);
                     else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_REDSTONE_WIRE)
-                        emit_decorative_plane(mesh,x,y,z,82,1,chunk_get_metadata(chunk,x,y,z));
+                        emit_decorative_plane(renderer,mesh,x,y,z,82,1,chunk_get_metadata(chunk,x,y,z));
+                    else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_BED)
+                        emit_bed(renderer,world,mesh,chunk,x,y,z,chunk_get_metadata(chunk,x,y,z));
+                    else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_WOOD_DOOR || chunk_get_block(chunk,x,y,z)==BETA_BLOCK_IRON_DOOR)
+                        emit_door(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
+                    else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_WEB)
+                        emit_cross_plant(renderer,world,mesh,chunk,x,y,z,BETA_BLOCK_WEB,0);
+                    else if (sign_is_block(chunk_get_block(chunk,x,y,z))) {
+                        SignInstance *grown=(SignInstance *)realloc(mesh->signs,(mesh->sign_count+1)*sizeof(*grown));
+                        if(grown) {
+                            SignInstance *sign;
+                            mesh->signs=grown; sign=&grown[mesh->sign_count++];
+                            sign->x=(uint8_t)x; sign->y=(uint8_t)y; sign->z=(uint8_t)z;
+                            sign->id=chunk_get_block(chunk,x,y,z); sign->metadata=chunk_get_metadata(chunk,x,y,z);
+                        } else mesh->layers[0].overflow=1;
+                    }
                     else if (beta_block_cross_plant(chunk_get_block(chunk,x,y,z)))
                         emit_cross_plant(renderer, world, mesh, chunk, x, y, z,
                                          chunk_get_block(chunk,x,y,z),
@@ -1363,7 +1477,7 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                     else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_SLAB)
                         emit_slab(renderer,world,mesh,chunk,x,y,z,
                                   chunk_get_metadata(chunk,x,y,z));
-                    else if(chunk_get_block(chunk,x,y,z)==26 || chunk_get_block(chunk,x,y,z)==93 || chunk_get_block(chunk,x,y,z)==94 ||
+                    else if(chunk_get_block(chunk,x,y,z)==93 || chunk_get_block(chunk,x,y,z)==94 ||
                             chunk_get_block(chunk,x,y,z)==69 || chunk_get_block(chunk,x,y,z)==77 || chunk_get_block(chunk,x,y,z)==78)
                         emit_low_block(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
     }
@@ -1595,6 +1709,106 @@ static void draw_celestials(const World *world,const RendererCamera *camera,floa
     glPopMatrix(); glMatrixMode(GL_TEXTURE); glPopMatrix();
     glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW); glPopAttrib();
 }
+
+/* Beta's SignModel is only a board and an optional post. Keep its 64x32
+ * texture layout instead of adding sign images to the terrain atlas. */
+static void sign_box(float x,float y,float z,int w,int h,int d,int u,int v)
+{
+    const float p[8][3]={{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
+        {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
+    static const int face[6][4]={{5,1,2,6},{0,4,7,3},{5,4,0,1},{2,3,7,6},{1,0,3,2},{4,5,6,7}};
+    const int uv[6][4]={{u+d+w,v+d,u+d+w+d,v+d+h},{u,v+d,u+d,v+d+h},
+        {u+d,v,u+d+w,v+d},{u+d+w,v,u+d+w+w,v+d},{u+d,v+d,u+d+w,v+d+h},
+        {u+d+w+d,v+d,u+d+w+d+w,v+d+h}};
+    int f,i;
+    for(f=0;f<6;++f) for(i=0;i<4;++i) {
+        glTexCoord2f((float)uv[f][i==0 || i==3 ? 2 : 0]/64,(float)uv[f][i<2 ? 1 : 3]/32);
+        glVertex3fv(p[face[f][i]]);
+    }
+}
+
+static unsigned sign_line_draw(const char *line,int row)
+{
+    const char *cursor=line; int x=0,width=MeasureMinecraftText(line,8),y=row*10-20;
+    unsigned quads=0;
+    while(*cursor) {
+        unsigned codepoint=MinecraftTextCodepoint(&cursor),glyph;
+        if(codepoint==0xa7 && *cursor) { (void)MinecraftTextCodepoint(&cursor); continue; }
+        glyph=MinecraftGlyph(codepoint);
+        float u=(float)(glyph%16)/16,v=(float)(glyph/16)/16;
+        if(glyph!=' ') {
+            int left=x-width/2;
+            glTexCoord2f(u,v); glVertex3f((float)left,(float)y,0);
+            glTexCoord2f(u+.0625f,v); glVertex3f((float)left+8,(float)y,0);
+            glTexCoord2f(u+.0625f,v+.0625f); glVertex3f((float)left+8,(float)y+8,0);
+            glTexCoord2f(u,v+.0625f); glVertex3f((float)left,(float)y+8,0);
+            ++quads;
+        }
+        x+=(int)MinecraftGlyphWidth(glyph);
+    }
+    return quads;
+}
+
+static void draw_signs(Renderer *r,const World *world,const RendererCamera *camera,
+                       const VisibleChunk *visible,size_t count)
+{
+    Texture2D sign_texture={0},font={0}; size_t n; int ready=0;
+    for(n=0;n<count;++n) {
+        const ChunkMesh *mesh=visible[n].mesh;
+        const Chunk *chunk=world_peek_chunk(world,mesh->chunk_x,mesh->chunk_z);
+        unsigned i;
+        if(!chunk || !mesh->sign_count) continue;
+        if(!ready) {
+            /* Texture uploads may change GL binding; save the terrain state
+             * before requesting a lazily loaded sign/font texture. */
+            glPushAttrib(GL_ALL_ATTRIB_BITS);
+            sign_texture=assets_get_texture(ASSET_SIGN); font=assets_get_texture(ASSET_FONT_ASCII);
+            /* Prepare cached glyph metrics before entering glBegin. */
+            (void)MinecraftGlyphWidth('A');
+            glMatrixMode(GL_TEXTURE); glPushMatrix(); glLoadIdentity(); glMatrixMode(GL_MODELVIEW);
+            glDisable(GL_BLEND); glDisable(GL_CULL_FACE);
+            glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_GREATER,.1f); glDepthMask(GL_TRUE);
+            ready=1;
+        }
+        for(i=0;i<mesh->sign_count;++i) {
+            const SignInstance *sign=&mesh->signs[i];
+            int x=mesh->chunk_x*16+sign->x,z=mesh->chunk_z*16+sign->z;
+            const char (*lines)[SIGN_LINE_BYTES]=sign_text_get(world,x,sign->y,z);
+            float dx=x+.5f-camera->x,dy=sign->y+.5f-camera->y,dz=z+.5f-camera->z,ambient;
+            uint8_t light,color; unsigned row,text_quads=0;
+            /* The original special renderer skips tile entities past 64 blocks. */
+            if(dx*dx+dy*dy+dz*dz>64*64) continue;
+            light=light_at(world,chunk,sign->x,sign->y,sign->z);
+            ambient=.06f+r->options.brightness*.0034f;
+            color=clamp_byte((int)(255*(ambient+(1-ambient)*light/15)));
+            glPushMatrix(); glTranslatef(x+.5f,sign->y+.5f,z+.5f);
+            if(sign->id==BETA_BLOCK_STANDING_SIGN) glRotatef(-sign->metadata*22.5f,0,1,0);
+            else {
+                float angle=sign->metadata==2 ? 180 : sign->metadata==4 ? 90 : sign->metadata==5 ? -90 : 0;
+                glRotatef(-angle,0,1,0); glTranslatef(0,-.3125f,-.4375f);
+            }
+            glBindTexture(GL_TEXTURE_2D,sign_texture.id); glColor3ub(color,color,color);
+            glPushMatrix(); glScalef(1.0f/24,-1.0f/24,-1.0f/24);
+            glBegin(GL_QUADS); sign_box(-12,-14,-1,24,12,2,0,0);
+            if(sign->id==BETA_BLOCK_STANDING_SIGN) sign_box(-1,-2,-1,2,14,2,0,14);
+            glEnd(); glPopMatrix(); ++r->stats.draw_calls;
+            r->stats.quads_opaque+=sign->id==BETA_BLOCK_STANDING_SIGN ? 12u : 6u;
+            if(lines) {
+                glTranslatef(0,1.0f/3,.07f*(2.0f/3)); glScalef(1.0f/90,-1.0f/90,1.0f/90);
+                glBindTexture(GL_TEXTURE_2D,font.id); glColor3ub(0,0,0); glDepthMask(GL_FALSE);
+                glBegin(GL_QUADS);
+                for(row=0;row<SIGN_LINES;++row) text_quads+=sign_line_draw(lines[row],(int)row);
+                glEnd(); glDepthMask(GL_TRUE);
+                if(text_quads) { ++r->stats.draw_calls; r->stats.quads_cutout+=text_quads; }
+            }
+            glPopMatrix();
+        }
+    }
+    if(ready) {
+        glMatrixMode(GL_TEXTURE); glPopMatrix(); glMatrixMode(GL_MODELVIEW); glPopAttrib();
+    }
+}
+
 void renderer_draw(Renderer *renderer, const World *world,
                    const RendererCamera *camera,
                    int viewport_width, int viewport_height,
@@ -1723,6 +1937,7 @@ void renderer_draw(Renderer *renderer, const World *world,
             glEnable(GL_ALPHA_TEST);
             glAlphaFunc(GL_GREATER, 0.5f);
         } else if (layer == 2) {
+            draw_signs(renderer,world,camera,visible,visible_count);
             glDisable(GL_ALPHA_TEST);
             glEnable(GL_BLEND);
             glDisable(GL_CULL_FACE);

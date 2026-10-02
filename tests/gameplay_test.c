@@ -146,6 +146,12 @@ static void bucket_tests(void)
     p.creative=1;
     assert(player_use_item(&p,&w,&bucket) && bucket.id==325);
     assert(world_peek_block(&w,8,64,8)==0);
+    /* A block placed against the solid bank can replace either lava ID,
+     * just as water; the ray does not treat fluid as the clicked support. */
+    assert(world_set_block(&w,8,64,8,10));
+    assert(player_place_block(&p,&w,5) && world_peek_block(&w,8,64,8)==5);
+    assert(world_set_block(&w,8,64,8,11));
+    assert(player_place_block(&p,&w,1) && world_peek_block(&w,8,64,8)==1);
     assert(world_close(&w)==WORLD_OK);
 }
 

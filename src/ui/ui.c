@@ -9,6 +9,7 @@
 #include "../game/creative.h"
 #include "../game/entity_render.h"
 #include "../util/display.h"
+#include "../network/server_status.h"
 
 #if defined(__APPLE__)
 #include <OpenGL/gl.h>
@@ -68,15 +69,29 @@ static void label(const char *s, int x, int y, int size, Color c)
 static void label_fit(const char *s, int x, int y, int size, int width, Color c)
 {
     char text[256];
-    size_t n;
+    const char *p, *end;
+    size_t n = 0;
+    int clipped;
     if (!s) return;
-    snprintf(text, sizeof(text), "%s", s);
-    n = strlen(text);
-    if (MeasureMinecraftText(text, ps((float)size)) > ps((float)width)) {
-        while (n > 3 && MeasureMinecraftText(text, ps((float)size)) > ps((float)width)) {
-            --n;
-            text[n] = '\0';
-            text[n-1] = text[n-2] = text[n-3] = '.';
+    /* Keep complete UTF-8 characters, including when the buffer fills. */
+    p = s;
+    while (*p) {
+        end = p;
+        MinecraftTextCodepoint(&end);
+        if ((size_t)(end-s) > sizeof(text)-4) break;
+        n = (size_t)(end-s);
+        p = end;
+    }
+    memcpy(text, s, n); text[n] = '\0';
+    clipped = *p || MeasureMinecraftText(text, ps((float)size)) > ps((float)width);
+    if (clipped) {
+        for (;;) {
+            memcpy(text+n, "...", 4);
+            if (MeasureMinecraftText(text, ps((float)size)) <= ps((float)width)) break;
+            if (!n) { text[0] = '\0'; break; }
+            do { --n; } while (n && ((unsigned char)text[n]&0xc0)==0x80);
+            /* A trailing section sign must not consume an ellipsis dot. */
+            if (n>=2 && (unsigned char)text[n-2]==0xc2 && (unsigned char)text[n-1]==0xa7) n-=2;
         }
     }
     label(text, x, y, size, c);
@@ -274,6 +289,7 @@ static void fill_server_action(UiAction *action, UiActionType type,
     copy_text(action->server_name, sizeof(action->server_name), servers[index].name);
     copy_text(action->server_address, sizeof(action->server_address), servers[index].address);
     action->hide_address = servers[index].hide_address;
+    action->server_protocol = servers[index].protocol;
 }
 
 void ui_init(Ui *ui)
@@ -288,6 +304,7 @@ void ui_init(Ui *ui)
     ui->selected_world = -1;
     ui->selected_server = -1;
     ui->editing_server = -1;
+    ui->server_protocol = 14;
     ui->create_structures = 1;
     ui->options.render_distance = 4;
     ui->options.max_framerate = 0;
@@ -552,15 +569,24 @@ static UiAction edit_world(Ui *ui, const UiWorldEntry *worlds, int count)
     return action;
 }
 
-static void server_icon(int x, int y, int compatible)
+static void server_icon(int x, int y, int index)
 {
-    rect(x, y, 45, 45, col(44, 50, 62, 255));
-    rect(x+7, y+9, 31, 10, col(122, 126, 132, 255));
-    rect(x+7, y+24, 31, 10, col(94, 98, 103, 255));
-    rect(x+11, y+12, 4, 4, compatible ? col(92, 198, 98, 255) : col(180, 148, 71, 255));
-    rect(x+11, y+27, 4, 4, col(92, 198, 98, 255));
-    linebox(x, y, 45, 45, col(17, 17, 19, 255));
+    Texture2D icon=assets_get_server_icon(index);
+    Rectangle source={0,0,(float)icon.width,(float)icon.height};
+    Rectangle destination={(float)px(x),(float)py(y),(float)ps(45),(float)ps(45)};
+    DrawTexturePro(icon,source,destination,(Vector2){0,0},0,WHITE);
 }
+
+static void ping_icon(int x,int y,int ping,int failed)
+{
+    int i,bars=server_status_ping_bars(ping);
+    for(i=0;i<5;++i) rect(x+i*4,y+12-i*3,3,3+i*3,
+        i<bars ? col(102,196,91,255) : col(79,81,78,255));
+    if(ping<0) label(failed ? "x" : "?",x+7,y+15,9,
+        failed ? col(244,134,124,255) : col(212,210,180,255));
+}
+
+static int chat_wrap(const char *text,char output[6][512],int width,int height);
 
 static UiAction multiplayer(Ui *ui, const UiServerEntry *servers, int count)
 {
@@ -578,11 +604,11 @@ static UiAction multiplayer(Ui *ui, const UiServerEntry *servers, int count)
     if (!count) centered("No servers saved. Add a Beta 1.7.3 server.", 320, 196,
                          12, col(204, 204, 196, 255));
     for (row = 0; row < 4 && ui->server_scroll+row < count; ++row) {
-        int index = ui->server_scroll+row, y = 69+row*68, bar;
+        int index = ui->server_scroll+row, y = 69+row*68;
         const UiServerEntry *server = &servers[index];
         char info[64];
-        int strength = server->ping_ms < 0 ? 0 : server->ping_ms < 80 ? 5 :
-                       server->ping_ms < 150 ? 4 : server->ping_ms < 300 ? 3 : 2;
+        char motd[6][512];
+        int line,lines;
         if (layout.clicked && inside(63, y, 506, 63)) {
             ui->selected_server = index;
             ui->focus = 0;
@@ -590,20 +616,22 @@ static UiAction multiplayer(Ui *ui, const UiServerEntry *servers, int count)
         rect(63, y, 506, 63, ui->selected_server == index ?
              col(103, 106, 111, 230) : col(42, 43, 45, 215));
         if (ui->selected_server == index) linebox(63, y, 506, 63, col(213, 214, 207, 255));
-        server_icon(70, y+8, server->compatible);
+        server_icon(70, y+8, index);
         label_fit(server->name, 124, y+5, 13, 304, col(247, 247, 240, 255));
-        label_fit(server->motd[0] ? server->motd : "Status unknown", 124, y+23, 10,
-                  375, col(197, 198, 190, 255));
+        lines=chat_wrap(server->motd[0] ? server->motd : "Status unknown",motd,ps(343),ps(9));
+        for(line=0;line<lines && line<2;++line)
+            label(motd[line],124,y+22+line*11,9,col(197,198,190,255));
         label_fit(server->hide_address ? "Address hidden" : server->address,
-                  124, y+43, 9, 272, col(166, 167, 161, 255));
-        if (server->max_players > 0) snprintf(info, sizeof(info), "%d/%d", server->players, server->max_players);
+                  124, y+46, 9, 272, col(166, 167, 161, 255));
+        if (server->max_players >= 0) snprintf(info, sizeof(info), "%d/%d", server->players, server->max_players);
         else snprintf(info, sizeof(info), "?/?");
         label(info, 452, y+6, 10, col(211, 212, 206, 255));
-        for (bar = 0; bar < 5; ++bar)
-            rect(526+bar*6, y+21-bar*3, 4, 4+bar*3,
-                 bar < strength ? col(102, 196, 91, 255) : col(79, 81, 78, 255));
-        if (server->ping_ms < 0) label("?", 539, y+26, 9, col(212, 210, 180, 255));
-        label_fit(server->version[0] ? server->version : "Beta 1.7.3", 403, y+43, 9,
+        ping_icon(531,y+9,server->ping_ms,server->query_state==SERVER_STATUS_ERROR);
+        if(server->ping_ms>=0) snprintf(info,sizeof(info),"%d ms",server->ping_ms);
+        else if(server->connect_ms>=0) snprintf(info,sizeof(info),"TCP %d ms",server->connect_ms);
+        else snprintf(info,sizeof(info),"%s",server->query_state==SERVER_STATUS_QUERYING || server->query_state==SERVER_STATUS_QUEUED ? "..." : "--");
+        label_fit(info,484,y+28,8,74,col(197,198,190,255));
+        label_fit(server->version[0] ? server->version : "Beta 1.7.3", 403, y+46, 9,
                   155, server->compatible || server->ping_ms < 0 ?
                   col(181, 183, 175, 255) : col(244, 134, 124, 255));
     }
@@ -622,7 +650,7 @@ static UiAction multiplayer(Ui *ui, const UiServerEntry *servers, int count)
         }
     }
     valid = ui->selected_server >= 0 && ui->selected_server < count;
-    can_join = valid && (servers[ui->selected_server].compatible || servers[ui->selected_server].ping_ms < 0);
+    can_join = valid && servers[ui->selected_server].protocol==14;
     if (button(ui, 67, 365, 164, 28, "Join Server", can_join) ||
         (IsKeyPressed(KEY_ENTER) && can_join))
         fill_server_action(&action, UI_ACTION_JOIN_SERVER, servers, count, ui->selected_server);
@@ -633,7 +661,7 @@ static UiAction multiplayer(Ui *ui, const UiServerEntry *servers, int count)
     if (button(ui, 409, 365, 164, 28, "Add Server", count < UI_MAX_SERVERS)) {
         ui->editing_server = -1;
         copy_text(ui->server_name, sizeof(ui->server_name), "My Server");
-        ui->server_address[0] = '\0'; ui->server_hide_address = 0;
+        ui->server_address[0] = '\0'; ui->server_hide_address = 0; ui->server_protocol=14;
         ui_set_screen(ui, UI_SCREEN_SERVER_EDIT); ui->focus = 1;
     }
     if (button(ui, 67, 400, 117, 26, "Edit", valid)) {
@@ -641,6 +669,7 @@ static UiAction multiplayer(Ui *ui, const UiServerEntry *servers, int count)
         copy_text(ui->server_name, sizeof(ui->server_name), servers[ui->selected_server].name);
         copy_text(ui->server_address, sizeof(ui->server_address), servers[ui->selected_server].address);
         ui->server_hide_address = servers[ui->selected_server].hide_address;
+        ui->server_protocol = servers[ui->selected_server].protocol;
         ui_set_screen(ui, UI_SCREEN_SERVER_EDIT); ui->focus = 1;
     }
     if (button(ui, 192, 400, 117, 26, "Delete", valid)) {
@@ -681,6 +710,9 @@ static UiAction server_form(Ui *ui, int direct)
     else if (button(ui, 145, 260, 350, 27,
                     ui->server_hide_address ? "Hide Address: Yes" : "Hide Address: No", 1))
         ui->server_hide_address = !ui->server_hide_address;
+    if(!direct && button(ui,145,291,350,27,ui->server_protocol==47 ?
+        "Protocol: Modern status (1.8+)" : "Protocol: Beta 1.7.3",1))
+        ui->server_protocol=ui->server_protocol==47 ? 14 : 47;
     valid = address_present(ui->server_address) && (direct || ui->server_name[0]);
     if (button(ui, 145, 329, 170, 29, direct ? "Join Server" : "Done", valid) ||
         (IsKeyPressed(KEY_ENTER) && valid)) {
@@ -689,6 +721,7 @@ static UiAction server_form(Ui *ui, int direct)
         copy_text(action.server_name, sizeof(action.server_name), direct ? "Direct Connection" : ui->server_name);
         copy_text(action.server_address, sizeof(action.server_address), ui->server_address);
         action.hide_address = ui->server_hide_address;
+        action.server_protocol = direct ? 14 : ui->server_protocol;
         if (!direct) ui_set_screen(ui, UI_SCREEN_MULTIPLAYER);
     }
     if (button(ui, 325, 329, 170, 29, "Cancel", 1)) ui_set_screen(ui, UI_SCREEN_MULTIPLAYER);
@@ -820,7 +853,9 @@ static UiAction video_menu(Ui *ui)
         snprintf(text, sizeof(text), "VBO Budget: %d MiB", o->vbo_budget_mb);
         if (option_button(ui, 23, text, 1)) o->vbo_budget_mb = o->vbo_budget_mb >= 32 ? 4 : o->vbo_budget_mb*2;
     }
-    if (button(ui, 220, 419, 200, 29, "Done", 1)) ui_set_screen(ui, UI_SCREEN_OPTIONS);
+    if(option_button(ui,24,o->reduced_transparency ? "Reduced Transparency: ON" : "Reduced Transparency: OFF",1))
+        o->reduced_transparency=!o->reduced_transparency;
+    if (button(ui, 220, 442, 200, 29, "Done", 1)) ui_set_screen(ui, UI_SCREEN_OPTIONS);
     return action;
 }
 
@@ -1053,6 +1088,18 @@ static void draw_stack(const InventorySlot *item, int x, int y, int size)
     width=MeasureMinecraftText(count,ps(9));
     DrawMinecraftText(count,px((float)(x+size))-width,py((float)(y+size-10)),
                       ps(9),WHITE,1);
+    if(item->damage>0 && inventory_max_damage(item->id)>0) {
+        int maximum=inventory_max_damage(item->id);
+        int remaining=(int)floorf(13.0f-item->damage*13.0f/maximum+.5f);
+        int green=(int)floorf(255.0f-item->damage*255.0f/maximum+.5f);
+        float unit=size/16.0f;
+        int bx=px(x+2*unit),by=py(y+13*unit);
+        if(remaining<0) remaining=0;
+        if(green<0) green=0;
+        DrawRectangle(bx,by,ps(13*unit),ps(2*unit),BLACK);
+        DrawRectangle(bx,by,ps(12*unit),ps(unit),col((unsigned char)((255-green)/4),63,0,255));
+        if(remaining>0) DrawRectangle(bx,by,ps(remaining*unit),ps(unit),col((unsigned char)(255-green),(unsigned char)green,0,255));
+    }
 }
 
 void ui_draw_hud(const Ui *ui, int selected_slot, const InventorySlot *hotbar,
@@ -1293,4 +1340,101 @@ void ui_draw_creative(const Ui *ui,const InventorySlot *slots,int hotbar)
     }
     centered("Choose a hotbar slot, then an item. Scroll for more.",320,406,10,WHITE);
     centered("1-9 selects a slot. E closes.",320,424,10,WHITE);
+}
+
+int ui_draw_sign_editor(Ui *ui,const char lines[4][61],int *row)
+{
+    Texture2D texture=assets_get_texture(ASSET_SIGN);
+    Rectangle source={2,2,24,12},destination;
+    int i;
+    begin_layout(ui);
+    rect(0,0,640,480,col(0,0,0,150));
+    centered("Edit sign message",320,74,20,WHITE);
+    destination=(Rectangle){(float)px(176),(float)py(142),(float)ps(288),(float)ps(144)};
+    DrawTexturePro(texture,source,destination,(Vector2){0,0},0,WHITE);
+    for(i=0;i<4;++i) {
+        char text[80];
+        if(layout.clicked && inside(182,151+i*31,276,28)) *row=i;
+        snprintf(text,sizeof(text),i==*row ? "> %s <" : "%s",lines[i]);
+        centered(text,320,156+i*31,16,col(0,0,0,255));
+    }
+    centered("Up/Down selects a line. Enter selects the next line.",320,311,11,WHITE);
+    return button(ui,220,366,200,29,"Done",1);
+}
+
+static int chat_wrap(const char *text,char output[6][512],int width,int height)
+{
+    const char *p=text; int row=0; size_t length=0;
+    char format[4]={0};
+    output[0][0]=0;
+    while(*p && row<6) {
+        const char *start=p; unsigned ch=MinecraftTextCodepoint(&p); size_t bytes=(size_t)(p-start);
+        if(ch==0xa7 && *p) {
+            unsigned code=MinecraftTextCodepoint(&p);
+            bytes=(size_t)(p-start);
+            if((code>='0' && code<='9') || (code>='a' && code<='f') ||
+               (code>='A' && code<='F') || code=='r' || code=='R') {
+                format[0]=(char)0xc2; format[1]=(char)0xa7; format[2]=(char)code;
+            }
+        }
+        if(ch=='\n') {
+            output[row][length]=0; if(++row>=6) break;
+            strcpy(output[row],format); length=strlen(format); continue;
+        }
+        if(length+bytes>=512) break;
+        memcpy(output[row]+length,start,bytes); output[row][length+bytes]=0;
+        if(length && MeasureMinecraftText(output[row],height)>width) {
+            output[row][length]=0;
+            if(++row>=6) break;
+            strcpy(output[row],format); length=strlen(format);
+            memcpy(output[row]+length,start,bytes); length+=bytes; output[row][length]=0;
+        } else length+=bytes;
+    }
+    return row<6 ? row+1 : 6;
+}
+
+void ui_draw_chat(const Ui *ui,const UiChatLine *lines,int count,const char *draft,int open,double now)
+{
+    int i,visible=0;
+    begin_layout(ui);
+    for(i=count-1;i>=0 && visible<10;--i) {
+        char wrapped[6][512]; int j,n;
+        double age=now-lines[i].arrived;
+        unsigned char alpha=255;
+        if(!open && age>=10) continue;
+        if(!open && age>8) alpha=(unsigned char)((10-age)*127.5);
+        n=chat_wrap(lines[i].text,wrapped,ps(400),ps(12));
+        for(j=n-1;j>=0 && visible<10;--j,++visible) {
+            int y=395-visible*15;
+            rect(8,y-2,410,15,col(0,0,0,(unsigned char)(alpha*150/255)));
+            label(wrapped[j],12,y,12,col(255,255,255,alpha));
+        }
+    }
+    if(open) {
+        char text[416];
+        rect(8,412,624,24,col(0,0,0,210));
+        snprintf(text,sizeof(text),"> %s_",draft ? draft : "");
+        label_fit(text,12,416,14,614,WHITE);
+    }
+}
+
+void ui_draw_player_list(const Ui *ui,const UiPlayerEntry *players,int count,int complete)
+{
+    int columns,rows,left,width,i;
+    begin_layout(ui);
+    if(count>80) count=80;
+    if(count<=0) return;
+    columns=(count+19)/20; rows=(count+columns-1)/columns;
+    width=columns*142; left=(640-width)/2;
+    rect(left-4,44,width+8,rows*19+30,col(0,0,0,180));
+    centered(complete ? "Players" : "Nearby players (Beta has no global roster)",320,48,11,WHITE);
+    for(i=0;i<count;++i) {
+        int x=left+(i/rows)*142,y=66+(i%rows)*19;
+        char ping[24];
+        rect(x,y,140,18,col(70,70,70,90));
+        label_fit(players[i].name,x+3,y+3,11,100,WHITE);
+        if(players[i].ping_ms>=0) snprintf(ping,sizeof(ping),"%d ms",players[i].ping_ms);
+        else snprintf(ping,sizeof(ping),"--");
+        label_fit(ping,x+106,y+4,9,30,col(210,210,210,255));
+    }
 }

@@ -40,6 +40,17 @@ int beta_block_selection_box(BetaBlockState state, BetaBlockBox *out)
 {
     float inset, height;
     if (!out || !beta_block_state_valid(state)) return 0;
+    if(state.id==BETA_BLOCK_STANDING_SIGN) {
+        *out=(BetaBlockBox){.25f,0,.25f,.75f,1,.75f}; return 1;
+    }
+    if(state.id==BETA_BLOCK_WALL_SIGN) {
+        *out=(BetaBlockBox){0,.28125f,0,1,.78125f,1};
+        if(state.metadata==2) out->min_z=.875f;
+        else if(state.metadata==3) out->max_z=.125f;
+        else if(state.metadata==4) out->min_x=.875f;
+        else if(state.metadata==5) out->max_x=.125f;
+        return 1;
+    }
     if (state.id == BETA_BLOCK_SLAB) {
         out->min_x = out->min_y = out->min_z = 0.0f;
         out->max_x = out->max_z = 1.0f;
@@ -48,6 +59,18 @@ int beta_block_selection_box(BetaBlockState state, BetaBlockBox *out)
     }
     if(state.id==26 || state.id==93 || state.id==94 || state.id==78) {
         *out=(BetaBlockBox){0,0,0,1,state.id==26 ? .5625f : .125f,1}; return 1;
+    }
+    if (state.id==BETA_BLOCK_WOOD_DOOR || state.id==BETA_BLOCK_IRON_DOOR) {
+        unsigned direction=((state.metadata&4) ? state.metadata : state.metadata-1)&3;
+        *out=(BetaBlockBox){0,0,0,1,1,1};
+        if(direction==0) out->max_z=.1875f;
+        else if(direction==1) out->min_x=.8125f;
+        else if(direction==2) out->min_z=.8125f;
+        else out->max_x=.1875f;
+        return 1;
+    }
+    if (state.id==BETA_BLOCK_WEB) {
+        *out=(BetaBlockBox){0,0,0,1,1,1}; return 1;
     }
     if(state.id==69 || state.id==77) {
         unsigned dir=state.metadata&7;
@@ -114,6 +137,15 @@ int beta_block_terrain_tile(BetaBlockState state, unsigned face)
     if (!beta_block_state_valid(state) || face > 5u) return -1;
     variant = state.metadata & 3u;
     switch (state.id) {
+    case BETA_BLOCK_WEB: return 11;
+    case BETA_BLOCK_WOOD_DOOR: case BETA_BLOCK_IRON_DOOR: {
+        unsigned direction=((state.metadata&4) ? state.metadata : state.metadata-1)&3;
+        int base=state.id==BETA_BLOCK_IRON_DOOR ? 98 : 97;
+        /* The broad panel uses the upper tile on the upper half; narrow
+         * edges retain the lower tile, exactly as BlockDoor.getBlockTexture. */
+        if(face<2 || ((direction==0 || direction==2) != (face<=3))) return base;
+        return base-(state.metadata&8)*2;
+    }
     case BETA_BLOCK_BED: {
         /* ModelBed.bedDirection converts the world face to the unrotated
          * head/foot atlas face. Top textures are rotated in mesh emission. */
@@ -209,7 +241,8 @@ int beta_render_source_tile(unsigned slot)
         17,32,33,34,160,144,7,36,37,50,51,72,103,104,105,
         15,63,79,39,55,56,13,12,29,28,73,5,208,176,192,
         237,238,14,69,70,71,43,59,60,25,26,27,62,45,44,61,99,115,164,
-        205,206,41,42,57,58,134,135,149,150,151,152,131,147,66,67};
+        205,206,41,42,57,58,134,135,149,150,151,152,131,147,66,67,
+        53,133,11,81,97,82,98,81,97,82,98};
     return slot<sizeof(tiles)/sizeof(tiles[0]) ? tiles[slot] : -1;
 }
 unsigned beta_render_tile(int terrain_tile)

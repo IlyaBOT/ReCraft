@@ -20,6 +20,9 @@ void inventory_swap(InventorySlot slots[RECRAFT_INVENTORY_SLOTS], int a, int b);
 void inventory_clear_slot(InventorySlot *slot);
 int inventory_stack_limit(int id);
 int inventory_max_damage(int id);
+/* Beta ItemStack: one item breaks only after damage exceeds its maximum.
+ * Returns 1 on break, 0 for wear only or a non-damageable/empty stack. */
+int inventory_damage(InventorySlot *slot,int amount);
 int inventory_same(const InventorySlot *a, const InventorySlot *b);
 int inventory_add_stack(InventorySlot *slots, int size, InventorySlot item);
 /* Left: pick up/merge/swap. Right: split or place one. Output slots only take. */

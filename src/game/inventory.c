@@ -29,6 +29,22 @@ int inventory_max_damage(int id)
     return 0;
 }
 
+int inventory_damage(InventorySlot *slot,int amount)
+{
+    int maximum;
+    if(!slot || slot->id<=0 || slot->count<=0 || amount<=0 ||
+       (maximum=inventory_max_damage(slot->id))<=0) return 0;
+    /* Avoid overflow from malformed saved damage while preserving Beta's
+     * strict greater-than boundary and resetting a remaining item's wear. */
+    if(slot->damage>maximum-amount) {
+        if(--slot->count<=0) inventory_clear_slot(slot);
+        else slot->damage=0;
+        return 1;
+    }
+    slot->damage+=amount;
+    return 0;
+}
+
 int inventory_same(const InventorySlot *a,const InventorySlot *b)
 {
     return a && b && a->id==b->id && a->damage==b->damage;

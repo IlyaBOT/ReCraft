@@ -6,6 +6,33 @@
 static unsigned char widths[256];
 static int widths_ready;
 
+unsigned MinecraftTextCodepoint(const char **cursor)
+{
+    const unsigned char *p; unsigned value; int count,i;
+    if(!cursor || !*cursor || !**cursor) return 0;
+    p=(const unsigned char *)*cursor;
+    if(*p<128) { ++*cursor; return *p; }
+    if(*p>=0xc2 && *p<=0xdf) { value=*p&31; count=2; }
+    else if(*p>=0xe0 && *p<=0xef) { value=*p&15; count=3; }
+    else if(*p>=0xf0 && *p<=0xf4) { value=*p&7; count=4; }
+    else { ++*cursor; return '?'; }
+    for(i=1;i<count;++i) {
+        if(!p[i] || (p[i]&0xc0)!=0x80) { ++*cursor; return '?'; }
+        value=(value<<6)|(p[i]&63);
+    }
+    *cursor+=count;
+    if((count==3 && value<0x800) || (count==4 && value<0x10000) ||
+       value>0x10ffff || (value>=0xd800 && value<=0xdfff)) return '?';
+    return value;
+}
+
+unsigned MinecraftGlyph(unsigned codepoint)
+{
+    /* This runtime ships the Beta ASCII atlas, not a Unicode font. Keep one
+     * fallback per codepoint instead of drawing each UTF-8 byte separately. */
+    return codepoint>=32 && codepoint<127 ? codepoint : '?';
+}
+
 static void prepare_widths(void)
 {
     Image image;
@@ -32,41 +59,68 @@ static void prepare_widths(void)
     UnloadImage(image);
 }
 
+int MinecraftGlyphWidth(unsigned glyph)
+{
+    prepare_widths();
+    glyph=MinecraftGlyph(glyph);
+    return widths[glyph] ? widths[glyph] : 6;
+}
+
 int MeasureMinecraftText(const char *text, int height)
 {
-    int width = 0;
-    const unsigned char *p = (const unsigned char *)text;
+    int width = 0,maximum=0;
+    const char *p = text;
     prepare_widths();
     if (!p || height <= 0) return 0;
     while (*p) {
-        unsigned char ch = *p++;
-        if (ch >= 128) ch = '?';
-        width += widths[ch] ? widths[ch] : 6;
+        unsigned ch=MinecraftTextCodepoint(&p);
+        if(ch==0xa7 && *p) { MinecraftTextCodepoint(&p); continue; }
+        if(ch=='\n') { if(width>maximum) maximum=width; width=0; continue; }
+        width += MinecraftGlyphWidth(ch);
     }
-    return (width*height+4)/8;
+    if(width>maximum) maximum=width;
+    return (maximum*height+4)/8;
 }
 
 void DrawMinecraftText(const char *text, int x, int y, int height, Color color, int shadow)
 {
     Texture2D atlas;
     int offset = 0;
-    const unsigned char *p = (const unsigned char *)text;
+    const char *p = text;
+    Color original=color;
     if (!p || height <= 0) return;
     prepare_widths();
     atlas = assets_get_texture(ASSET_FONT_ASCII);
     while (*p) {
-        unsigned char ch = *p++;
+        unsigned ch = MinecraftTextCodepoint(&p);
         Rectangle src, dst;
         Vector2 origin = {0, 0};
-        int px = x + (offset*height+4)/8;
-        if (ch >= 128) ch = '?';
+        int px;
+        if(ch==0xa7 && *p) {
+            unsigned code=MinecraftTextCodepoint(&p);
+            int index=code>='0' && code<='9' ? (int)(code-'0') :
+                code>='a' && code<='f' ? (int)(code-'a'+10) :
+                code>='A' && code<='F' ? (int)(code-'A'+10) : -1;
+            if(index>=0) {
+                int bright=(index>>3)*85;
+                color.r=(unsigned char)(((index>>2)&1)*170+bright);
+                color.g=(unsigned char)(((index>>1)&1)*170+bright);
+                color.b=(unsigned char)((index&1)*170+bright);
+                if(index==6) color.r=(unsigned char)(color.r+85);
+                color.a=original.a;
+            } else if(code=='r' || code=='R') color=original;
+            continue;
+        }
+        if(ch=='\n') { offset=0; y+=height+height/4; continue; }
+        px = x + (offset*height+4)/8;
+        ch = MinecraftGlyph(ch);
         if (ch != ' ') {
             src.x = (float)((ch%16)*8); src.y = (float)((ch/16)*8);
             src.width = src.height = 8;
             dst.x = (float)px; dst.y = (float)y;
             dst.width = dst.height = (float)height;
             if (shadow) {
-                Color dark = {0,0,0,color.a};
+                Color dark = {color.r/4,color.g/4,color.b/4,color.a};
                 dst.x += height >= 16 ? 2 : 1;
                 dst.y += height >= 16 ? 2 : 1;
                 DrawTexturePro(atlas,src,dst,origin,0,dark);
@@ -74,7 +128,7 @@ void DrawMinecraftText(const char *text, int x, int y, int height, Color color, 
             }
             DrawTexturePro(atlas,src,dst,origin,0,color);
         }
-        offset += widths[ch] ? widths[ch] : 6;
+        offset += MinecraftGlyphWidth(ch);
     }
 }
 

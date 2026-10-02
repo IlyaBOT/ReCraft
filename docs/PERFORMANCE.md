@@ -64,7 +64,16 @@ placement and synchronization. The rendering path never assumes VBO means
 dedicated GPU memory. When the VBO extension or entry points are absent, the
 UI disables the VBO mode and budget controls.
 
-Fast graphics uses cutout leaves; Fancy can use blended leaves. Smooth
+Fast leaves use exterior cutout faces. Fancy keeps alpha-tested, fully opaque
+pixels and includes internal leaf faces; it never adds translucent blending or
+blur. Reduced Transparency defaults to OFF and uses the original opaque leaf
+tiles, atlas-composited opaque door windows and an opaque animated portal pass.
+Essential glass/water/ice transparency, cobweb cutouts and bed-leg silhouettes
+remain. Bed, door and web geometry shares the existing cached chunk passes.
+Signs cache their transforms with the chunk mesh; board/post and four bitmap
+text lines are drawn only within 64 blocks, before translucent liquids, with
+depth testing and preserved GL state. Sign/font textures load through the asset
+cache, not from per-frame disk reads. Smooth
 vertex lighting is an independent option, OFF by default. Clouds, particles, entity shadows, and other incomplete
 visual options are disabled in the UI. Water is drawn in one translucent pass.
 The default render distance is deliberately short; 4-6 columns around the

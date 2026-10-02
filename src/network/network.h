@@ -33,7 +33,7 @@ typedef enum NetworkEventType {
     NETWORK_EVENT_HEALTH,
     NETWORK_EVENT_WINDOW_OPEN,NETWORK_EVENT_WINDOW_CLOSE,NETWORK_EVENT_WINDOW_PROPERTY,
     NETWORK_EVENT_WINDOW_TRANSACTION,NETWORK_EVENT_WINDOW_SYNC,
-    NETWORK_EVENT_RESPAWN
+    NETWORK_EVENT_RESPAWN,NETWORK_EVENT_SIGN
 } NetworkEventType;
 
 typedef struct NetworkEvent {
@@ -49,6 +49,7 @@ typedef struct NetworkEvent {
     uint8_t block_id, metadata, entity_type, item_count;
     int window_id,window_type,window_slots,property,value,action,accepted;
     int dimension;
+    char sign_lines[4][61];
 } NetworkEvent;
 
 typedef void (*NetworkEventFn)(void *user, const NetworkEvent *event);
@@ -65,6 +66,15 @@ void network_tick(NetworkClient *client); /* Nonblocking, bounded packet budget.
 
 NetworkState network_state(const NetworkClient *client);
 const char *network_last_error(const NetworkClient *client);
+typedef struct NetworkPlayerInfo {
+    char name[65];
+    int ping_ms;                  /* -1: Beta14 has no latency/player-list packet. */
+    int self;
+    int32_t entity_id;
+} NetworkPlayerInfo;
+/* Beta14 exposes only self and currently tracked named entities, not the entire
+ * server roster. Returns total known count, copies at most capacity entries. */
+size_t network_player_list(const NetworkClient *client,NetworkPlayerInfo *out,size_t capacity);
 int network_send_position(NetworkClient *client, double x, double feet_y,
                           double z, float yaw, float pitch, int on_ground);
 int network_send_chat(NetworkClient *client, const char *message);
@@ -83,6 +93,12 @@ int network_confirm_window(NetworkClient *client,int window,int action);
 /* Ask the server to respawn in the current dimension. Completion is a RESPAWN
  * event followed by server health/position/inventory updates. */
 int network_respawn(NetworkClient *client);
+int network_send_sign_update(NetworkClient *client,int x,int y,int z,const char lines[4][61]);
+/* Beta0x07 server-authoritative interaction/combat; attack=0 interact,1attack. */
+int network_use_entity(NetworkClient *client,int32_t target_id,int attack);
+int network_send_animation(NetworkClient *client,int animation);
+/* 1 start sneaking,2 stop sneaking,3 leave bed (Beta has no sprint action). */
+int network_send_player_action(NetworkClient *client,int action);
 
 #ifdef __cplusplus
 }

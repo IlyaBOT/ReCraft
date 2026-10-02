@@ -3,6 +3,7 @@
 #include "entities.h"
 #include "ticks.h"
 #include "../game/crafting.h"
+#include "../game/sign.h"
 #include "../nbt/nbt.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,23 +34,28 @@ void block_entities_free(Chunk *chunk)
 }
 BlockEntity *block_entity_get(World *world,int x,int y,int z,int create)
 {
-    Chunk *chunk=owner(world,x,z);
+    Chunk *chunk;
     BlockEntity *e;
     uint8_t block;
     int i;
-    if (!chunk || (unsigned)y>=WORLD_HEIGHT) return NULL;
+    if (!world || (unsigned)y>=WORLD_HEIGHT) return NULL;
+    chunk=owner(world,x,z);
+    if (!chunk) return NULL;
     for (e=chunk->entities;e;e=e->next) if (e->x==x && e->y==y && e->z==z) return e;
-    if (!create || world->network_mode || (world->beta_format && !chunk->beta_raw)) return NULL;
     block=world_peek_block(world,x,y,z);
-    if (block!=54 && block!=61 && block!=62) return NULL;
+    if (!create || (world->network_mode && !sign_is_block(block)) ||
+        (world->beta_format && !chunk->beta_raw)) return NULL;
+    if (block!=54 && block!=61 && block!=62 && !sign_is_block(block)) return NULL;
     e=(BlockEntity *)calloc(1,sizeof(*e));
     if (!e) return NULL;
     e->x=x; e->y=y; e->z=z;
-    e->kind=block==54 ? BLOCK_ENTITY_CHEST : BLOCK_ENTITY_FURNACE;
+    e->kind=block==54 ? BLOCK_ENTITY_CHEST : sign_is_block(block) ? BLOCK_ENTITY_SIGN : BLOCK_ENTITY_FURNACE;
     for (i=0;i<27;++i) inventory_clear_slot(&e->slots[i]);
     e->next=chunk->entities; chunk->entities=e;
-    chunk->entities_modified=1;
-    chunk->dirty_flags|=CHUNK_DIRTY_SAVE|CHUNK_DIRTY_ENTITIES;
+    if (!world->network_mode) {
+        chunk->entities_modified=1;
+        chunk->dirty_flags|=CHUNK_DIRTY_SAVE|CHUNK_DIRTY_ENTITIES;
+    }
     return e;
 }
 void block_entity_changed(World *world,BlockEntity *entity)
@@ -68,7 +74,8 @@ void block_entity_remove(World *world,int x,int y,int z,int drop_contents)
         BlockEntity *e=*link;
         int i;
         if (e->x!=x || e->y!=y || e->z!=z) continue;
-        if (drop_contents) for (i=0;i<(e->kind==BLOCK_ENTITY_FURNACE ? 3 : 27);++i)
+        if (drop_contents && (e->kind==BLOCK_ENTITY_CHEST || e->kind==BLOCK_ENTITY_FURNACE))
+            for (i=0;i<(e->kind==BLOCK_ENTITY_FURNACE ? 3 : 27);++i)
             if (e->slots[i].id>0 && e->slots[i].count>0)
                 world_drop_stack(world,x,y,z,e->slots[i]);
         *link=e->next; free_entity(e); chunk->entities_modified=1;
@@ -177,6 +184,10 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned dept
         if (tag->type==NBT_STRING && named(tag,"id")) {
             if (text_is(tag->value.bytes,"Chest")) e->kind=BLOCK_ENTITY_CHEST;
             else if (text_is(tag->value.bytes,"Furnace")) e->kind=BLOCK_ENTITY_FURNACE;
+            else if (text_is(tag->value.bytes,"Sign")) e->kind=BLOCK_ENTITY_SIGN;
+        } else if (tag->type==NBT_STRING && tag->name.size==5 &&
+                   !memcmp(tag->name.data,"Text",4) && tag->name.data[4]>='1' && tag->name.data[4]<='4') {
+            sign_line_read_nbt(e->sign_text[tag->name.data[4]-'1'],tag->value.bytes.data,tag->value.bytes.size);
         } else if (tag->type==NBT_INT) {
             if (named(tag,"x")) e->x=tag->value.int_value;
             if (named(tag,"y")) e->y=tag->value.int_value;
@@ -247,12 +258,31 @@ static int write_items(NbtWriter *w,const BlockEntity *e)
     }
     return nbt_writer_end(w)==NBT_OK;
 }
-typedef struct EntityWrite { NbtWriter *writer; const BlockEntity *entity; int skip,items,burn,cook; } EntityWrite;
+static int write_sign_line(NbtWriter *w,const BlockEntity *e,unsigned line)
+{
+    uint8_t bytes[91]; char name[6]="Text1"; NbtTag t={0};
+    name[4]=(char)('1'+line); t.type=NBT_STRING; t.name=nbt_span(name);
+    t.value.bytes.data=bytes;
+    t.value.bytes.size=sign_line_write_nbt(bytes,sizeof(bytes),e->sign_text[line]);
+    return nbt_writer_tag(w,&t)==NBT_OK;
+}
+typedef struct EntityWrite { NbtWriter *writer; const BlockEntity *entity; int skip,items,burn,cook; unsigned sign_lines; } EntityWrite;
 static int entity_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned depth)
 {
     EntityWrite *e=(EntityWrite *)context;
     NbtTag t=*tag;
-    if (e->entity->kind!=BLOCK_ENTITY_UNKNOWN) {
+    if (e->entity->kind==BLOCK_ENTITY_SIGN) {
+        if(event==NBT_VALUE && depth==1 && tag->type==NBT_STRING && tag->name.size==5 &&
+           !memcmp(tag->name.data,"Text",4) && tag->name.data[4]>='1' && tag->name.data[4]<='4') {
+            unsigned line=tag->name.data[4]-'1'; e->sign_lines|=1u<<line;
+            if(e->entity->sign_text_modified) return write_sign_line(e->writer,e->entity,line);
+        }
+        if(event==NBT_FINISH && depth==0 && e->entity->sign_text_modified) {
+            unsigned line;
+            for(line=0;line<4;++line) if(!(e->sign_lines&(1u<<line)) &&
+                !write_sign_line(e->writer,e->entity,line)) return 0;
+        }
+    } else if (e->entity->kind!=BLOCK_ENTITY_UNKNOWN) {
         if (depth==1 && tag->type==NBT_LIST && named(tag,"Items")) {
             if (event==NBT_BEGIN) { e->skip=1; e->items=1; return write_items(e->writer,e->entity); }
             if (event==NBT_FINISH) { e->skip=0; return 1; }
@@ -280,10 +310,13 @@ static int write_entity(NbtWriter *w,const BlockEntity *entity)
         NbtTag t={0}; t.type=NBT_COMPOUND;
         if (nbt_writer_tag(w,&t)!=NBT_OK) return 0;
         t.type=NBT_STRING; t.name=nbt_span("id");
-        t.value.bytes=nbt_span(entity->kind==BLOCK_ENTITY_CHEST ? "Chest" : "Furnace");
+        t.value.bytes=nbt_span(entity->kind==BLOCK_ENTITY_CHEST ? "Chest" : entity->kind==BLOCK_ENTITY_SIGN ? "Sign" : "Furnace");
         if (nbt_writer_tag(w,&t)!=NBT_OK || !scalar(w,NBT_INT,"x",entity->x) ||
-            !scalar(w,NBT_INT,"y",entity->y) || !scalar(w,NBT_INT,"z",entity->z) ||
-            !write_items(w,entity)) return 0;
+            !scalar(w,NBT_INT,"y",entity->y) || !scalar(w,NBT_INT,"z",entity->z)) return 0;
+        if(entity->kind==BLOCK_ENTITY_SIGN) {
+            unsigned line;
+            for(line=0;line<4;++line) if(!write_sign_line(w,entity,line)) return 0;
+        } else if(!write_items(w,entity)) return 0;
         if (entity->kind==BLOCK_ENTITY_FURNACE &&
             (!scalar(w,NBT_SHORT,"BurnTime",entity->burn) || !scalar(w,NBT_SHORT,"CookTime",entity->cook))) return 0;
         return nbt_writer_end(w)==NBT_OK;

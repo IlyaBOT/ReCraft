@@ -6,6 +6,14 @@ int main(void)
 {
     InventorySlot slots[RECRAFT_INVENTORY_SLOTS];
     inventory_init(slots,0);
+    {
+        InventorySlot tool={270,2,59},block={3,64,4};
+        assert(inventory_damage(&tool,1) && tool.count==1 && tool.damage==0);
+        assert(!inventory_damage(&tool,59) && tool.damage==59);
+        assert(inventory_damage(&tool,1) && tool.id==-1 && tool.count==0);
+        assert(!inventory_damage(&tool,1));
+        assert(!inventory_damage(&block,100) && block.count==64 && block.damage==4);
+    }
     assert(slots[0].id==-1 && slots[0].count==0);
     assert(inventory_add(slots,1,65)==65);
     assert(slots[0].id==1 && slots[0].count==64);

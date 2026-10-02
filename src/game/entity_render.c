@@ -40,6 +40,35 @@ static void scene_end(GLint mode)
 { glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(mode); glPopAttrib(); }
 
 /* The six face rectangles follow Beta ModelRenderer's 64x32 skin layout. */
+int entity_pick(const RenderEntity *entities,int count,const RendererCamera *camera,float reach,float block_distance)
+{
+    float direction[3]={sinf(camera->yaw)*cosf(camera->pitch),sinf(camera->pitch),-cosf(camera->yaw)*cosf(camera->pitch)};
+    float origin[3]={camera->x,camera->y,camera->z},nearest=fminf(reach,block_distance);
+    int i,result=-1;
+    for(i=0;i<count;++i) {
+        const RenderEntity *e=&entities[i]; int axis;
+        float width=.6f,height=1.8f,lo[3],hi[3],enter=0,leave=nearest;
+        if(!e->active || (e->type!=0 && e->type!=50 && e->type!=51 && e->type!=52 && e->type!=54 &&
+           e->type!=90 && e->type!=91 && e->type!=92 && e->type!=93)) continue;
+        if(e->type==52) { width=1.4f; height=.9f; }
+        else if(e->type==90) { width=.9f; height=.9f; }
+        else if(e->type==91 || e->type==92) { width=.9f; height=1.3f; }
+        else if(e->type==93) { width=.3f; height=.4f; }
+        lo[0]=e->x-width*.5f-.1f; lo[1]=e->y-.1f; lo[2]=e->z-width*.5f-.1f;
+        hi[0]=e->x+width*.5f+.1f; hi[1]=e->y+height+.1f; hi[2]=e->z+width*.5f+.1f;
+        for(axis=0;axis<3;++axis) {
+            if(fabsf(direction[axis])<1e-6f) { if(origin[axis]<lo[axis] || origin[axis]>hi[axis]) break; }
+            else {
+                float a=(lo[axis]-origin[axis])/direction[axis],b=(hi[axis]-origin[axis])/direction[axis];
+                if(a>b) { float swap=a; a=b; b=swap; }
+                enter=fmaxf(enter,a); leave=fminf(leave,b); if(enter>leave) break;
+            }
+        }
+        if(axis==3 && enter<nearest) { nearest=enter; result=e->id; }
+    }
+    return result;
+}
+
 static void skin_box(float x,float y,float z,int w,int h,int d,int u,int v,int mirror)
 {
     const float p[8][3]={{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},

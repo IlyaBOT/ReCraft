@@ -10,7 +10,8 @@ GitHub Actions builds Windows/Linux and macOS on the local Vesper runner.
 See [CI, artifacts and host build instructions](docs/CI.md).
 
 The game has 16 x 16 x 128 chunk columns, deterministic terrain for ReCraft saves, walking and flying controls, block interaction, crafting and chest/furnace inventories, survival health and mining, menus, video settings, a debug overlay, and reproducible benchmark scenes. Chunk block bytes use the Beta 1.7.3 ID range 0..96 with separate metadata nibbles; native `.rcg` version 1 saves are migrated on load to version 2. Minecraft Beta 1.7.3 `level.dat` and existing McRegion `.mcr` chunks can also be opened for play. Edits to loaded Beta chunks are written back in McRegion format. Missing Beta chunks are not generated yet. Some Beta blocks still use proxy geometry and behavior, and ReCraft's own terrain generator is not Beta-compatible. The per-block status is in the [Beta compatibility matrix](docs/BETA_COMPATIBILITY_MATRIX.md).
-The offline Minecraft Beta 1.7.3 protocol 14 client is experimental. It needs testing against a real compatible server; it does not authenticate to online servers. The interface uses selected user-provided CoterieCraft Beta textures and an original bitmap font atlas. Effects and music now use original OGG assets with Beta sound keys and a non-looping music schedule. See [asset sources](docs/ASSET_SOURCES.md).
+The offline Minecraft Beta 1.7.3 protocol 14 client is experimental. It needs testing against a real compatible server; it does not authenticate to online servers. The server list queries modern status (protocol 47) for MOTD, favicon, population and ping; modern gameplay is not implemented. Beta entries show TCP reachability only. See [network support and limits](docs/NETWORK_PROTOCOLS.md).
+The interface uses selected user-provided CoterieCraft Beta textures and an original bitmap font atlas. Effects and music use original OGG assets with Beta sound keys and a non-looping music schedule. See [asset sources](docs/ASSET_SOURCES.md).
 
 The current [mechanics audit](docs/BETA_MECHANICS_AUDIT.md) distinguishes working,
 partial and missing features. Day/night, weather, beds and saved mobs have a
@@ -115,13 +116,20 @@ working directory. See [runtime layout](docs/RUNTIME_LAYOUT.md) and
   Left click moves/merges stacks; right click splits a stack or places one item.
   Creative opens a scrollable Beta block/item catalogue: select a hotbar slot,
   then click an item. The mouse wheel and right scrollbar browse the catalogue.
-- Esc: pause; F2: save a screenshot in `screenshots/`; F3: measurements and renderer state. While connected, T opens
-  chat and Enter sends it.
+- Esc: pause; F2: save a screenshot in `screenshots/`; F3: measurements and renderer state.
+- While connected, T opens chat, Enter sends it and Esc closes the draft.
+  Hold Tab for self and nearby named players. Beta has no global roster or
+  per-player ping packet, so unavailable ping is shown as `--`.
+- Place a sign (item 323) against a solid material to open its four-line editor.
+  Up/Down or Enter changes the active line; Done/Esc saves the text. Signs have
+  16 standing directions or four wall attachments, and persist in native/Beta
+  TileEntity data. Multiplayer waits for the server to confirm placement.
 
 The local simulation runs at 20 Hz and interpolates the camera between ticks.
 Creative placement leaves stack counts unchanged; survival placement consumes a
 block. Survival mining uses Beta hardness, tool speed, harvest and durability
-rules, with visible cracks and collectible drops. Workbenches open 3 x 3
+rules, with visible cracks, durability bars and collectible drops. The item-break
+sound plays only when a worn tool actually breaks. Workbenches open 3 x 3
 crafting (151 vanilla recipes); furnaces smelt using fuel/input/output slots.
 Chests store 27 slots or 54 in a valid adjacent pair and drop their contents
 when broken. Health, damage, air and death/respawn are present. Food heals
@@ -147,7 +155,7 @@ See [save recovery and its tests](docs/BETA_SAVE_RECOVERY.md).
 Make a backup before editing a Beta world. To open a particular save directly,
 use `--world "New World"` (the directory name under `build/saves/`).
 
-The video screen exposes distance, fog, lighting, brightness, leaves, VBO
+The video screen exposes distance, fog, lighting, brightness, leaves, reduced transparency, VBO
 mode, its storage budget, greedy meshing, mipmaps, frame rate/VSync, menu blur, and
 rebuild budgets. Features without an implementation are shown disabled. The
 VBO and mipmap controls are also disabled when the active OpenGL context lacks
@@ -161,6 +169,14 @@ Esc/options show the world behind the menu. Singleplayer pauses its simulation
 and caches the background; multiplayer continues updating and rendering.
 Blur is a small fixed-function texture pass, without FBOs or shaders.
 See [implementation and verification notes](docs/CREATIVE_LIGHTING_PAUSE.md).
+
+Fast leaves retain exterior cutout faces. Fancy uses the same crisp, fully opaque
+leaf pixels and renders internal faces; it adds no blur or translucent blending.
+Reduced Transparency defaults to OFF. When enabled, leaves, door windows and
+portals are opaque; glass, water, ice, cobwebs and bed-leg silhouettes retain
+their essential transparency. All modes use the existing fixed-function passes.
+Chat/sign data preserves Unicode, but the shipped ASCII bitmap atlas displays
+unsupported characters as `?`; a complete Unicode font is still TODO.
 
 ## Testing
 
@@ -206,11 +222,17 @@ receive sample inventory or fixture blocks:
 .\build\ReCraft.exe --smoke-test --screen furnace --no-audio --frames 40 --capture build/furnace.png
 .\build\ReCraft.exe --smoke-test --screen large-chest --no-audio --frames 40 --capture build/chest.png
 .\build\ReCraft.exe --smoke-test --screen blocks --no-audio --frames 50 --capture build/blocks.png
+.\build\ReCraft.exe --smoke-test --screen materials --fancy-leaves 1 --no-audio --frames 40 --capture build/materials.png
+.\build\ReCraft.exe --smoke-test --screen materials --fancy-leaves 1 --reduced-transparency 1 --no-audio --frames 40 --capture build/materials-reduced.png
+.\build\ReCraft.exe --smoke-test --screen sign-edit --no-audio --frames 40 --capture build/sign-editor.png
+.\build\ReCraft.exe --smoke-test --screen multiplayer-demo --no-audio --frames 40 --capture build/multiplayer-status.png
 ```
 
 The `player` view shows the Survival panel, textured biped and 2 x 2 crafting.
 Other views are `inventory` (Creative catalogue),
-`chest`, `health`, `day`, `night`, `rain`, `snow`, `bed` and `mobs`.
+`chest`, `health`, `day`, `night`, `rain`, `snow`, `bed`, `mobs`, `chat` and `players`.
+The multiplayer demo uses synthetic in-memory entries without remote queries;
+`server_status_test` tests the actual exchange against a loopback server.
 The `snow` view forces snow classification in its transient fixture.
 Smoke views ignore live gameplay movement; GUI hover and the inventory player
 preview still follow the cursor. Normal interactive play remains available from the menu.

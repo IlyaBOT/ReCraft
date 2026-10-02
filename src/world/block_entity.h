@@ -6,13 +6,16 @@
 struct World;
 struct Chunk;
 
-typedef enum BlockEntityKind { BLOCK_ENTITY_UNKNOWN, BLOCK_ENTITY_CHEST, BLOCK_ENTITY_FURNACE } BlockEntityKind;
+typedef enum BlockEntityKind { BLOCK_ENTITY_UNKNOWN, BLOCK_ENTITY_CHEST, BLOCK_ENTITY_FURNACE, BLOCK_ENTITY_SIGN } BlockEntityKind;
 typedef struct BlockEntity {
     struct BlockEntity *next;
     BlockEntityKind kind;
     int x,y,z;
     InventorySlot slots[27];
     int burn,cook,fuel;
+    /* UTF-8, four lines of at most 15 Java UTF-16 units each. */
+    char sign_text[4][61];
+    uint8_t sign_text_modified;
     /* Preserve other NBT fields, including tile entities we do not simulate. */
     uint8_t *raw;
     size_t raw_size;

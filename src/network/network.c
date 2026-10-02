@@ -23,6 +23,7 @@ static void lock_free(NetLock *l) { DeleteCriticalSection(l); }
 #include <sys/select.h>
 #include <sys/time.h>
 #include <netdb.h>
+#include <netinet/tcp.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -63,6 +64,7 @@ typedef struct RemoteEntity {
     double x,y,z;
     float yaw,pitch;
     uint8_t type;
+    char name[65];
 } RemoteEntity;
 struct NetworkClient {
     World *world;
@@ -77,6 +79,7 @@ struct NetworkClient {
     uint8_t rx[NET_RX_CAP],tx[NET_TX_CAP];
     size_t rx_count,tx_count;
     int logged_in,dimension;
+    int32_t self_id;
     RemoteEntity entities[NET_MAX_ENTITIES];
 };
 
@@ -174,6 +177,8 @@ static void flush_send(NetworkClient *c)
 }
 static int nonblocking(NetSocket s)
 {
+    int tcp_nodelay=1;
+    (void)setsockopt(s,IPPROTO_TCP,TCP_NODELAY,(const char *)&tcp_nodelay,sizeof(tcp_nodelay));
 #ifdef _WIN32
     u_long yes=1; return ioctlsocket(s,FIONBIO,&yes)==0;
 #else
@@ -297,6 +302,16 @@ int network_connect(NetworkClient *c,const char *host,uint16_t port,const char *
 }
 NetworkState network_state(const NetworkClient *c) { return c?c->state:NETWORK_DISCONNECTED; }
 const char *network_last_error(const NetworkClient *c) { return c?c->error:"No network client"; }
+size_t network_player_list(const NetworkClient *c,NetworkPlayerInfo *out,size_t cap)
+{
+    size_t count=0;int i;if(!c||c->state!=NETWORK_PLAY)return 0;
+    if(out&&count<cap){memset(out+count,0,sizeof(*out));snprintf(out[count].name,sizeof(out[count].name),"%s",c->username);
+        out[count].ping_ms=-1;out[count].self=1;out[count].entity_id=c->self_id;}++count;
+    for(i=0;i<NET_MAX_ENTITIES;++i){const RemoteEntity *e=c->entities+i;if(!e->used||e->type||!e->name[0]||e->id==c->self_id)continue;
+        if(out&&count<cap){memset(out+count,0,sizeof(*out));snprintf(out[count].name,sizeof(out[count].name),"%s",e->name);
+            out[count].entity_id=e->id;out[count].ping_ms=-1;}++count;
+    }return count;
+}
 
 static int floor_chunk(int value) { int q=value/16; return value%16<0?q-1:q; }
 static void dirty_neighbors(World *w,Chunk *chunk)
@@ -397,7 +412,7 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
         off=beta14_read_string(packet,5,text,sizeof(text));
         if(!off || (int8_t)p[off+8]!=0) { fail(c,"Only protocol 14 overworld sessions are supported"); return; }
         c->world->seed=(uint64_t)beta14_u32(p+off)<<32 | beta14_u32(p+off+4);
-        c->dimension=(int8_t)p[off+8]; c->logged_in=1; return;
+        c->dimension=(int8_t)p[off+8]; c->self_id=beta14_i32(p+1); c->logged_in=1; return;
     }
     if(!c->logged_in) { fail(c,"Received gameplay packet before login response"); return; }
     switch(p[0]) {
@@ -457,7 +472,7 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
         for(i=0;i<count;++i) { set_remote_block(c,(int)floor(x)+(int8_t)p[33+i*3],(int)floor(y)+(int8_t)p[34+i*3],(int)floor(z)+(int8_t)p[35+i*3],0,0,0); if(c->state==NETWORK_ERROR) break; } break; }
     case 0x14: case 0x15: case 0x17: case 0x18: {
         RemoteEntity *r=entity_find(c,beta14_i32(p+1),1); if(!r) break; text[0]=0;
-        if(p[0]==0x14) { off=beta14_read_string(packet,5,text,sizeof(text)); r->type=0; }
+        if(p[0]==0x14) { off=beta14_read_string(packet,5,text,sizeof(text)); r->type=0;snprintf(r->name,sizeof(r->name),"%.64s",text); }
         else { off=p[0]==0x15?10:6; r->type=p[0]==0x15?255:p[5]; }
         r->x=beta14_i32(p+off)/32.0; r->y=beta14_i32(p+off+4)/32.0; r->z=beta14_i32(p+off+8)/32.0;
         if(p[0]==0x14 || p[0]==0x18) { r->yaw=p[off+12]*(360.0f/256.0f); r->pitch=p[off+13]*(360.0f/256.0f); }
@@ -488,6 +503,11 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
     case 0x6a:
         e.type=NETWORK_EVENT_WINDOW_TRANSACTION; e.window_id=p[1]; e.action=beta14_u16(p+2); e.accepted=p[4]!=0;
         emit(c,&e); break;
+    case 0x82:
+        e.type=NETWORK_EVENT_SIGN;e.block_x=beta14_i32(p+1);e.block_y=(int16_t)beta14_u16(p+5);e.block_z=beta14_i32(p+7);
+        off=11;for(i=0;i<4;++i)off=beta14_read_string(packet,off,e.sign_lines[i],sizeof(e.sign_lines[i]));
+        if(e.block_y>=0&&e.block_y<WORLD_HEIGHT)emit(c,&e);
+        break;
     default: break; /* Framed standard packets with no implemented visual effect. */
     }
 }
@@ -523,6 +543,25 @@ int network_send_position(NetworkClient *c,double x,double y,double z,float yaw,
 { uint8_t p[42]; size_t n; if(!c || c->state!=NETWORK_PLAY) return 0; n=beta14_movement(p,sizeof(p),x,y,z,yaw,pitch,ground); return queue_bytes(c,p,n); }
 int network_send_chat(NetworkClient *c,const char *message)
 { uint8_t p[256]; size_t n; if(!c || c->state!=NETWORK_PLAY) return 0; n=beta14_chat(p,sizeof(p),message); return queue_bytes(c,p,n); }
+int network_send_sign_update(NetworkClient *c,int x,int y,int z,const char lines[4][61])
+{uint8_t p[139];size_t n;if(!c||c->state!=NETWORK_PLAY)return 0;n=beta14_sign_update(p,sizeof(p),x,y,z,lines);return n&&queue_bytes(c,p,n);}
+static void packet_i32(uint8_t *p,int32_t value)
+{uint32_t v=(uint32_t)value;p[0]=(uint8_t)(v>>24);p[1]=(uint8_t)(v>>16);p[2]=(uint8_t)(v>>8);p[3]=(uint8_t)v;}
+int network_use_entity(NetworkClient *c,int32_t target,int attack)
+{
+    uint8_t p[10];if(!c||c->state!=NETWORK_PLAY||target==c->self_id||(attack!=0&&attack!=1))return 0;
+    p[0]=0x07;packet_i32(p+1,c->self_id);packet_i32(p+5,target);p[9]=(uint8_t)attack;return queue_bytes(c,p,sizeof(p));
+}
+int network_send_animation(NetworkClient *c,int animation)
+{
+    uint8_t p[6];if(!c||c->state!=NETWORK_PLAY||animation!=1)return 0;
+    p[0]=0x12;packet_i32(p+1,c->self_id);p[5]=(uint8_t)animation;return queue_bytes(c,p,sizeof(p));
+}
+int network_send_player_action(NetworkClient *c,int action)
+{
+    uint8_t p[6];if(!c||c->state!=NETWORK_PLAY||action<1||action>3)return 0;
+    p[0]=0x13;packet_i32(p+1,c->self_id);p[5]=(uint8_t)action;return queue_bytes(c,p,sizeof(p));
+}
 int network_send_held_item(NetworkClient *c,int slot)
 { uint8_t p[3]; size_t n; if(!c || c->state!=NETWORK_PLAY) return 0; n=beta14_held_item(p,sizeof(p),slot); return queue_bytes(c,p,n); }
 int network_mine_block(NetworkClient *c,int status,int x,int y,int z,int face)

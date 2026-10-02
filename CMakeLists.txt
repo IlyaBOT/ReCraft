@@ -100,6 +100,7 @@ endforeach()
 add_library(raylib_legacy STATIC ${_raylib_files})
 set_source_files_properties("${RAYLIB_ROOT}/src/gestures.c" PROPERTIES COMPILE_DEFINITIONS RECRAFT_NO_WIN_SHIM)
 set_source_files_properties("${CMAKE_SOURCE_DIR}/src/network/network.c" PROPERTIES COMPILE_DEFINITIONS RECRAFT_NO_WIN_SHIM)
+set_source_files_properties("${CMAKE_SOURCE_DIR}/src/network/server_status.c" PROPERTIES COMPILE_DEFINITIONS RECRAFT_NO_WIN_SHIM)
 
 if(APPLE)
     # raylib 1.4 includes AL/*.h; use its pinned headers with Apple's framework.
@@ -199,6 +200,11 @@ target_include_directories(gameplay_test PRIVATE src)
 target_link_libraries(gameplay_test m)
 add_test(NAME gameplay_test COMMAND gameplay_test)
 set_tests_properties(gameplay_test PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+add_executable(sign_test tests/sign_test.c src/world/world.c src/world/storage.c src/world/beta_blocks.c)
+target_include_directories(sign_test PRIVATE src)
+target_link_libraries(sign_test m)
+add_test(NAME sign_test COMMAND sign_test)
+set_tests_properties(sign_test PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 add_executable(mining_test tests/mining_test.c src/game/mining.c src/game/inventory.c)
 target_include_directories(mining_test PRIVATE src)
 target_link_libraries(mining_test m)
@@ -228,13 +234,13 @@ endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests/renderer_test.c")
     add_executable(renderer_test tests/renderer_test.c src/world/world.c src/world/storage.c
         src/world/beta_blocks.c src/assets/assets.c src/util/game_paths.c src/renderer/texture_animation.c
-        src/game/entity_render.c src/game/creative.c)
+        src/game/entity_render.c src/game/creative.c src/ui/pixel_font.c src/assets/server_icon_png.c)
     target_include_directories(renderer_test PRIVATE src "${RAYLIB_ROOT}/src")
     target_compile_definitions(renderer_test PRIVATE RECRAFT_TEST_ASSET_ROOT="${CMAKE_SOURCE_DIR}")
     target_compile_options(renderer_test PRIVATE -include "${CMAKE_SOURCE_DIR}/src/win_gl_compat.h")
     target_include_directories(renderer_test PRIVATE "${GLFW_ROOT}/include")
     target_link_libraries(renderer_test raylib_legacy glfw "${OPENAL_LIBRARY}"
-        ${PLATFORM_LIBRARIES} m)
+        ${PLATFORM_LIBRARIES} ${ZLIB_LIBRARIES} m)
     add_test(NAME renderer_test COMMAND renderer_test)
     if(WIN32)
         add_test(NAME renderer_gl11_test COMMAND renderer_test --software-gl11)
@@ -255,6 +261,17 @@ add_executable(protocol_47_test tests/protocol_47_test.c src/network/protocols/p
 target_include_directories(protocol_47_test PRIVATE src "${ZLIB_INCLUDE_DIRS}")
 target_link_libraries(protocol_47_test ${ZLIB_LIBRARIES})
 add_test(NAME protocol_47_test COMMAND protocol_47_test)
+
+add_executable(server_status_test tests/server_status_test.c src/network/server_status.c
+    src/network/status_json.c src/network/protocols/protocol_1_8_47.c
+    src/util/server_list.c src/assets/server_icon_png.c)
+target_include_directories(server_status_test PRIVATE src "${ZLIB_INCLUDE_DIRS}")
+target_compile_definitions(server_status_test PRIVATE RECRAFT_NO_WIN_SHIM)
+target_link_libraries(server_status_test ${ZLIB_LIBRARIES} Threads::Threads)
+if(WIN32)
+    target_link_libraries(server_status_test ws2_32)
+endif()
+add_test(NAME server_status_test COMMAND server_status_test)
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests/beta_discovery_test.c")
     add_executable(beta_discovery_test tests/beta_discovery_test.c
@@ -291,9 +308,9 @@ endif()
 
 # Headless world tests use the same container persistence/smelting modules as
 # the client. None of these sources depend on raylib or a graphics context.
-foreach(_world_test world_test renderer_test network_test beta_region_test gameplay_test)
+foreach(_world_test world_test renderer_test network_test beta_region_test gameplay_test sign_test)
     if(TARGET ${_world_test})
-        target_sources(${_world_test} PRIVATE src/world/block_entity.c src/world/environment.c src/world/climate.c src/world/redstone.c src/world/beta_session.c src/game/bed.c src/game/player.c
+        target_sources(${_world_test} PRIVATE src/world/block_entity.c src/world/environment.c src/world/climate.c src/world/redstone.c src/world/beta_session.c src/game/bed.c src/game/sign.c src/game/player.c
             src/world/entities.c src/world/mobs.c
             src/world/physics.c src/world/ticks.c src/world/fluid.c src/game/mining.c
             src/game/crafting.c src/game/inventory.c src/nbt/nbt.c)

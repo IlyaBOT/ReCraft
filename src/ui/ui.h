@@ -8,7 +8,7 @@
 
 #define UI_NAME_MAX 96
 #define UI_ID_MAX 64
-#define UI_ADDRESS_MAX 128
+#define UI_ADDRESS_MAX 256
 #define UI_MAX_WORLDS 128
 #define UI_MAX_SERVERS 128
 
@@ -67,14 +67,19 @@ typedef struct UiWorldEntry {
 typedef struct UiServerEntry {
     char name[UI_NAME_MAX];
     char address[UI_ADDRESS_MAX];
-    char motd[128];
-    char version[32];
+    char motd[512];
+    char version[64];
     int players;
     int max_players;
     int ping_ms;             /* -1 means unknown */
     int compatible;
     int hide_address;
+    int protocol,query_state,connect_ms;
 } UiServerEntry;
+
+#define UI_CHAT_LINES 20
+typedef struct UiChatLine { char text[512]; double arrived; } UiChatLine;
+typedef struct UiPlayerEntry { char name[64]; int ping_ms; } UiPlayerEntry;
 
 /* A field changing in this struct is a request to the platform/game layer.
    Unsupported visual features remain visible but disabled. */
@@ -103,6 +108,7 @@ typedef struct UiOptions {
     int chunk_build_budget;   /* meshes per frame, 1..8 */
     int fog;                  /* 0 fast, 1 off */
     int fancy_leaves;
+    int reduced_transparency; /* Preserve essential alpha only; default OFF. */
     int dynamic_updates;      /* 1..8 */
     int debug_statistics;
 } UiOptions;
@@ -119,6 +125,7 @@ typedef struct UiAction {
     char server_name[UI_NAME_MAX];
     char server_address[UI_ADDRESS_MAX];
     int hide_address;
+    int server_protocol;
 } UiAction;
 
 typedef struct Ui {
@@ -137,6 +144,7 @@ typedef struct Ui {
     int create_flat;
     int create_structures;
     int server_hide_address;
+    int server_protocol;
     int editing_server;
     int pending_confirm;
     int click_sound;
@@ -171,4 +179,7 @@ void ui_creative_input(Ui *ui, InventorySlot *slots, int *hotbar, int can_give);
 void ui_draw_creative(const Ui *ui, const InventorySlot *slots, int hotbar);
 
 int ui_draw_sleep(Ui *ui,int ticks);
+int ui_draw_sign_editor(Ui *ui,const char lines[4][61],int *row);
+void ui_draw_chat(const Ui *ui,const UiChatLine *lines,int count,const char *draft,int open,double now);
+void ui_draw_player_list(const Ui *ui,const UiPlayerEntry *players,int count,int complete);
 #endif

@@ -20,6 +20,7 @@ typedef enum AssetId {
     ASSET_RAIN,ASSET_SNOW,ASSET_SUN,ASSET_MOON,
     ASSET_MOB_PIG,ASSET_MOB_SHEEP,ASSET_MOB_SHEEP_FUR,ASSET_MOB_COW,ASSET_MOB_CHICKEN,
     ASSET_MOB_ZOMBIE,ASSET_MOB_SKELETON,ASSET_MOB_SPIDER,ASSET_MOB_CREEPER,
+    ASSET_SIGN,ASSET_SERVER_DEFAULT_ICON,
     ASSET_COUNT
 } AssetId;
 typedef enum AssetSoundId {
@@ -32,6 +33,11 @@ typedef enum AssetSoundId {
 void assets_init(const char *game_root);
 const char *assets_path(AssetId id, char *buffer, size_t capacity);
 Texture2D assets_get_texture(AssetId id);
+/* Server icon uploads are render-thread only; 64 entries, validated 64x64 PNG.
+ * Missing/invalid icons use the original Minecraft unknown-server asset. */
+int assets_set_server_icon(unsigned index,const unsigned char *png,size_t size);
+Texture2D assets_get_server_icon(unsigned index);
+void assets_clear_server_icons(void);
 Image assets_load_image(AssetId id);
 Sound assets_get_sound(AssetSoundId id);
 AssetSoundId assets_find_sound(const char *key,unsigned variant);

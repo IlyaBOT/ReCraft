@@ -314,9 +314,8 @@ int world_mobs_interact(World *w,Player *p,InventorySlot *held,float reach)
         e->mob.sheared=1; dirty(c);
         world_drop_stack(w,(int)floorf(e->mob.x),(int)floorf(e->mob.y),(int)floorf(e->mob.z),
             (InventorySlot){35,2+(int)world_random(w,3),e->mob.color});
-        if(!p->creative && ++held->damage>inventory_max_damage(359)) {
-            inventory_clear_slot(held); world_sound(w,"random.break",p->x,p->y,p->z,.8f,1);
-        }
+        if(!p->creative && inventory_damage(held,1))
+            world_sound(w,"random.break",p->x,p->y,p->z,.8f,1);
         return 1;
     }
     return 0;
@@ -327,14 +326,12 @@ int world_mobs_attack(World *w,Player *p,InventorySlot *held,float reach)
     if(w->network_mode || !held || !(best=mob_hit(w,p,reach,&chunk))) return 0;
     damage(w,chunk,&best->mob,p->creative ? 1000 : beta_attack_damage(held->id));
     if(!p->creative) {
-        int max=inventory_max_damage(held->id),sword=(held->id==268 || held->id==272 || held->id==267 || held->id==276 || held->id==283);
+        int sword=(held->id==268 || held->id==272 || held->id==267 || held->id==276 || held->id==283);
         int tool=(held->id>=256 && held->id<=258) || (held->id>=269 && held->id<=271) ||
             (held->id>=273 && held->id<=275) || (held->id>=277 && held->id<=279) || (held->id>=284 && held->id<=286);
         int wear=sword ? 1 : 2;
-        if(max>0 && (sword || tool)) {
-            held->damage+=wear;
-            if(held->damage>max) { inventory_clear_slot(held); world_sound(w,"random.break",p->x,p->y,p->z,.8f,1); }
-        }
+        if((sword || tool) && inventory_damage(held,wear))
+            world_sound(w,"random.break",p->x,p->y,p->z,.8f,1);
     }
     return 1;
 }

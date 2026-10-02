@@ -20,6 +20,9 @@ Only the files required by current code are deployed:
 | `assets/gui/crafting.png` | `gui/crafting.png` | 3 x 3 workbench panel |
 | `assets/gui/furnace.png` | `gui/furnace.png` | Furnace slots, flame and progress |
 | `assets/gui/container.png` | `gui/container.png` | 27/54-slot chest panels |
+| `assets/gui/unknown_server.png` | Original `third_party/textures/misc/unknown_server.png` | Default server-list icon when no valid favicon is supplied |
+| `assets/textures/item/sign.png` | Normalized Coterie `item/sign.png` | Preferred 64x32 standing/wall sign model texture |
+| `assets/textures/entity/sign.png` | Original Beta 1.7.3 JAR `item/sign.png` | Sign model fallback when the preferred Coterie image is missing |
 | `assets/textures/mob/char.png` | `mob/char.png` | Remote player model and first-person arm |
 | `assets/textures/mob/{pig,sheep,sheep_fur,cow,chicken,zombie,skeleton,spider,creeper}.png` | Normalized Coterie `mob/` files | Local and remote mob models |
 | `assets/textures/terrain/{sun,moon}.png` | Normalized Coterie `terrain/` files | Fixed-function celestial quads |
@@ -47,8 +50,8 @@ required. Item sprite coordinates are explicit Beta registry values in
 `src/game/creative.c` (including dye damage variants and music discs), not
 `item_id - 256`. Block previews retain metadata and use terrain.png.
 
-The shared [runtime allowlist](../assets/runtime_assets.txt) contains 25 PNGs
-and 105 OGGs (93 effects/variants and 12 music tracks). All OGG copies were
+The shared [runtime allowlist](../assets/runtime_assets.txt) contains 28 PNGs
+and 105 OGGs (93 effects/variants and 12 music tracks), 133 files in total. All OGG copies were
 compared byte-for-byte to the read-only installed instance. Textures already
 in the normalized pack remain unchanged. Some sound-pool entries prepare
 future actions; the [mechanics audit](BETA_MECHANICS_AUDIT.md) records which
@@ -57,6 +60,22 @@ four small OpenAL buffers rather than decoding a full track into RAM.
 
 Portal sound SHA-256:
 `e99e597079059f33b1e926728c99ff145eb36097de77c0f66ee87236c0fddcda`.
-The 13 newly deployed PNGs already belonged to the normalized pack; their
-source files were not replaced. CMake, legacy GNU make and CI packaging read
-the same allowlist and never copy the full reference tree.
+The previously deployed 13 environment/mob PNGs already belonged to the
+normalized pack; their source files were not replaced. The sign renderer now
+uses the existing Coterie model texture first. The original sign fallback was
+extracted from the official Beta 1.7.3 client JAR, verified against its published
+SHA-1 `43db9b498cb67058d2e12d394e6507722e71bb45`. The JAR remains development
+reference material; the runtime only needs the selected PNG.
+
+Original sign fallback SHA-256:
+`ccd4fa265f84ec55cb1f328b55b1a5b1e41e3dc8586cbae391e073a3a603c510`.
+Original unknown-server icon SHA-256:
+`b0b745c4573737e150db7b880fc01321a9e1f96180622b2c6200ea3944961690`.
+The supplied default icon is 128x128 and is drawn with nearest filtering.
+Received server favicons must be valid 64x64 PNGs; they stay in a bounded texture
+cache and are not copied into the source tree or saved to disk. Missing or
+invalid favicons use the original default icon.
+
+CMake, legacy GNU make and CI packaging read the same allowlist and never copy
+the full reference tree. Runtime paths never depend on `third_party/` or on
+the downloaded reference JAR.

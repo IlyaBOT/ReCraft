@@ -1,4 +1,5 @@
 #include "assets.h"
+#include "server_icon_png.h"
 #include "../util/game_paths.h"
 
 #if defined(__APPLE__)
@@ -8,6 +9,11 @@
 #endif
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+
+/* These symbols are supplied by pinned raylib's existing stb_image decoder. */
+extern unsigned char *stbi_load_from_memory(const unsigned char *,int,int *,int *,int *,int);
+extern void stbi_image_free(void *);
 
 static const char *const files[ASSET_COUNT] = {
     "assets/gui/widgets.png", "assets/gui/background.png",
@@ -20,12 +26,14 @@ static const char *const files[ASSET_COUNT] = {
     "assets/textures/terrain/sun.png","assets/textures/terrain/moon.png",
     "assets/textures/mob/pig.png","assets/textures/mob/sheep.png","assets/textures/mob/sheep_fur.png",
     "assets/textures/mob/cow.png","assets/textures/mob/chicken.png","assets/textures/mob/zombie.png",
-    "assets/textures/mob/skeleton.png","assets/textures/mob/spider.png","assets/textures/mob/creeper.png"
+    "assets/textures/mob/skeleton.png","assets/textures/mob/spider.png","assets/textures/mob/creeper.png",
+    "assets/textures/item/sign.png","assets/gui/unknown_server.png"
 };
 static char root[512];
 static Texture2D textures[ASSET_COUNT];
 static unsigned char attempted[ASSET_COUNT];
 static Texture2D fallback;
+static Texture2D server_icons[64];
 static Sound sounds[ASSET_SOUND_COUNT];
 static unsigned char sound_attempted[ASSET_SOUND_COUNT];
 static const char *const sound_files[ASSET_SOUND_COUNT]={
@@ -62,6 +70,7 @@ void assets_init(const char *game_root)
     memset(textures, 0, sizeof(textures));
     memset(attempted, 0, sizeof(attempted));
     memset(&fallback, 0, sizeof(fallback));
+    memset(server_icons,0,sizeof(server_icons));
     memset(sounds,0,sizeof(sounds)); memset(sound_attempted,0,sizeof(sound_attempted));
 }
 
@@ -105,11 +114,34 @@ Texture2D assets_get_texture(AssetId id)
     if (!attempted[id]) {
         attempted[id] = 1;
         if (assets_path(id, path, sizeof(path))) textures[id] = LoadTexture(path);
+        if(id==ASSET_SIGN && !textures[id].id &&
+            game_path_join(path,sizeof(path),root,"assets/textures/entity/sign.png")) {
+            fprintf(stderr,"Missing preferred sign texture; using original Beta sign.\n");
+            textures[id]=LoadTexture(path);
+        }
         if (textures[id].id) nearest(textures[id], id == ASSET_GUI_BACKGROUND || id==ASSET_RAIN || id==ASSET_SNOW);
         else fprintf(stderr, "Missing optional asset: %s\n", files[id]);
     }
     return textures[id].id ? textures[id] : checker();
 }
+
+int assets_set_server_icon(unsigned index,const unsigned char *png,size_t size)
+{
+    Image image;unsigned char *pixels;int width,height,channels;
+    if(index>=64)return 0;
+    if(server_icons[index].id)UnloadTexture(server_icons[index]);
+    memset(server_icons+index,0,sizeof(*server_icons));
+    if(!size)return 1;
+    if(!server_icon_png_valid(png,size))return 0;
+    pixels=stbi_load_from_memory(png,(int)size,&width,&height,&channels,4);if(!pixels)return 0;
+    if(width!=64||height!=64){stbi_image_free(pixels);return 0;}
+    image.data=pixels;image.width=width;image.height=height;image.mipmaps=1;image.format=UNCOMPRESSED_R8G8B8A8;
+    server_icons[index]=LoadTextureFromImage(image);stbi_image_free(pixels);nearest(server_icons[index],0);return server_icons[index].id!=0;
+}
+Texture2D assets_get_server_icon(unsigned index)
+{return index<64&&server_icons[index].id?server_icons[index]:assets_get_texture(ASSET_SERVER_DEFAULT_ICON);}
+void assets_clear_server_icons(void)
+{unsigned i;for(i=0;i<64;++i)if(server_icons[i].id)UnloadTexture(server_icons[i]);memset(server_icons,0,sizeof(server_icons));}
 
 Image assets_load_image(AssetId id)
 {
@@ -143,6 +175,7 @@ void assets_release_sounds(void)
 void assets_shutdown(void)
 {
     int i;
+    assets_clear_server_icons();
     for (i = 0; i < ASSET_COUNT; ++i) if (textures[i].id) UnloadTexture(textures[i]);
     if (fallback.id) UnloadTexture(fallback);
     memset(textures, 0, sizeof(textures));

@@ -7,6 +7,9 @@ gui/panorama.png
 gui/crafting.png
 gui/furnace.png
 gui/container.png
+gui/unknown_server.png
+textures/item/sign.png
+textures/entity/sign.png
 textures/terrain.png
 textures/mob/char.png
 fonts/ascii.png

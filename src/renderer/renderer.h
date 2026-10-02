@@ -25,7 +25,8 @@ typedef struct RendererOptions {
     int fog;
     int mipmap;              /* 0: nearest; 1..4: maximum mip level (GL 1.2/SGIS). */
     int smooth_lighting;
-    int transparent_leaves;
+    int transparent_leaves; /* Fancy: crisp cutouts, including interior faces. */
+    int reduced_transparency; /* Opaque foliage/doors/portals; essential alpha stays. */
     int brightness;          /* 0..100 ambient light; changes rebuild meshes. */
 } RendererOptions;
 

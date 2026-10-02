@@ -1,6 +1,7 @@
 #include "world.h"
 #include "fluid.h"
 #include "../game/bed.h"
+#include "../game/sign.h"
 #include "redstone.h"
 #include "ticks.h"
 #include "environment.h"
@@ -105,7 +106,7 @@ static void notify_cell(World *w,int x,int y,int z)
     if (id==8 || id==10) world_schedule_tick(w,x,y,z,(uint8_t)id,id==8 ? 5 : 30);
     else if (id==12 || id==13) world_schedule_tick(w,x,y,z,(uint8_t)id,3);
     else if (id==75 || id==76) world_schedule_tick(w,x,y,z,(uint8_t)id,2);
-    else if (id==50 || id==81 || id==55 || id==26) world_schedule_tick(w,x,y,z,(uint8_t)id,id==55 ? 0 : 1);
+    else if (id==50 || id==81 || id==55 || id==26 || sign_is_block(id)) world_schedule_tick(w,x,y,z,(uint8_t)id,id==55 ? 0 : 1);
     else if(id==93 || id==94) {
         unsigned meta=world_peek_metadata(w,x,y,z);
         int input=world_repeater_input(w,x,y,z,meta);
@@ -180,6 +181,7 @@ static void step(World *w,WorldPhysicsCell c)
     int x=c.x,y=c.y,z=c.z,sx,sy,sz;
     unsigned id=world_peek_block(w,x,y,z),meta=world_peek_metadata(w,x,y,z);
     if (id!=c.id || !loaded(w,x,y,z)) return;
+    if(sign_is_block(id)) { sign_neighbor_tick(w,x,y,z); return; }
     if(id==26) { bed_neighbor_tick(w,x,y,z); return; }
     if(id==77) {
         if(meta&8) {

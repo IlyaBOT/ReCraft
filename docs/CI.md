@@ -23,12 +23,23 @@ The workflow fetches raylib 1.4.0 and GLFW 3.1.2 at verified commits, builds
 Release, runs CTest with assertions enabled, checks `--version`, renders the
 main menu and uploads a runtime package. Action revisions are pinned too.
 Packaging copies the executable and assets selected by
-[`assets/runtime_assets.txt`](../assets/runtime_assets.txt): 25 PNG textures,
-93 sound effects/variants and 12 music tracks. It also includes VERSION, README
+[`assets/runtime_assets.txt`](../assets/runtime_assets.txt): 28 PNG textures,
+93 sound effects/variants and 12 music tracks (133 assets). The images include
+the preferred Coterie sign texture, the original Beta sign fallback and the
+original unknown-server icon. It also includes VERSION, README
 and dependency/asset notices. Windows includes transitive non-system DLLs.
 Linux/macOS use tar archives to preserve executable permissions and app layout.
 User saves, options, server lists and `third_party` references are excluded.
 Linux requires system OpenAL, zlib, X11 and OpenGL libraries.
+
+Network CTests use loopback listeners only: the Beta test checks gameplay packet
+exchanges, Unicode chat/sign text and tracked-player entries; the status test
+checks modern status/pong/favicon queries, malformed replies, timeouts and
+bounded PNG decoding. Beta list entries expose TCP reachability only, without
+invented MOTD/player counts or roster ping. Protocol 47 is status-only; modern
+gameplay and account authentication are not implemented. CI does not contact
+public Minecraft servers and these tests do not prove real-server interoperability.
+Received server icons, server lists and user data are not bundled in artifacts.
 
 `cmake/legacy_source_compat.cmake` prepares checked build-only copies of four
 upstream translation units. GLFW/WGL tries accelerated pixel formats first,

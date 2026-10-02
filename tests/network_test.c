@@ -45,9 +45,12 @@ typedef struct Observed {
     int chest_open,chest_sync,chest_slots,cursor_updates;
     int furnace_open,furnace_sync,furnace_slots,properties[3];
     int rejected,accepted,closed,dead,alive,respawn;
+    int player_spawn,player_despawn,chat,sign;
     int16_t chest_id[63],chest_damage[63];
     uint8_t chest_count[63];
 } Observed;
+static const char unicode_chat[]="Hello \xc3\xa9 \xd0\x9c\xd0\xb8\xd1\x80";
+static const char unicode_sign[4][61]={"\xd0\xa2\xd0\xb5\xd1\x81\xd1\x82","Beta 1.7.3","","123"};
 
 static void pause_ms(unsigned ms)
 {
@@ -219,6 +222,21 @@ static int mock_session(TestSocket s)
        fabs(beta14_f64(p+17)-65.0)>0.0001) return 0;
     if(!recv_all(s,p,1) || p[0]!=0) return 0;
     if(!recv_all(s,p,3) || p[0]!=0x10 || beta14_u16(p+1)!=2) return 0;
+    /* Named entity visibility is the only remote roster data Beta sends. */
+    { uint8_t spawn[64],string[32],chat[256],sign[139];size_t n,at;Beta14Packet parsed;char decoded[64];
+      n=beta14_handshake(string,sizeof(string),"Bob");spawn[0]=0x14;put32(spawn+1,456);
+      memcpy(spawn+5,string+1,n-1);at=5+n-1;memset(spawn+at,0,16);put32(spawn+at,9*32);put32(spawn+at+4,65*32);put32(spawn+at+8,8*32);
+      if(!send_all(s,spawn,at+16))return 0;
+      n=beta14_chat(chat,sizeof(chat),unicode_chat);if(!recv_all(s,p,n)||memcmp(p,chat,n))return 0;
+      if(!recv_all(s,p,10)||p[0]!=0x07||beta14_i32(p+1)!=123||beta14_i32(p+5)!=456||p[9]!=1)return 0;
+      if(!recv_all(s,p,6)||p[0]!=0x12||beta14_i32(p+1)!=123||p[5]!=1)return 0;
+      if(!recv_all(s,p,6)||p[0]!=0x13||beta14_i32(p+1)!=123||p[5]!=1)return 0;
+      if(!recv_all(s,p,6)||p[0]!=0x13||beta14_i32(p+1)!=123||p[5]!=2)return 0;
+      if(!send_all(s,chat,n))return 0;
+      n=beta14_sign_update(sign,sizeof(sign),8,64,8,unicode_sign);if(!send_all(s,sign,n)||!recv_all(s,p,n)||memcmp(p,sign,n))return 0;
+      if(beta14_next_packet(p,n,&parsed)!=1||!beta14_read_string(&parsed,11,decoded,sizeof(decoded))||strcmp(decoded,unicode_sign[0]))return 0;
+      spawn[0]=0x1d;put32(spawn+1,456);if(!send_all(s,spawn,5))return 0;
+    }
     return mock_containers(s);
 }
 #ifdef _WIN32
@@ -290,6 +308,24 @@ static void observe(void *user,const NetworkEvent *e)
         if(e->health==20) ++o->alive;
     }
     if(e->type==NETWORK_EVENT_RESPAWN) { assert(e->dimension==0); ++o->respawn; }
+    if(e->type==NETWORK_EVENT_ENTITY_SPAWN&&e->entity_type==0) {
+        NetworkPlayerInfo players[4];assert(network_player_list(o->client,players,4)==2);
+        assert(players[0].self&&!strcmp(players[0].name,"Player")&&players[0].entity_id==123&&players[0].ping_ms==-1);
+        assert(!strcmp(players[1].name,"Bob")&&players[1].entity_id==456&&players[1].ping_ms==-1);
+        ++o->player_spawn;assert(network_send_chat(o->client,unicode_chat));
+        assert(network_use_entity(o->client,456,1)&&network_send_animation(o->client,1));
+        assert(network_send_player_action(o->client,1)&&network_send_player_action(o->client,2));
+        assert(!network_use_entity(o->client,123,1)&&!network_use_entity(o->client,456,2));
+    }
+    if(e->type==NETWORK_EVENT_ENTITY_DESPAWN) {
+        /* Despawn callback is emitted before the entry is released. */
+        assert(e->entity_id==456);++o->player_despawn;
+    }
+    if(e->type==NETWORK_EVENT_CHAT) {assert(!strcmp(e->text,unicode_chat));++o->chat;}
+    if(e->type==NETWORK_EVENT_SIGN) {
+        assert(e->block_x==8&&e->block_y==64&&e->block_z==8&&!memcmp(e->sign_lines,unicode_sign,sizeof(unicode_sign)));
+        ++o->sign;assert(network_send_sign_update(o->client,e->block_x,e->block_y,e->block_z,e->sign_lines));
+    }
 
 }
 static void test_packet_boundaries(void)
@@ -316,6 +352,13 @@ static void test_packet_boundaries(void)
     { const uint8_t invalid[]={0x33,0,0,0,0,0,0,0,0,0,0,15,127,15,0xff,0xff,0xff,0xff};
       assert(beta14_next_packet(invalid,sizeof(invalid),&parsed)==-1);
     }
+    n=beta14_chat(packet,sizeof(packet),unicode_chat);assert(n&&beta14_next_packet(packet,n,&parsed)==1);
+    {char text[64];assert(beta14_read_string(&parsed,1,text,sizeof(text))==n&&!strcmp(text,unicode_chat));}
+    assert(!beta14_chat(packet,sizeof(packet),"\xc0\x80"));assert(!beta14_chat(packet,sizeof(packet),"\xed\xa0\x80"));
+    n=beta14_sign_update(packet,sizeof(packet),-1,64,0,unicode_sign);assert(n&&packet[0]==0x82);
+    for(i=0;i<n;++i)assert(beta14_next_packet(packet,i,&parsed)==0);
+    assert(beta14_next_packet(packet,n,&parsed)==1);
+    {char bad[4][61]={{0}};memset(bad[0],'x',16);assert(!beta14_sign_update(packet,sizeof(packet),0,64,0,bad));}
 }
 int main(void)
 {
@@ -382,6 +425,8 @@ int main(void)
     assert(observed.rejected==1 && observed.accepted==1 && observed.furnace_open==1 && observed.furnace_sync==1);
     assert(observed.furnace_slots==39 && observed.properties[0]==100 && observed.properties[1]==800 && observed.properties[2]==1600);
     assert(observed.closed==1 && observed.dead==1 && observed.respawn==1 && observed.alive==1);
+    assert(observed.player_spawn==1&&observed.player_despawn==1&&observed.chat==1&&observed.sign==1);
+    {NetworkPlayerInfo players[2];assert(network_player_list(client,players,2)==1&&players[0].self);}
     /* Let the nonblocking client flush the final respawn acknowledgement. */
     for(i=0;i<50;++i) { network_tick(client); pause_ms(1); }
     network_destroy(client);
