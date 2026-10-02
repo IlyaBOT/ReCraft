@@ -22,7 +22,9 @@ missing the workflow installs it using the runner's existing Homebrew.
 The workflow fetches raylib 1.4.0 and GLFW 3.1.2 at verified commits, builds
 Release, runs CTest with assertions enabled, checks `--version`, renders the
 main menu and uploads a runtime package. Action revisions are pinned too.
-Packaging copies only the executable, twelve required textures, the portal OGG, VERSION, README
+Packaging copies the executable and assets selected by
+[`assets/runtime_assets.txt`](../assets/runtime_assets.txt): 25 PNG textures,
+93 sound effects/variants and 12 music tracks. It also includes VERSION, README
 and dependency/asset notices. Windows includes transitive non-system DLLs.
 Linux/macOS use tar archives to preserve executable permissions and app layout.
 User saves, options, server lists and `third_party` references are excluded.
