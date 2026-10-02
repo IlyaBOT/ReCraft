@@ -1,5 +1,7 @@
 # ReCraft
 
+[Build and launch](#manual-build-and-launch) | [Testing](#testing) | [Controls](#play)
+
 ReCraft is a voxel sandbox built around raylib 1.4, GLFW 3.1.2, and a fixed-function OpenGL renderer. Its target is an i386 Mac running Mac OS X 10.6.8 with Intel GMA 950. Modern Windows, Linux and macOS builds are development/test hosts; a native Snow Leopard build and GPU run remain unverified.
 
 The build version is stored in [VERSION](VERSION) and appears at the bottom left
@@ -15,27 +17,93 @@ partial and missing features. Day/night, weather, beds and saved mobs have a
 local implementation; full Beta terrain generation, mob spawning/pathfinding,
 pistons, armor, arrows and explosions remain unfinished.
 
-## Build
+## Manual build and launch
 
-For Snow Leopard, follow [the native build recipe](docs/SNOW_LEOPARD_BUILD.md). For Windows UCRT64, install MSYS2 UCRT64 GCC, Ninja, OpenAL Soft and zlib, and CMake 3.10 or newer. Fetch the pinned sources described in [third_party/README.md](third_party/README.md) into `.deps/` or `third_party/`.
-In PowerShell:
+### Get the project
 
-```powershell
-& C:\msys64\usr\bin\pacman.exe -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-openal mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-ninja
-$env:PATH = 'C:\msys64\ucrt64\bin;' + $env:PATH
-cmake -P tools/fetch_dependencies.cmake
-cmake -S . -B build/windows-ucrt -G Ninja -DCMAKE_C_COMPILER=C:/msys64/ucrt64/bin/gcc.exe -DCMAKE_PREFIX_PATH=C:/msys64/ucrt64
-cmake --build build/windows-ucrt --parallel
-ctest --test-dir build/windows-ucrt --output-on-failure
+Install Git, then open a terminal (PowerShell on Windows):
+
+```sh
+git clone https://github.com/IlyaBOT/ReCraft.git
+cd ReCraft
 ```
 
-Keep the UCRT64 `bin` directory on `PATH` when running the executable; its
-OpenAL and compiler DLLs come from that installation. The Windows executable,
-runtime assets and user worlds are in `build/`. On macOS the executable is in
-`build/ReCraft.app` and persistent data is beside the bundle in `build/`.
-Resources are resolved from the executable location, independent of the shell
-working directory. `--data-dir` overrides the entire game root.
-See [runtime layout](docs/RUNTIME_LAYOUT.md).
+If you already have the project, open a terminal in its root directory instead.
+Run the commands below from that directory.
+
+### Windows (PowerShell)
+
+Install MSYS2 in `C:\msys64`. Install the build tools once:
+
+```powershell
+& C:\msys64\usr\bin\pacman.exe -S --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-openal mingw-w64-ucrt-x86_64-zlib
+```
+
+Build and start the game:
+
+```powershell
+$env:PATH = 'C:\msys64\ucrt64\bin;' + $env:PATH
+cmake -P tools/fetch_dependencies.cmake
+cmake -S . -B build/windows-ucrt -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=C:/msys64/ucrt64/bin/gcc.exe -DCMAKE_PREFIX_PATH=C:/msys64/ucrt64
+cmake --build build/windows-ucrt --parallel 2
+.\build\ReCraft.exe
+```
+
+For later launches, use the same PowerShell window, or run the `PATH` line again
+before `.\build\ReCraft.exe`; the game needs DLLs from MSYS2 UCRT64.
+If MSYS2 is installed elsewhere, replace `C:\msys64` in these commands.
+
+### Linux / modern macOS
+
+**Ubuntu/Debian:** install the build tools and libraries once:
+
+```sh
+sudo apt-get update
+sudo apt-get install build-essential cmake libgl1-mesa-dev libopenal-dev zlib1g-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxxf86vm-dev
+```
+
+**Modern macOS:** install Xcode command line tools with `xcode-select --install`
+and install CMake 3.13 or newer. The system OpenGL/OpenAL frameworks are used.
+
+Build on either system:
+
+```sh
+cmake -P tools/fetch_dependencies.cmake
+cmake -S . -B build/host -DCMAKE_BUILD_TYPE=Release
+cmake --build build/host --parallel 2
+```
+
+Start on **Linux**:
+
+```sh
+./build/ReCraft
+```
+
+Start on **macOS**:
+
+```sh
+open build/ReCraft.app
+```
+
+**Snow Leopard 10.6 / i386:** use the separate
+[legacy build instructions](docs/SNOW_LEOPARD_BUILD.md).
+
+### Rebuild after changes
+
+Run only `cmake --build build/windows-ucrt --parallel 2` on Windows, or
+`cmake --build build/host --parallel 2` on Linux/macOS, then start the game again.
+The dependency script downloads the pinned raylib/GLFW sources automatically;
+you do not need to copy them manually. An internet connection is needed for
+the first download. If the pinned sources are already present, skip the fetch
+command; it refuses to overwrite local dependency edits.
+
+The executable and runtime assets are placed in `build/`; CMake files stay in
+`build/windows-ucrt/` or `build/host/`. Put worlds in `build/saves/`.
+On macOS, worlds and assets sit beside `ReCraft.app`.
+Rebuilding preserves saves; do not delete the whole `build/` directory to clean
+the compiler output. Resource lookup works independently of the current
+working directory. See [runtime layout](docs/RUNTIME_LAYOUT.md) and
+[CI and packaging](docs/CI.md) for advanced options.
 
 ## Play
 
@@ -94,32 +162,50 @@ and caches the background; multiplayer continues updating and rendering.
 Blur is a small fixed-function texture pass, without FBOs or shaders.
 See [implementation and verification notes](docs/CREATIVE_LIGHTING_PAUSE.md).
 
-## Reproduce a run
+## Testing
+
+Testing is optional for a normal build and launch. Run these commands from the
+project root after building. Windows commands need the UCRT64 `PATH` set above.
+
+### Automated tests
+
+**Windows (PowerShell):**
 
 ```powershell
-build\ReCraft.exe --smoke-test --no-audio --frames 120 --capture build/smoke.png
-build\ReCraft.exe --benchmark bench_flat --no-audio --frames 600 --distance 4 --csv build/flat.csv
-build\ReCraft.exe --benchmark bench_stream --no-audio --frames 600 --distance 8 --csv build/stream.csv
+ctest --test-dir build/windows-ucrt --output-on-failure --timeout 60
 ```
 
-The available scenes, controls, CSV columns and measurement limits are in
-[BENCHMARK.md](docs/BENCHMARK.md). Implementation boundaries and file formats
-are in [ARCHITECTURE.md](docs/ARCHITECTURE.md). Implemented protocol traffic
-and its limits are in [NETWORK_PROTOCOLS.md](docs/NETWORK_PROTOCOLS.md). The
-original GMA 950 analysis is preserved in
-[OPTIMIZATION_NOTES.md](docs/OPTIMIZATION_NOTES.md).
+**Linux / macOS:**
 
-## Gameplay regression views
+```sh
+ctest --test-dir build/host --output-on-failure --timeout 60
+```
+
+Renderer tests need a graphical session. On headless Ubuntu/Debian, install
+`xvfb` and `xauth`, then run:
+
+```sh
+xvfb-run -a ctest --test-dir build/host --output-on-failure --timeout 60
+```
+
+### Smoke run and GUI screenshots
+
+```powershell
+.\build\ReCraft.exe --smoke-test --no-audio --frames 120 --capture build/smoke.png
+```
+
+For Linux, replace `.\build\ReCraft.exe` with `./build/ReCraft`; for macOS, use
+`./build/ReCraft.app/Contents/MacOS/ReCraft`.
 
 These previews seed **in-memory** smoke worlds only; persistent worlds never
 receive sample inventory or fixture blocks:
 
 ```powershell
-build\ReCraft.exe --smoke-test --screen player --no-audio --frames 40 --capture build/player-inventory.png
-build\ReCraft.exe --smoke-test --screen crafting --no-audio --frames 40 --capture build/crafting.png
-build\ReCraft.exe --smoke-test --screen furnace --no-audio --frames 40 --capture build/furnace.png
-build\ReCraft.exe --smoke-test --screen large-chest --no-audio --frames 40 --capture build/chest.png
-build\ReCraft.exe --smoke-test --screen blocks --no-audio --frames 50 --capture build/blocks.png
+.\build\ReCraft.exe --smoke-test --screen player --no-audio --frames 40 --capture build/player-inventory.png
+.\build\ReCraft.exe --smoke-test --screen crafting --no-audio --frames 40 --capture build/crafting.png
+.\build\ReCraft.exe --smoke-test --screen furnace --no-audio --frames 40 --capture build/furnace.png
+.\build\ReCraft.exe --smoke-test --screen large-chest --no-audio --frames 40 --capture build/chest.png
+.\build\ReCraft.exe --smoke-test --screen blocks --no-audio --frames 50 --capture build/blocks.png
 ```
 
 The `player` view shows the Survival panel, textured biped and 2 x 2 crafting.
@@ -128,3 +214,19 @@ Other views are `inventory` (Creative catalogue),
 The `snow` view forces snow classification in its transient fixture.
 Smoke views ignore live gameplay movement; GUI hover and the inventory player
 preview still follow the cursor. Normal interactive play remains available from the menu.
+
+### Performance benchmarks
+
+```powershell
+.\build\ReCraft.exe --benchmark bench_flat --no-audio --frames 600 --distance 4 --csv build/flat.csv
+.\build\ReCraft.exe --benchmark bench_stream --no-audio --frames 600 --distance 8 --csv build/stream.csv
+```
+
+See [BENCHMARK.md](docs/BENCHMARK.md) for scenes, CSV columns and measurement
+limits.
+
+## Technical documentation
+
+- [Architecture and file formats](docs/ARCHITECTURE.md)
+- [Network protocols and current limits](docs/NETWORK_PROTOCOLS.md)
+- [Original GMA 950 analysis](docs/OPTIMIZATION_NOTES.md)
