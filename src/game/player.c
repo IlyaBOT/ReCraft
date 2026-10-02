@@ -1,4 +1,5 @@
 #include "player.h"
+#include "../world/rail.h"
 #include "../world/block_entity.h"
 #include "../world/fluid.h"
 #include "bed.h"
@@ -197,6 +198,13 @@ void player_tick(Player *player, World *world, const PlayerInput *input, float d
     ++player->age;
     if(!world->network_mode && world->difficulty==0 && player->health>0 && player->health<20 && player->age%20==0) ++player->health;
     if(player->sleeping) { player_sleep_tick(player,world); return; }
+    if(player->riding) {
+        player->yaw+=input->look_dx*.0025f; player->pitch-=input->look_dy*.0025f;
+        if(player->pitch>1.5f) player->pitch=1.5f;
+        if(player->pitch< -1.5f) player->pitch=-1.5f;
+        if(!world->network_mode) hazards(player,world,player->y);
+        return;
+    }
     float old_y=player->y;
     float forward = input->forward;
     float strafe = input->strafe;
@@ -285,7 +293,7 @@ static BlockHit raycast(const Player *player, World *world, float reach,int sour
                 id == BETA_BLOCK_TORCH ||
                 id == BETA_BLOCK_UNLIT_REDSTONE_TORCH ||
                 id == BETA_BLOCK_REDSTONE_TORCH || id==BETA_BLOCK_CACTUS || id==BETA_BLOCK_NETHER_PORTAL ||
-                id==26 || id==93 || id==94 || id==69 || id==77 || id==78 || sign_is_block(id) ||
+                id==26 || id==93 || id==94 || id==69 || id==77 || id==78 || sign_is_block(id) || rail_is(id) ||
                 id==BETA_BLOCK_WOOD_DOOR || id==BETA_BLOCK_IRON_DOOR) {
                 BetaBlockState state = { id, world_get_metadata(world, x, y, z) };
                 float end = fminf(reach, fminf(tx, fminf(ty, tz)));
@@ -398,11 +406,17 @@ int player_place_block_state(Player *player, World *world, BetaBlockState state)
         else return 0;
     }
     if (state.id==BETA_BLOCK_CHEST && !block_chest_can_place(world,hit.place_x,hit.place_y,hit.place_z)) return 0;
+    if(rail_is(state.id)) {
+        if(!world_block_def(world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z))->opaque) return 0;
+        state.metadata=0;
+    }
     if(state.id==69 || state.id==77) {
         if(!world_block_def(hit.block)->opaque) return 0;
         if(hit.place_y>hit.y) {
             if(state.id==77) return 0;
-            state.metadata=(sinf(player->yaw)*sinf(player->yaw)>.5f) ? 6 : 5;
+            /* Beta floor orientation is selected by Random.nextInt(2), not yaw. */
+            world->random_seed=(world->random_seed*UINT64_C(0x5deece66d)+11)&UINT64_C(0xffffffffffff);
+            state.metadata=(uint8_t)(5+((world->random_seed>>47)&1));
         } else if(hit.place_y<hit.y) return 0;
         else if(hit.place_x>hit.x) state.metadata=1;
         else if(hit.place_x<hit.x) state.metadata=2;
@@ -452,7 +466,7 @@ int player_place_block_state(Player *player, World *world, BetaBlockState state)
         if (body_intersects_block(player, hit.place_x, hit.place_y,
                                   hit.place_z, &box)) return 0;
     }
-    if (!world_set_block(world,hit.place_x,hit.place_y,hit.place_z,state.id)) return 0;
+    if (!world_set_state(world,hit.place_x,hit.place_y,hit.place_z,state)) return 0;
     if (state.id==54 || state.id==61 || state.id==62)
         block_entity_get(world,hit.place_x,hit.place_y,hit.place_z,1);
     return world_set_metadata(world,hit.place_x,hit.place_y,hit.place_z,state.metadata);

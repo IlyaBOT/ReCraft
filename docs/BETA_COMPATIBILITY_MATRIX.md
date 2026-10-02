@@ -37,6 +37,8 @@ The native `.rcg` format is not Minecraft's; version 2 stores Beta IDs, and
 version 1 is migrated from the original 12 private IDs. Missing Beta chunks are
 not generated. See [the gameplay milestone](GAMEPLAY_PARITY.md) for precise
 checks and limits. Unlisted block mechanisms remain unfinished.
+Lever attachments/UV, jukebox RecordPlayer/discs, rail topology and three cart
+variants now have a local implementation; see [transport audit](BETA_TRANSPORT.md).
 
 | Block ID | Block name | Metadata usage | Implemented | Rendering | Collision | Drops | Interaction | Scheduled tick | Random tick | Tile entity | Redstone | Lighting | Fluid behavior | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -67,8 +69,8 @@ checks and limits. Unlisted block mechanisms remain unfinished.
 | 24 | sandStone | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 25 | musicBlock | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 26 | bed | facing, head, occupied | two halves + saved spawn | rotated Beta top, frame/legs cutout, hidden join | 9/16 height | bed from foot | place/sleep/wake | orphan check | no | no | no | day/night | no | partial bed/camera; no nightmares |
-| 27 | goldenRail | shape and powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 28 | detectorRail | shape and powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 27 | goldenRail | shape and powered | 0..5 + power bit 8 | sloping cutout rail | none | rail 27 | connectivity/support/cart path | neighbor chain | no | no | eight-rail powered reach | day/night | no | local transport |
+| 28 | detectorRail | shape and powered | 0..5 + detection bit 8 | sloping cutout rail | none | rail 28 | cart AABB detection | 20-tick recheck | no | no | weak/strong output | day/night | no | local transport |
 | 29 | pistonStickyBase | facing and extended | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 30 | web | none | ID + metadata stored | crossed Beta cutout planes | none | mining harvest rules | generic break/place | no | no | no | no | local approximation | no | slowing/entity behavior unfinished |
 | 31 | tallgrass | plant variant | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | local approximation | no | crossed plant |
@@ -103,13 +105,13 @@ checks and limits. Unlisted block mechanisms remain unfinished.
 | 60 | farmland | moisture | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 61 | furnace | facing | smelting + NBT | oriented Beta faces | full cube | furnace + contents | input/fuel/take-only output | 20 Hz smelting | no | Furnace | no | local approximation | no | container |
 | 62 | furnace | facing | smelting + NBT | oriented lit Beta faces | full cube | unlit furnace + contents | input/fuel/take-only output | 20 Hz smelting | no | Furnace | no | emission 13 | no | container |
-| 63 | sign | 16-direction rotation | placement + four saved text lines | textured board/post, bitmap text | none; Beta selection box | item 323 | placement editor | support check | no | Sign; preserves unknown NBT | no | local approximation | replace fluids | local + server-owned text |
+| 63 | sign | rotation | placement + four saved text lines | textured board/post, bitmap text | none; Beta selection box | item 323 | placement editor | support check | no | Sign; preserves unknown NBT | no | local approximation | replace fluids | local + server-owned text |
 | 64 | doorWood | facing, open, upper half | ID + metadata + oriented bounds | thin Beta atlas model; optional opaque windows | metadata-oriented thin box | generic rules | generic break/place; no door-item placement yet | no | no | no | no | local approximation | no | opening/redstone unfinished |
 | 65 | ladder | attachment face | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 66 | rail | shape | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 66 | rail | shape | metadata 0..9 connectivity | sloping/corner cutout rail | none | rail 66 | dynamic topology/cart path | neighbor shapes/support | no | no | junction selection | day/night | no | local transport |
 | 67 | stairsStone | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 68 | sign | four wall attachment faces | placement + four saved text lines | textured wall board, bitmap text | none; Beta selection box | item 323 | placement editor | support check | no | Sign; preserves unknown NBT | no | local approximation | replace fluids | local + server-owned text |
-| 69 | lever | attachment and powered | support + toggle | base proxy | none | lever | attach/toggle | support check | no | no | weak/strong support power | day/night | no | partial geometry |
+| 68 | sign | attachment face | placement + four saved text lines | textured wall board, bitmap text | none; Beta selection box | item 323 | placement editor | support check | no | Sign; preserves unknown NBT | no | local approximation | replace fluids | local + server-owned text |
+| 69 | lever | attachment and powered | floor 5/6; walls 1..4; bit 8 ON | cobble base + tile 96 prism | none | lever | attach/toggle | support check | no | no | weak/strong support power | day/night | no | cached attachment model |
 | 70 | pressurePlate | powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 71 | doorIron | facing, open, upper half | ID + metadata + oriented bounds | thin Beta atlas model; optional opaque windows | metadata-oriented thin box | generic rules | generic break/place; no door-item placement yet | no | no | no | no | local approximation | no | redstone opening unfinished |
 | 72 | pressurePlate | powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
@@ -124,7 +126,7 @@ checks and limits. Unlisted block mechanisms remain unfinished.
 | 81 | cactus | age | age + support + growth | inset cactus faces | inset box | cactus | sand/cactus support; contact damage | support check | growth to 3 blocks | no | no | local approximation | no | cactus |
 | 82 | clay | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 83 | reeds | age | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | local approximation | no | crossed plant |
-| 84 | jukebox | record present | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 84 | jukebox | record present | metadata 0/1 + Record ID | Beta tiles 74/75 cube | full box | jukebox + disc | insert/eject 13/cat | no | no | RecordPlayer Record Int | no | day/night | no | local streaming/persistence |
 | 85 | fence | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 86 | pumpkin | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 87 | hellrock | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |

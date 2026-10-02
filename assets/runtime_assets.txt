@@ -131,3 +131,8 @@ sounds/mob/creeper4.ogg
 sounds/mob/creeperdeath.ogg
 sounds/mob/cow4.ogg
 sounds/mob/spider4.ogg
+records/13.ogg
+textures/entity/arrows.png
+textures/entity/cart.png
+records/cat.ogg
+sounds/random/drr.ogg

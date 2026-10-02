@@ -2,6 +2,16 @@
 #include "../world/environment.h"
 #include <math.h>
 static const int dx[4]={0,-1,0,1},dz[4]={1,0,-1,0};
+void player_eye(const Player *p,const World *w,float *x,float *y,float *z,float *yaw,float *pitch)
+{
+    *x=p->x; *y=p->y+1.62f; *z=p->z; *yaw=p->yaw; *pitch=p->pitch;
+    if(p->sleeping) {
+        unsigned dir=world_peek_metadata(w,p->bed_x,p->bed_y,p->bed_z)&3;
+        *x=p->bed_x+.5f+dx[dir]*.4f; *y=p->bed_y+1.0375f;
+        *z=p->bed_z+.5f+dz[dir]*.4f;
+        *yaw=dir*1.57079633f; *pitch=.15f;
+    }
+}
 static int empty_near(World *w,int x,int y,int z,int *rx,int *rz)
 {
     int dir=world_get_metadata(w,x,y,z)&3,k,a,b;
@@ -51,7 +61,7 @@ int player_sleep(Player *p,World *w,int x,int y,int z)
     if(world_is_daytime(w)) return 1;
     if(fabsf(p->x-x)>3 || fabsf(p->y-y)>2 || fabsf(p->z-z)>3) return 2;
     p->bed_x=x; p->bed_y=y; p->bed_z=z; p->sleeping=1; p->sleep_ticks=0;
-    p->x=x+.5f; p->y=y+.9375f; p->z=z+.5f;
+    p->x=x+.5f+dx[meta&3]*.4f; p->y=y+.9375f; p->z=z+.5f+dz[meta&3]*.4f;
     p->vx=p->vy=p->vz=p->fall_distance=0;
     world_set_metadata(w,x,y,z,(uint8_t)(world_get_metadata(w,x,y,z)|4));
     return 0;

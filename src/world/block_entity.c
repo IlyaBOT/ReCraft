@@ -45,11 +45,11 @@ BlockEntity *block_entity_get(World *world,int x,int y,int z,int create)
     block=world_peek_block(world,x,y,z);
     if (!create || (world->network_mode && !sign_is_block(block)) ||
         (world->beta_format && !chunk->beta_raw)) return NULL;
-    if (block!=54 && block!=61 && block!=62 && !sign_is_block(block)) return NULL;
+    if (block!=54 && block!=61 && block!=62 && block!=84 && !sign_is_block(block)) return NULL;
     e=(BlockEntity *)calloc(1,sizeof(*e));
     if (!e) return NULL;
     e->x=x; e->y=y; e->z=z;
-    e->kind=block==54 ? BLOCK_ENTITY_CHEST : sign_is_block(block) ? BLOCK_ENTITY_SIGN : BLOCK_ENTITY_FURNACE;
+    e->kind=block==54 ? BLOCK_ENTITY_CHEST : block==84 ? BLOCK_ENTITY_JUKEBOX : sign_is_block(block) ? BLOCK_ENTITY_SIGN : BLOCK_ENTITY_FURNACE;
     for (i=0;i<27;++i) inventory_clear_slot(&e->slots[i]);
     e->next=chunk->entities; chunk->entities=e;
     if (!world->network_mode) {
@@ -65,6 +65,21 @@ void block_entity_changed(World *world,BlockEntity *entity)
     chunk=owner(world,entity->x,entity->z);
     if (chunk) { chunk->entities_modified=1; chunk->dirty_flags|=CHUNK_DIRTY_SAVE|CHUNK_DIRTY_ENTITIES; }
 }
+int jukebox_use(World *w,int x,int y,int z,InventorySlot *held)
+{
+    BlockEntity *e;
+    if(w->network_mode || world_peek_block(w,x,y,z)!=84 || !(e=block_entity_get(w,x,y,z,1))) return 0;
+    if(e->record) {
+        world_sound(w,"records.stop",x+.5f,y+.5f,z+.5f,1,1);
+        world_drop_stack(w,x,y,z,(InventorySlot){e->record,1,0}); e->record=0;
+    } else {
+        if(!held || held->count<=0 || (held->id!=2256 && held->id!=2257)) return 0;
+        e->record=held->id;
+        world_sound(w,held->id==2256 ? "records.13" : "records.cat",x+.5f,y+.5f,z+.5f,1,1);
+        if(!w->creative && --held->count==0) inventory_clear_slot(held);
+    }
+    world_set_metadata(w,x,y,z,(uint8_t)(e->record!=0)); block_entity_changed(w,e); return 1;
+}
 void block_entity_remove(World *world,int x,int y,int z,int drop_contents)
 {
     Chunk *chunk=owner(world,x,z);
@@ -74,6 +89,10 @@ void block_entity_remove(World *world,int x,int y,int z,int drop_contents)
         BlockEntity *e=*link;
         int i;
         if (e->x!=x || e->y!=y || e->z!=z) continue;
+        if(e->kind==BLOCK_ENTITY_JUKEBOX && e->record) {
+            world_sound(world,"records.stop",x+.5f,y+.5f,z+.5f,1,1);
+            if(drop_contents) world_drop_stack(world,x,y,z,(InventorySlot){e->record,1,0});
+        }
         if (drop_contents && (e->kind==BLOCK_ENTITY_CHEST || e->kind==BLOCK_ENTITY_FURNACE))
             for (i=0;i<(e->kind==BLOCK_ENTITY_FURNACE ? 3 : 27);++i)
             if (e->slots[i].id>0 && e->slots[i].count>0)
@@ -185,6 +204,7 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned dept
             if (text_is(tag->value.bytes,"Chest")) e->kind=BLOCK_ENTITY_CHEST;
             else if (text_is(tag->value.bytes,"Furnace")) e->kind=BLOCK_ENTITY_FURNACE;
             else if (text_is(tag->value.bytes,"Sign")) e->kind=BLOCK_ENTITY_SIGN;
+            else if (text_is(tag->value.bytes,"RecordPlayer")) e->kind=BLOCK_ENTITY_JUKEBOX;
         } else if (tag->type==NBT_STRING && tag->name.size==5 &&
                    !memcmp(tag->name.data,"Text",4) && tag->name.data[4]>='1' && tag->name.data[4]<='4') {
             sign_line_read_nbt(e->sign_text[tag->name.data[4]-'1'],tag->value.bytes.data,tag->value.bytes.size);
@@ -192,6 +212,7 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned dept
             if (named(tag,"x")) e->x=tag->value.int_value;
             if (named(tag,"y")) e->y=tag->value.int_value;
             if (named(tag,"z")) e->z=tag->value.int_value;
+            if (named(tag,"Record")) e->record=tag->value.int_value;
         } else if (tag->type==NBT_SHORT) {
             if (named(tag,"BurnTime")) e->burn=tag->value.short_value;
             if (named(tag,"CookTime")) e->cook=tag->value.short_value;
@@ -271,7 +292,13 @@ static int entity_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned de
 {
     EntityWrite *e=(EntityWrite *)context;
     NbtTag t=*tag;
-    if (e->entity->kind==BLOCK_ENTITY_SIGN) {
+    if(e->entity->kind==BLOCK_ENTITY_JUKEBOX) {
+        if(event==NBT_VALUE && depth==1 && named(tag,"Record") && tag->type==NBT_INT) {
+            e->items=1; t.value.int_value=e->entity->record;
+        }
+        if(event==NBT_FINISH && depth==0 && !e->items && e->entity->record &&
+           !scalar(e->writer,NBT_INT,"Record",e->entity->record)) return 0;
+    } else if (e->entity->kind==BLOCK_ENTITY_SIGN) {
         if(event==NBT_VALUE && depth==1 && tag->type==NBT_STRING && tag->name.size==5 &&
            !memcmp(tag->name.data,"Text",4) && tag->name.data[4]>='1' && tag->name.data[4]<='4') {
             unsigned line=tag->name.data[4]-'1'; e->sign_lines|=1u<<line;
@@ -310,12 +337,14 @@ static int write_entity(NbtWriter *w,const BlockEntity *entity)
         NbtTag t={0}; t.type=NBT_COMPOUND;
         if (nbt_writer_tag(w,&t)!=NBT_OK) return 0;
         t.type=NBT_STRING; t.name=nbt_span("id");
-        t.value.bytes=nbt_span(entity->kind==BLOCK_ENTITY_CHEST ? "Chest" : entity->kind==BLOCK_ENTITY_SIGN ? "Sign" : "Furnace");
+        t.value.bytes=nbt_span(entity->kind==BLOCK_ENTITY_CHEST ? "Chest" : entity->kind==BLOCK_ENTITY_SIGN ? "Sign" : entity->kind==BLOCK_ENTITY_JUKEBOX ? "RecordPlayer" : "Furnace");
         if (nbt_writer_tag(w,&t)!=NBT_OK || !scalar(w,NBT_INT,"x",entity->x) ||
             !scalar(w,NBT_INT,"y",entity->y) || !scalar(w,NBT_INT,"z",entity->z)) return 0;
         if(entity->kind==BLOCK_ENTITY_SIGN) {
             unsigned line;
             for(line=0;line<4;++line) if(!write_sign_line(w,entity,line)) return 0;
+        } else if(entity->kind==BLOCK_ENTITY_JUKEBOX) {
+            if(entity->record && !scalar(w,NBT_INT,"Record",entity->record)) return 0;
         } else if(!write_items(w,entity)) return 0;
         if (entity->kind==BLOCK_ENTITY_FURNACE &&
             (!scalar(w,NBT_SHORT,"BurnTime",entity->burn) || !scalar(w,NBT_SHORT,"CookTime",entity->cook))) return 0;
@@ -367,7 +396,7 @@ int block_entities_native_write(const World *world,const Chunk *chunk)
     NbtWriter w; NbtTag root={0},level={0}; const BlockEntity *e; const SavedEntity *entity;
     FILE *f; int ok;
     for (e=chunk->entities;e;e=e->next) capacity+=e->raw_size+8192;
-    for(entity=chunk->saved_entities;entity;entity=entity->next) capacity+=entity->raw_size+512;
+    for(entity=chunk->saved_entities;entity;entity=entity->next) capacity+=entity->raw_size+2048;
     capacity+=world_ticks_capacity(chunk);
     if(capacity>16u*1024u*1024u) return 0;
     if (!native_path(world,chunk,path,sizeof(path),0) || !native_path(world,chunk,temp,sizeof(temp),1)) return 0;

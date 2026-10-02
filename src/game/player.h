@@ -4,6 +4,7 @@
 #include "../world/world.h"
 
 typedef struct Player {
+    const char *name;           /* Borrowed from persistent UiOptions.player_name. */
     float x, y, z;              /* feet position, Y points upward */
     float vx, vy, vz;
     float yaw, pitch;           /* radians, yaw 0 looks toward -Z */
@@ -16,6 +17,8 @@ typedef struct Player {
     unsigned age;
     int sleeping,sleep_ticks,bed_x,bed_y,bed_z;
     int has_bed_spawn,spawn_x,spawn_y,spawn_z;
+    int riding;
+    int cart_inventory; /* Runtime interaction target, never a vanilla NBT tag. */
 } Player;
 
 typedef struct PlayerInput {

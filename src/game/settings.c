@@ -21,6 +21,15 @@ static const OptionField fields[] = {
 };
 #undef FIELD
 
+int settings_player_name_valid(const char *name)
+{
+    size_t i,n=name ? strlen(name) : 0;
+    if(n<1 || n>16) return 0;
+    for(i=0;i<n;++i) if(!((name[i]>='a' && name[i]<='z') ||
+        (name[i]>='A' && name[i]<='Z') || (name[i]>='0' && name[i]<='9') || name[i]=='_')) return 0;
+    return 1;
+}
+
 void settings_load(UiOptions *options, const char *path)
 {
     FILE *file=fopen(path,"rb");
@@ -29,6 +38,11 @@ void settings_load(UiOptions *options, const char *path)
     size_t i;
     if (!file) return;
     while (fgets(line,sizeof(line),file)) {
+        if(!strncmp(line,"player_name=",12)) {
+            char *name=line+12; name[strcspn(name,"\r\n")]=0;
+            if(settings_player_name_valid(name)) strcpy(options->player_name,name);
+            continue;
+        }
         if (sscanf(line,"%63[^=]=%d",key,&value)!=2) continue;
         for (i=0;i<sizeof(fields)/sizeof(fields[0]);++i) {
             const OptionField *field=&fields[i];
@@ -55,6 +69,10 @@ int settings_save(const UiOptions *options, const char *path)
     strcpy(temp,path); strcat(temp,".tmp");
     file=fopen(temp,"wb");
     if (!file) return 0;
+    if(!settings_player_name_valid(options->player_name) ||
+       fprintf(file,"player_name=%s\n",options->player_name)<0) {
+        fclose(file); remove(temp); return 0;
+    }
     for (i=0;i<sizeof(fields)/sizeof(fields[0]);++i) {
         int value=*(const int *)((const char *)options+fields[i].offset);
         if (fprintf(file,"%s=%d\n",fields[i].name,value)<0) {

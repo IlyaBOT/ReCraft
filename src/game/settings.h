@@ -2,5 +2,6 @@
 #define RECRAFT_SETTINGS_H
 #include "../ui/ui.h"
 void settings_load(UiOptions *options, const char *path);
+int settings_player_name_valid(const char *name);
 int settings_save(const UiOptions *options, const char *path);
 #endif

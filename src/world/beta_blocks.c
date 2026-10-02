@@ -43,6 +43,10 @@ int beta_block_selection_box(BetaBlockState state, BetaBlockBox *out)
     if(state.id==BETA_BLOCK_STANDING_SIGN) {
         *out=(BetaBlockBox){.25f,0,.25f,.75f,1,.75f}; return 1;
     }
+    if(state.id==66 || state.id==27 || state.id==28) {
+        unsigned m=state.id==66 ? state.metadata : state.metadata&7;
+        *out=(BetaBlockBox){0,0,0,1,m>=2 && m<=5 ? .625f : .125f,1}; return 1;
+    }
     if(state.id==BETA_BLOCK_WALL_SIGN) {
         *out=(BetaBlockBox){0,.28125f,0,1,.78125f,1};
         if(state.metadata==2) out->min_z=.875f;
@@ -81,6 +85,10 @@ int beta_block_selection_box(BetaBlockState state, BetaBlockBox *out)
         else if(dir==3) { out->min_z=0; out->max_z=depth; }
         else if(dir==4) { out->min_z=1-depth; out->max_z=1; }
         else { out->min_y=0; out->max_y=.6f; }
+        if(state.id==69) {
+            if(dir>=1 && dir<=4) { out->min_y=.2f; out->max_y=.8f; }
+            else { out->min_x=out->min_z=.25f; out->max_x=out->max_z=.75f; }
+        }
         return 1;
     }
     if (state.id==BETA_BLOCK_CACTUS) {
@@ -158,7 +166,11 @@ int beta_block_terrain_tile(BetaBlockState state, unsigned face)
     }
     case BETA_BLOCK_UNPOWERED_REPEATER: return face==0 ? 115 : face==1 ? 131 : 5;
     case BETA_BLOCK_POWERED_REPEATER: return face==0 ? 99 : face==1 ? 147 : 5;
-    case BETA_BLOCK_LEVER: return 16;
+    case BETA_BLOCK_LEVER: return 96;
+    case BETA_BLOCK_JUKEBOX: return face==1 ? 75 : 74;
+    case BETA_BLOCK_RAIL: return state.metadata>=6 ? 112 : 128;
+    case BETA_BLOCK_POWERED_RAIL: return (state.metadata&8) ? 179 : 163;
+    case BETA_BLOCK_DETECTOR_RAIL: return 195;
     case BETA_BLOCK_STONE_BUTTON: return 1;
     case BETA_BLOCK_SNOW_LAYER: case BETA_BLOCK_SNOW_BLOCK: return 66;
     case BETA_BLOCK_ICE: return 67;
@@ -242,7 +254,7 @@ int beta_render_source_tile(unsigned slot)
         15,63,79,39,55,56,13,12,29,28,73,5,208,176,192,
         237,238,14,69,70,71,43,59,60,25,26,27,62,45,44,61,99,115,164,
         205,206,41,42,57,58,134,135,149,150,151,152,131,147,66,67,
-        53,133,11,81,97,82,98,81,97,82,98};
+        53,133,11,81,97,82,98,81,97,82,98,96,74,75,112,128,179,163,195};
     return slot<sizeof(tiles)/sizeof(tiles[0]) ? tiles[slot] : -1;
 }
 unsigned beta_render_tile(int terrain_tile)

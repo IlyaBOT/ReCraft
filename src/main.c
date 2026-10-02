@@ -23,6 +23,7 @@
 #include "renderer/weather.h"
 #include "game/bed.h"
 #include "game/sign.h"
+#include "game/modal_input.h"
 #include "world/mobs.h"
 #include "ui/ui.h"
 #include "audio/audio.h"
@@ -70,6 +71,11 @@ typedef struct App {
     World world;
     Player player;
     Player previous_player;
+    FirstPersonState first_person;
+    RendererCamera sleeping_view;
+    RendererCamera camera_from;
+    float sleep_transition;
+    int camera_sleeping;
     NetworkClient *network;
     ServerStatusBrowser *status_browser;
     unsigned status_revisions[RECRAFT_MAX_SERVERS];
@@ -100,7 +106,7 @@ typedef struct App {
     int status_preview,roster_preview;
     double message_until;
     Vector2 last_mouse;
-    int mouse_settle;
+    int mouse_settle,mouse_release;
     PlayerInput input;
     ServerList servers;
     UiServerEntry server_ui[RECRAFT_MAX_SERVERS];
@@ -236,6 +242,11 @@ static void capture_cursor(App *app, int capture)
     else EnableCursor();
     app->last_mouse = GetMousePosition();
     app->mouse_settle=capture ? 2 : 0;
+    if(capture) {
+        app->mouse_release=1;
+        app->attack=app->attack_pressed=0;
+        memset(&app->input,0,sizeof(app->input));
+    }
     memset(&app->input, 0, sizeof(app->input));
 }
 
@@ -404,6 +415,9 @@ static int leave_world(App *app)
         }
         if (app->network) { network_destroy(app->network); app->network = NULL; }
         if (world_close(&app->world) != WORLD_OK) return 0;
+        audio_stop_records(&app->audio);
+        memset(&app->first_person,0,sizeof(app->first_person));
+        memset(&app->sleeping_view,0,sizeof(app->sleeping_view)); app->sleep_transition=0; app->camera_sleeping=0;
         app->has_world = 0;
     }
     capture_cursor(app, 0);
@@ -703,7 +717,7 @@ static void join_server(App *app, const char *address)
         for (i = 0; i < RECRAFT_INVENTORY_SLOTS; ++i) app->inventory[i].id = -1;
     }
     app->network = network_create(&app->world, network_event, app);
-    if (!app->network || !network_connect(app->network, host, port, RECRAFT_OFFLINE_NAME)) {
+    if (!app->network || !network_connect(app->network, host, port, app->ui.options.player_name)) {
         notice(app, app->network ? network_last_error(app->network) : "Network allocation failed.");
         leave_world(app); return;
     }
@@ -927,6 +941,7 @@ static void container_input(App *app)
 {
     ContainerSession *s=&app->container;
     BlockEntity *first=NULL,*second=NULL;
+    SavedEntity *cart=NULL;
     InventorySlot *slot=NULL;
     int index,right;
     if (s->kind==CONTAINER_CREATIVE) {
@@ -934,7 +949,10 @@ static void container_input(App *app)
         return;
     }
     if (s->server && s->pending) return;
-    if (!s->server && s->kind==CONTAINER_CHEST) {
+    if(s->entity_id) {
+        cart=world_minecart_find(&app->world,s->entity_id);
+        if(!cart || fabsf(cart->mob.x-app->player.x)>8 || fabsf(cart->mob.z-app->player.z)>8) { close_inventory(app); capture_cursor(app,1); return; }
+    } else if (!s->server && s->kind==CONTAINER_CHEST) {
         s->size=block_chest_halves(&app->world,s->x,s->y,s->z,&first,&second);
         if (!s->size) { close_inventory(app); capture_cursor(app,1); return; }
     } else if (!s->server && s->kind==CONTAINER_FURNACE) {
@@ -970,7 +988,8 @@ static void container_input(App *app)
     else if (index==45) {
         crafting_take(s->grid,s->kind==CONTAINER_WORKBENCH ? 3 : 2,&s->cursor,app->inventory);
         return;
-    } else if (first) {
+    } else if(cart && index>=46 && index<73) slot=&cart->transport.cargo[index-46];
+    else if (first) {
         int n=index-46;
         slot=n<27 ? &first->slots[n] : second ? &second->slots[n-27] : NULL;
         if (s->kind==CONTAINER_FURNACE && n==1 && s->cursor.count>0 &&
@@ -979,12 +998,20 @@ static void container_input(App *app)
     if (inventory_click(slot,&s->cursor,right,s->kind==CONTAINER_FURNACE && index==48)) {
         if (first) block_entity_changed(&app->world,first);
         if (second) block_entity_changed(&app->world,second);
+        if(cart) world_transport_changed(&app->world,cart);
     }
 }
 
 static void game_input(App *app)
 {
     Vector2 mouse = GetMousePosition();
+    if(app->mouse_release) {
+        if(!gameplay_input_ready(&app->mouse_release,IsMouseButtonDown(MOUSE_LEFT_BUTTON),IsMouseButtonDown(MOUSE_RIGHT_BUTTON))) {
+            app->attack=app->attack_pressed=0;
+            memset(&app->input,0,sizeof(app->input)); app->last_mouse=mouse;
+            return;
+        }
+    }
     int i, wheel;
     app->attack=0;
     if(app->player.sleeping) {
@@ -1046,6 +1073,7 @@ static void game_input(App *app)
     if (IsKeyPressed(KEY_T) && app->network && network_state(app->network)==NETWORK_PLAY) {
         app->chat_open = 1; app->chat[0] = 0; cancel_mining(app); capture_cursor(app,0); return;
     }
+    if(app->player.riding && IsKeyPressed(KEY_LEFT_SHIFT)) world_minecart_dismount(&app->world,&app->player);
     if(app->mouse_settle) --app->mouse_settle;
     else {
         app->input.look_dx += mouse.x - app->last_mouse.x;
@@ -1087,8 +1115,9 @@ static void game_input(App *app)
             app->attack=app->attack_pressed=0; cancel_mining(app);
         }
     }
-    if(app->attack_pressed && !app->network && world_mobs_attack(&app->world,&app->player,
-        &app->inventory[app->player.selected_slot],3)) {
+    if(app->attack_pressed && !app->network && (world_transport_interact(&app->world,&app->player,
+        &app->inventory[app->player.selected_slot],1) || world_mobs_attack(&app->world,&app->player,
+        &app->inventory[app->player.selected_slot],3))) {
         app->attack=app->attack_pressed=0; cancel_mining(app); app->swing_ticks=6;
     }
     if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON)) {
@@ -1113,8 +1142,16 @@ static void game_input(App *app)
         } else {
             BlockHit hit=player_raycast(&app->player,&app->world,5);
             InventorySlot *item=&app->inventory[app->player.selected_slot];
+            app->player.cart_inventory=0;
+            if(world_transport_interact(&app->world,&app->player,item,0)) {
+                if(app->player.cart_inventory) {
+                    open_inventory(app,CONTAINER_CHEST,hit,27); app->container.entity_id=app->player.cart_inventory;
+                }
+                app->swing_ticks=6; return;
+            }
             if(world_mobs_interact(&app->world,&app->player,item,3)) { app->swing_ticks=6; return; }
             if (hit.hit && !IsKeyDown(KEY_LEFT_SHIFT)) {
+                if(hit.block==84 && jukebox_use(&app->world,hit.x,hit.y,hit.z,item)) return;
                 if(hit.block==26) {
                     int result=player_sleep(&app->player,&app->world,hit.x,hit.y,hit.z);
                     if(result==1) notice(app,"You can only sleep at night.");
@@ -1136,6 +1173,12 @@ static void game_input(App *app)
                 if(world_redstone_activate(&app->world,hit.x,hit.y,hit.z)) return;
             }
             if(player_use_item(&app->player,&app->world,item)) { app->health=app->player.health; app->swing_ticks=6; return; }
+            if(item->id==261 && item->count>0) { if(world_bow_use(&app->world,&app->player,app->inventory)) app->swing_ticks=6; return; }
+            if((item->id==328 || item->id==342 || item->id==343) && item->count>0 && hit.hit) {
+                if(world_minecart_spawn(&app->world,hit.x+.5f,hit.y,hit.z+.5f,item->id==328 ? 0 : item->id==342 ? 1 : 2))
+                    inventory_take(app->inventory,app->player.selected_slot,app->player.creative);
+                return;
+            }
             if(item->id==323 && item->count>0 && hit.hit) {
                 int x,y,z;
                 if(sign_place(&app->world,hit.x,hit.y,hit.z,(unsigned)hit_face(hit),
@@ -1222,6 +1265,8 @@ static void tick_game(App *app)
     app->previous_player=app->player;
     if(!app->network) app->world.difficulty=app->ui.options.difficulty;
     else world_environment_tick(&app->world);
+    app->player.name=app->ui.options.player_name;
+    first_person_tick(&app->first_person,&app->inventory[app->player.selected_slot],app->player.selected_slot);
     player_tick(&app->player, &app->world, &app->input, (float)RECRAFT_TICK_SECONDS);
     if(app->previous_player.sleeping && !app->player.sleeping) capture_cursor(app,1);
     if(app->player.health<app->previous_player.health)
@@ -1246,7 +1291,9 @@ static void tick_game(App *app)
         world_step_physics(&app->world,64);
         block_entities_tick(&app->world);
         world_mobs_tick(&app->world,&app->player);
+        world_transport_tick(&app->world,&app->player,app->inventory);
         app->entity_count=world_mobs_visible(&app->world,app->entities,ENTITY_LIMIT);
+        app->entity_count+=world_transport_visible(&app->world,app->entities+app->entity_count,ENTITY_LIMIT-app->entity_count);
         app->health=app->player.health;
         while(world_take_drop(&app->world,&drop)) { }
         world_items_tick(&app->world,&app->player,app->inventory);
@@ -1450,8 +1497,8 @@ static int gameplay_preview(App *app,const char *name)
     } else if(!strcmp(name,"health")) {
         app->player.creative=0; app->player.health=13; app->health=13;
     } else if(!strcmp(name,"day") || !strcmp(name,"night") || !strcmp(name,"rain") ||
-              !strcmp(name,"snow") || !strcmp(name,"bed") || !strcmp(name,"mobs")) {
-        int snowy=!strcmp(name,"snow"),sleeping=!strcmp(name,"bed"),mobs=!strcmp(name,"mobs");
+              !strcmp(name,"snow") || !strcmp(name,"bed") || !strncmp(name,"bed-",4) || !strcmp(name,"mobs")) {
+        int snowy=!strcmp(name,"snow"),sleeping=!strcmp(name,"bed") || !strncmp(name,"bed-",4),mobs=!strcmp(name,"mobs");
         int cx,cz;
         app->world.beta_world_time=(!strcmp(name,"night") || sleeping) ? 18000 : 6000;
         app->world.rain_time=app->world.thunder_time=12000;
@@ -1470,7 +1517,8 @@ static int gameplay_preview(App *app,const char *name)
         world_set_block(&app->world,2,64,4,50); world_set_metadata(&app->world,2,64,4,1);
         app->player.x=8.5f; app->player.y=64; app->player.z=17; app->player.yaw=0; app->player.pitch=.12f;
         if(sleeping) {
-            bed_place(&app->world,7,64,8,0);
+            unsigned dir=!strcmp(name,"bed-west") ? 1 : !strcmp(name,"bed-north") ? 2 : !strcmp(name,"bed-east") ? 3 : 0;
+            bed_place(&app->world,7,64,8,dir);
             app->player.x=7.5f; app->player.z=10.5f;
             player_sleep(&app->player,&app->world,7,64,8); capture_cursor(app,0);
         } else if(mobs) {
@@ -1479,6 +1527,19 @@ static int gameplay_preview(App *app,const char *name)
             app->entity_count=world_mobs_visible(&app->world,app->entities,ENTITY_LIMIT);
         }
         world_environment_refresh(&app->world); app->previous_player=app->player;
+    } else if(!strcmp(name,"mechanics") || !strncmp(name,"hand-",5)) {
+        int x,y;
+        for(x=2;x<14;++x) for(y=64;y<67;++y) world_set_block(&app->world,x,y,4,1);
+        for(i=0;i<4;++i) world_set_state(&app->world,3+i*3,65,5,(BetaBlockState){69,(uint8_t)(3|(i&1 ? 8 : 0))});
+        for(i=0;i<4;++i) world_set_state(&app->world,3+i*3,64,7,(BetaBlockState){69,(uint8_t)((5+(i&1))|(i>=2 ? 8 : 0))});
+        for(x=2;x<14;++x) world_set_state(&app->world,x,64,9,(BetaBlockState){(uint8_t)(x==7 ? 27 : x==10 ? 28 : 66),1});
+        world_set_block(&app->world,2,64,6,84); world_set_block(&app->world,13,64,6,84);
+        for(i=0;i<3;++i) world_minecart_spawn(&app->world,4.5f+i*4,64,9.5f,i);
+        app->player.x=8.5f; app->player.y=65; app->player.z=14; app->player.yaw=0; app->player.pitch=-.18f; app->player.flying=1;
+        if(!strcmp(name,"hand-empty")) inventory_clear_slot(&app->inventory[0]);
+        else app->inventory[0]=(InventorySlot){!strcmp(name,"hand-tool") ? 278 : !strcmp(name,"hand-sword") ? 276 : !strcmp(name,"hand-bow") ? 261 : !strcmp(name,"hand-food") ? 260 : 1,1,0};
+        app->first_person.item=app->inventory[0]; app->first_person.equip=app->first_person.previous_equip=1;
+        app->previous_player=app->player;
     } else if(!strcmp(name,"materials") || !strcmp(name,"sign-edit")) {
         int x,y,z;
         char lines[4][61]={"ReCraft", "Beta 1.7.3", "Signs & leaves", "Hello world"};
@@ -1663,6 +1724,7 @@ int main(int argc, char **argv)
         else if (!strcmp(run.screen,"multiplayer")) ui_set_screen(&app.ui,UI_SCREEN_MULTIPLAYER);
         else if (!strcmp(run.screen,"add")) ui_set_screen(&app.ui,UI_SCREEN_SERVER_EDIT);
         else if (!strcmp(run.screen,"direct")) ui_set_screen(&app.ui,UI_SCREEN_DIRECT_CONNECT);
+        else if (!strcmp(run.screen,"options")) ui_set_screen(&app.ui,UI_SCREEN_OPTIONS);
         else if (!strcmp(run.screen,"video")) ui_set_screen(&app.ui,UI_SCREEN_VIDEO);
     }
     if (run.csv) {
@@ -1778,7 +1840,25 @@ int main(int argc, char **argv)
                     camera.yaw=app.player.yaw+app.input.look_dx*0.0025f;
                     camera.pitch=app.player.pitch-app.input.look_dy*0.0025f;
                 }
-                if (app.ui.options.view_bobbing && app.player.on_ground && (app.input.forward || app.input.strafe))
+                if(app.player.sleeping)
+                    player_eye(&app.player,&app.world,&camera.x,&camera.y,&camera.z,&camera.yaw,&camera.pitch);
+                if(app.camera_sleeping!=app.player.sleeping) {
+                    app.camera_sleeping=app.player.sleeping; app.camera_from=app.sleeping_view;
+                    app.sleep_transition=app.sleeping_view.fov_y>0 ? .2f : 0;
+                }
+                if(app.sleep_transition>0) {
+                    float t=1-app.sleep_transition/.2f,angle=camera.yaw-app.camera_from.yaw;
+                    while(angle>3.14159265f) angle-=6.2831853f;
+                    while(angle< -3.14159265f) angle+=6.2831853f;
+                    camera.x=app.camera_from.x+(camera.x-app.camera_from.x)*t;
+                    camera.y=app.camera_from.y+(camera.y-app.camera_from.y)*t;
+                    camera.z=app.camera_from.z+(camera.z-app.camera_from.z)*t;
+                    camera.yaw=app.camera_from.yaw+angle*t;
+                    camera.pitch=app.camera_from.pitch+(camera.pitch-app.camera_from.pitch)*t;
+                    app.sleep_transition-=(float)elapsed;
+                }
+                app.sleeping_view=camera;
+                if (app.ui.options.view_bobbing && !app.player.sleeping && app.player.on_ground && (app.input.forward || app.input.strafe))
                     camera.y += 0.035f*sinf((float)start*14);
                 renderer_draw(app.renderer,&app.world,&camera,scene_width,scene_height,app.ui.options.render_distance);
                 terrain_ms=(recraft_now_seconds()-terrain_start)*1000;
@@ -1799,8 +1879,10 @@ int main(int argc, char **argv)
                     if (app.mining_active) mining_cracks_draw(&camera,scene_width,scene_height,
                         app.mining_hit.x,app.mining_hit.y,app.mining_hit.z,
                         (BetaBlockState){app.mining_hit.block,world_get_metadata(&app.world,app.mining_hit.x,app.mining_hit.y,app.mining_hit.z)},app.mining_progress);
-                    first_person_draw(&app.inventory[app.player.selected_slot],scene_width,scene_height,
-                        app.swing_ticks ? 1-app.swing_ticks/6.0f : 0,app.player.hurt_ticks);
+                    first_person_draw_pose(&app.first_person.item,scene_width,scene_height,
+                        app.swing_ticks ? 1-app.swing_ticks/6.0f : 0,app.player.hurt_ticks,
+                        app.first_person.previous_equip+(app.first_person.equip-app.first_person.previous_equip)*(float)(accumulator/RECRAFT_TICK_SECONDS),
+                        app.ui.options.view_bobbing && app.player.on_ground && (app.input.forward || app.input.strafe) ? .035f*sinf((float)start*14) : 0);
                 }
                 if (run.profile_gpu) {
                     double began=recraft_now_seconds();
@@ -1888,6 +1970,9 @@ int main(int argc, char **argv)
                         if(app.container.server) {
                             memcpy(contents,app.container.contents,sizeof(contents));
                             burn=app.container.burn; fuel=app.container.fuel; cook=app.container.cook;
+                        } else if(app.container.entity_id) {
+                            SavedEntity *cart=world_minecart_find(&app.world,app.container.entity_id);
+                            if(cart) memcpy(contents,cart->transport.cargo,sizeof(cart->transport.cargo));
                         } else if (app.container.kind==CONTAINER_CHEST)
                             block_chest_halves(&app.world,app.container.x,app.container.y,app.container.z,&a,&b);
                         else if (app.container.kind==CONTAINER_FURNACE)

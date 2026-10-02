@@ -29,15 +29,17 @@ static GLint scene_begin(const RendererCamera *camera,int width,int height,float
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
     glFrustum(-top*aspect,top*aspect,-top,top,.05,far_plane);
     glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glMatrixMode(GL_TEXTURE); glPushMatrix(); glLoadIdentity(); glMatrixMode(GL_MODELVIEW);
     glRotatef(-camera->pitch*57.2957795131f,1,0,0); glRotatef(camera->yaw*57.2957795131f,0,1,0);
     glTranslatef(-camera->x,-camera->y,-camera->z); glViewport(0,0,width,height);
-    glDisable(GL_LIGHTING); glDisable(GL_FOG); glDisable(GL_BLEND); glDisable(GL_CULL_FACE);
+    glDisable(GL_LIGHTING); glDisable(GL_FOG); glDisable(GL_BLEND); glDisable(GL_CULL_FACE); glDisable(GL_SCISSOR_TEST);
     glEnable(GL_TEXTURE_2D); glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_GREATER,.1f);
     glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthMask(GL_TRUE);
     return mode;
 }
 static void scene_end(GLint mode)
-{ glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(mode); glPopAttrib(); }
+{ glMatrixMode(GL_MODELVIEW); glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix();
+  glMatrixMode(GL_TEXTURE); glPopMatrix(); glMatrixMode(mode); glPopAttrib(); }
 
 /* The six face rectangles follow Beta ModelRenderer's 64x32 skin layout. */
 int entity_pick(const RenderEntity *entities,int count,const RendererCamera *camera,float reach,float block_distance)
@@ -217,6 +219,45 @@ static void mob_model(const RenderEntity *e)
     }
     glPopMatrix();
 }
+static void held_cube(const InventorySlot *item);
+static void transport_model(const RenderEntity *e)
+{
+    int n; glPushMatrix(); glTranslatef(e->draw_x,e->draw_y,e->draw_z);
+    glEnable(GL_TEXTURE_2D); glColor3ub(255,255,255);
+    if(e->type==1000) {
+        glBindTexture(GL_TEXTURE_2D,assets_get_texture(ASSET_ARROW).id);
+        glRotatef(90-e->yaw,0,1,0); glRotatef(e->pitch,0,0,1); glRotatef(45,1,0,0);
+        glScalef(.05625f,.05625f,.05625f); glTranslatef(-4,0,0);
+        glDisable(GL_CULL_FACE);
+        glBegin(GL_QUADS);
+        glTexCoord2f(0,5.0f/32); glVertex3f(-7,-2,-2);
+        glTexCoord2f(5.0f/32,5.0f/32); glVertex3f(-7,-2,2);
+        glTexCoord2f(5.0f/32,10.0f/32); glVertex3f(-7,2,2);
+        glTexCoord2f(0,10.0f/32); glVertex3f(-7,2,-2); glEnd();
+        for(n=0;n<4;++n) {
+            glRotatef(90,1,0,0); glBegin(GL_QUADS);
+            glTexCoord2f(0,0); glVertex3f(-8,-2,0); glTexCoord2f(.5f,0); glVertex3f(8,-2,0);
+            glTexCoord2f(.5f,5.0f/32); glVertex3f(8,2,0); glTexCoord2f(0,5.0f/32); glVertex3f(-8,2,0); glEnd();
+        }
+    } else {
+        glRotatef(180-e->yaw,0,1,0); glRotatef(-e->pitch,0,0,1);
+        if(e->color==1 || e->color==2) {
+            InventorySlot contents={e->color==1 ? 54 : 61,1,0};
+            glPushMatrix(); glScalef(.75f,.75f,.75f); glTranslatef(0,.3125f,0); glRotatef(90,0,1,0);
+            held_cube(&contents); glPopMatrix();
+        }
+        glScalef(-.0625f,-.0625f,.0625f);
+        glBindTexture(GL_TEXTURE_2D,assets_get_texture(ASSET_MINECART).id);
+        glPushMatrix(); glTranslatef(0,4,0); glRotatef(90,1,0,0); skin_box(-10,-8,-1,20,16,2,0,10,0); glPopMatrix();
+        for(n=0;n<4;++n) {
+            glPushMatrix(); glTranslatef(n<2 ? (n==0 ? -9 : 9) : 0,4,n>=2 ? (n==2 ? -7 : 7) : 0);
+            glRotatef(n==0 ? 270 : n==1 ? 90 : n==2 ? 180 : 0,0,1,0);
+            skin_box(-8,-9,-1,16,8,2,0,0,0); glPopMatrix();
+        }
+        glPushMatrix(); glTranslatef(0,4,0); glRotatef(-90,1,0,0); skin_box(-9,-7,-1,18,14,1,44,10,0); glPopMatrix();
+    }
+    glPopMatrix();
+}
 int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *camera,
                        int width,int height,int distance,float dt)
 {
@@ -231,7 +272,12 @@ int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *ca
         RenderEntity *e=&entities[i]; float dx,dy,dz,a=dt*10,move;
         if (!e->active) continue;
         dx=e->x-e->draw_x; dy=e->y-e->draw_y; dz=e->z-e->draw_z;
-        if (!e->positioned || dx*dx+dy*dy+dz*dz>64) { e->draw_x=e->x; e->draw_y=e->y; e->draw_z=e->z; e->positioned=1; }
+        if(e->local_interpolation) {
+            e->phase+=dt*20; if(e->phase>1) e->phase=1;
+            e->draw_x=e->previous_x+(e->x-e->previous_x)*e->phase;
+            e->draw_y=e->previous_y+(e->y-e->previous_y)*e->phase;
+            e->draw_z=e->previous_z+(e->z-e->previous_z)*e->phase; e->positioned=1;
+        } else if (!e->positioned || dx*dx+dy*dy+dz*dz>64) { e->draw_x=e->x; e->draw_y=e->y; e->draw_z=e->z; e->positioned=1; }
         else {
             if(a>1) a=1;
             if(a<0) a=0;
@@ -240,7 +286,8 @@ int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *ca
         }
         dx=e->draw_x-camera->x; dy=e->draw_y-camera->y; dz=e->draw_z-camera->z;
         if(dx*dx+dy*dy+dz*dz>far2) continue;
-        if(e->type==0) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,skin.id); player_model(e); }
+        if(e->type==1000 || e->type==1001) transport_model(e);
+        else if(e->type==0) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,skin.id); player_model(e); }
         else if(e->type==50 || e->type==51 || e->type==52 || e->type==54 || (e->type>=90 && e->type<=93)) {
             glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,assets_get_texture(mob_skin(e->type)).id); mob_model(e);
         }
@@ -324,29 +371,82 @@ static void held_sprite(int tile,int block)
     glTexCoord2f(u1,v0); glVertex3f(.5f,.5f,0); glTexCoord2f(u0,v0); glVertex3f(-.5f,.5f,0);
     glEnd();
 }
-void first_person_draw(const InventorySlot *item,int width,int height,float swing,int hurt)
+static void held_extruded_sprite(int tile,int block)
 {
-    RendererCamera camera={0}; GLint mode; float arc;
+    Texture2D image=assets_get_texture(block ? ASSET_TERRAIN : ASSET_GUI_ITEMS);
+    float u0=(tile%16)*16/256.0f,u1=((tile%16)*16+15.99f)/256;
+    float v0=(tile/16)*16/256.0f,v1=((tile/16)*16+15.99f)/256;
+    int n;
+    glBindTexture(GL_TEXTURE_2D,image.id); glColor3ub(255,255,255); glBegin(GL_QUADS);
+    glTexCoord2f(u1,v1); glVertex3f(-.5f,-.5f,0); glTexCoord2f(u0,v1); glVertex3f(.5f,-.5f,0);
+    glTexCoord2f(u0,v0); glVertex3f(.5f,.5f,0); glTexCoord2f(u1,v0); glVertex3f(-.5f,.5f,0);
+    glTexCoord2f(u1,v0); glVertex3f(-.5f,.5f,-.0625f); glTexCoord2f(u0,v0); glVertex3f(.5f,.5f,-.0625f);
+    glTexCoord2f(u0,v1); glVertex3f(.5f,-.5f,-.0625f); glTexCoord2f(u1,v1); glVertex3f(-.5f,-.5f,-.0625f);
+    /* ItemRenderer Beta extrudes all sixteen columns and rows. Alpha test
+     * removes transparent samples; this also closes holes inside a sprite. */
+    for(n=0;n<16;++n) {
+        float t=n/16.0f,u=u1+(u0-u1)*t-.5f/256,v=v1+(v0-v1)*t-.5f/256;
+        float x=t-.5f,y=t-.5f; int side;
+        for(side=0;side<2;++side) {
+            float sx=x+side*.0625f,sy=y+side*.0625f;
+            glTexCoord2f(u,v1); glVertex3f(sx,-.5f,-.0625f); glTexCoord2f(u,v1); glVertex3f(sx,-.5f,0);
+            glTexCoord2f(u,v0); glVertex3f(sx,.5f,0); glTexCoord2f(u,v0); glVertex3f(sx,.5f,-.0625f);
+            glTexCoord2f(u1,v); glVertex3f(-.5f,sy,0); glTexCoord2f(u0,v); glVertex3f(.5f,sy,0);
+            glTexCoord2f(u0,v); glVertex3f(.5f,sy,-.0625f); glTexCoord2f(u1,v); glVertex3f(-.5f,sy,-.0625f);
+        }
+    }
+    glEnd();
+}
+void first_person_tick(FirstPersonState *s,const InventorySlot *item,int slot)
+{
+    int same=s->item.id==item->id && s->item.damage==item->damage && s->slot==slot;
+    float d=(same ? 1.0f : 0)-s->equip;
+    s->previous_equip=s->equip;
+    if(d>.4f) d=.4f;
+    if(d<-.4f) d=-.4f;
+    s->equip+=d;
+    if(s->equip<.1f) { s->item=*item; s->slot=slot; }
+    else if(same) s->item=*item;
+}
+void first_person_draw(const InventorySlot *item,int width,int height,float swing,int hurt)
+{ first_person_draw_pose(item,width,height,swing,hurt,1,0); }
+void first_person_draw_pose(const InventorySlot *item,int width,int height,float swing,int hurt,float equip,float bob)
+{
+    RendererCamera camera={0}; GLint mode; float arc,phase=sinf(swing*3.14159265f);
     if(width<=0 || height<=0) return;
     camera.fov_y=70; mode=scene_begin(&camera,width,height,10);
     glDepthRange(0,.1); /* Keep the hand close in depth without clearing terrain. */
     if (swing<0) swing=0;
     if(swing>1) swing=1;
     arc=sinf(sqrtf(swing)*3.14159265f);
-    glTranslatef(.65f-arc*.25f,-.55f+sinf(swing*3.14159265f)*.12f,-1.05f);
-    glRotatef(-arc*55,0,1,0); glRotatef(arc*35,1,0,0);
+    glTranslatef(0,bob,0);
     if(hurt>0) glRotatef(sinf(hurt*.3f)*8,0,0,1);
-    glPushMatrix(); glTranslatef(.15f,-.28f,.1f); glRotatef(-25,0,0,1); glRotatef(-60,1,0,0);
-    glScalef(.047f,-.047f,.047f); glBindTexture(GL_TEXTURE_2D,assets_get_texture(ASSET_PLAYER_SKIN).id);
-    glColor3ub(255,255,255); skin_box(-2,-3,-2,4,12,4,40,16,0); glPopMatrix();
     if(item && item->id>0 && item->count>0) {
-        glTranslatef(-.06f,.12f,-.12f);
-        if(item->id<97 && !beta_block_cross_plant(item->id) && item->id!=50 && item->id!=75 && item->id!=76 && item->id!=55) {
-            glRotatef(25,1,0,0); glRotatef(-35,0,1,0); glScalef(.38f,.38f,.38f); held_cube(item);
+        /* Beta ItemRenderer: every held item swings about the same hand pivot.
+         * Inventory 3D blocks and extruded sprites then use distinct poses. */
+        glTranslatef(-arc*.4f,sinf(sqrtf(swing)*6.2831853f)*.2f,-phase*.2f);
+        glTranslatef(.56f,-.52f-(1-equip)*.6f,-.72f); glRotatef(45,0,1,0);
+        glRotatef(-sinf(swing*swing*3.14159265f)*20,0,1,0);
+        glRotatef(-arc*20,0,0,1); glRotatef(-arc*80,1,0,0); glScalef(.4f,.4f,.4f);
+        if(item->id<97 && !beta_block_cross_plant(item->id) && item->id!=50 && item->id!=75 && item->id!=76 && item->id!=55 && item->id!=69 && item->id!=77 && item->id!=66 && item->id!=27 && item->id!=28 && item->id!=63 && item->id!=68) {
+            held_cube(item);
         } else {
             int tile=item->id<97 ? beta_block_terrain_tile((BetaBlockState){(uint8_t)item->id,(uint8_t)item->damage},2) : beta_item_tile(item->id,item->damage);
-            if(tile>=0) { glRotatef(-25,0,0,1); glRotatef(15,0,1,0); glScalef(.65f,.65f,.65f); held_sprite(tile,item->id<97); }
+            if(tile>=0) {
+                if(item->id==346) glRotatef(180,0,1,0); /* ItemFishingRod.shouldRotate... */
+                glTranslatef(0,-.3f,0); glScalef(1.5f,1.5f,1.5f);
+                glRotatef(50,0,1,0); glRotatef(335,0,0,1); glTranslatef(-.4375f,.4375f,0);
+                held_extruded_sprite(tile,item->id<97);
+            }
         }
+    } else {
+        glTranslatef(-arc*.3f,sinf(sqrtf(swing)*6.2831853f)*.4f,-phase*.4f);
+        glTranslatef(.64f,-.6f-(1-equip)*.6f,-.72f); glRotatef(45,0,1,0);
+        glRotatef(arc*70,0,1,0); glRotatef(-sinf(swing*swing*3.14159265f)*20,0,0,1);
+        glTranslatef(-1,3.6f,3.5f); glRotatef(120,0,0,1); glRotatef(200,1,0,0); glRotatef(-135,0,1,0);
+        glTranslatef(5.6f,0,0); glScalef(.0625f,.0625f,.0625f);
+        glBindTexture(GL_TEXTURE_2D,assets_get_texture(ASSET_PLAYER_SKIN).id);
+        glColor3ub(255,255,255); skin_box(-8,0,-2,4,12,4,40,16,0);
     }
     scene_end(mode);
 }

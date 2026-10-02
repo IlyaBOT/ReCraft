@@ -3,6 +3,8 @@
 #include "../src/world/ticks.h"
 #include "../src/world/beta_region.h"
 #include "../src/world/beta_session.h"
+#include "../src/game/player.h"
+#include "../src/game/sign.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -146,6 +148,23 @@ int main(int argc,char **argv)
         chest=block_entity_get(&world,72,81,19,1); assert(chest);
         chest->slots[0]=(InventorySlot){35,19,6}; block_entity_changed(&world,chest);
         world_drop_stack(&world,74,82,19,(InventorySlot){278,1,123});
+        {
+            Player p={0}; InventorySlot inv[36]={{262,2,0}},disc={2257,1,0}; int sx,sy,sz;
+            SavedEntity *entity;
+            assert(world_set_block(&world,70,99,19,1));
+            assert(world_set_state(&world,70,100,19,(BetaBlockState){69,14}));
+            assert(sign_place(&world,70,99,19,3,0,&sx,&sy,&sz));
+            assert(sign_text_set(&world,sx,sy,sz,(const char [4][61]){{"Done / ESC"},{"Saved Beta sign"}}));
+            assert(world_set_block(&world,71,100,19,84) && jukebox_use(&world,71,100,19,&disc));
+            assert(world_set_block(&world,72,99,19,1)); assert(world_set_state(&world,72,100,19,(BetaBlockState){66,1}));
+            assert(world_minecart_spawn(&world,72.5f,100,19.5f,1));
+            entity=chunk->saved_entities; entity->transport.cargo[26]=(InventorySlot){278,1,37}; world_transport_changed(&world,entity);
+            p.x=73.5f; p.y=100; p.z=19.5f;
+            assert(world_bow_use(&world,&p,inv));
+            entity=chunk->saved_entities; entity->transport.in_ground=1; entity->transport.x_tile=72;
+            entity->transport.y_tile=100; entity->transport.z_tile=19; entity->transport.in_tile=66; entity->transport.in_data=1;
+            world_transport_changed(&world,entity);
+        }
         assert(world_save(&world)==WORLD_OK);
         assert(world_set_block(&world,73,80,19,20)); assert(world_save(&world)==WORLD_OK);
     }
@@ -154,6 +173,17 @@ int main(int argc,char **argv)
     {
         BlockEntity *chest=block_entity_get(&world,72,81,19,0); ItemDrop items[128]; int count;
         assert(chest && chest->slots[0].id==35 && chest->slots[0].count==19 && chest->slots[0].damage==6);
+        {
+            SavedEntity *entity; int carts=0,arrows=0;
+            assert(world_peek_metadata(&world,70,100,19)==14 && world_peek_block(&world,70,100,19)==69);
+            assert(world_peek_block(&world,70,99,19)==1 && !strcmp(sign_text_get(&world,70,99,20)[0],"Done / ESC"));
+            assert(world_peek_metadata(&world,71,100,19)==1 && block_entity_get(&world,71,100,19,0)->record==2257);
+            for(entity=world_peek_chunk(&world,4,1)->saved_entities;entity;entity=entity->next) {
+                if(entity->transport.kind==2 && entity->transport.type==1 && entity->transport.cargo[26].id==278 && entity->transport.cargo[26].damage==37) ++carts;
+                if(entity->transport.kind==1 && entity->transport.in_ground && entity->transport.player && entity->transport.in_tile==66) ++arrows;
+            }
+            assert(carts==1 && arrows==1);
+        }
         count=world_items_visible(&world,items,128);
         for(i=0;i<(size_t)count;++i) if(items[i].id==278 && items[i].damage==123) break;
         assert(i<(size_t)count && items[i].count==1);

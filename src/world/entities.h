@@ -3,6 +3,7 @@
 #include "world.h"
 #include "../nbt/nbt.h"
 #include "mobs.h"
+#include "transport.h"
 struct Player;
 typedef struct SavedEntity {
     struct SavedEntity *next;
@@ -12,6 +13,7 @@ typedef struct SavedEntity {
     size_t raw_size;
     uint64_t last_tick;
     MobState mob;
+    TransportState transport;
 } SavedEntity;
 void world_entities_free(Chunk *chunk);
 int world_entities_read(Chunk *chunk,const uint8_t *input,size_t size);

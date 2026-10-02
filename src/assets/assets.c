@@ -27,7 +27,8 @@ static const char *const files[ASSET_COUNT] = {
     "assets/textures/mob/pig.png","assets/textures/mob/sheep.png","assets/textures/mob/sheep_fur.png",
     "assets/textures/mob/cow.png","assets/textures/mob/chicken.png","assets/textures/mob/zombie.png",
     "assets/textures/mob/skeleton.png","assets/textures/mob/spider.png","assets/textures/mob/creeper.png",
-    "assets/textures/item/sign.png","assets/gui/unknown_server.png"
+    "assets/textures/item/sign.png","assets/gui/unknown_server.png",
+    "assets/textures/entity/arrows.png","assets/textures/entity/cart.png"
 };
 static char root[512];
 static Texture2D textures[ASSET_COUNT];
@@ -61,6 +62,11 @@ AssetSoundId assets_find_sound(const char *key,unsigned variant)
     return ASSET_SOUND_COUNT;
 }
 unsigned assets_music_count(void) { return sizeof(music_files)/sizeof(music_files[0]); }
+const char *assets_record_path(int item,char *buffer,size_t capacity)
+{
+    const char *path=item==2256 ? "assets/records/13.ogg" : item==2257 ? "assets/records/cat.ogg" : NULL;
+    return path && game_path_join(buffer,capacity,root,path) ? buffer : NULL;
+}
 const char *assets_music_path(unsigned index,char *buffer,size_t capacity)
 { return index<assets_music_count() && game_path_join(buffer,capacity,root,music_files[index]) ? buffer : NULL; }
 

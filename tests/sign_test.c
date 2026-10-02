@@ -1,4 +1,5 @@
 #include "game/sign.h"
+#include "game/modal_input.h"
 #include "world/block_entity.h"
 #include "nbt/nbt.h"
 #include <assert.h>
@@ -176,6 +177,11 @@ static void network_tests(void)
 }
 int main(void)
 {
+    int release=1;
+    assert(!gameplay_input_ready(&release,1,0) && release);
+    assert(!gameplay_input_ready(&release,0,1) && release);
+    assert(gameplay_input_ready(&release,0,0) && !release);
+    assert(gameplay_input_ready(&release,1,0));
     text_tests(); placement_tests(); native_tests(); beta_nbt_tests(); network_tests();
     puts("Beta sign placement, support, UTF-8/Java NBT text and native persistence passed"); return 0;
 }

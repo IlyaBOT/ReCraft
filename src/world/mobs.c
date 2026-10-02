@@ -182,6 +182,12 @@ static void damage(World *w,Chunk *c,MobState *m,int amount)
     world_sound(w,m->health<=0 ? d->death : d->hurt,m->x,m->y,m->z,d->type==92 ? .4f : 1,1);
     dirty(c);
 }
+int world_mob_hit(World *w,SavedEntity *e,int amount)
+{
+    Chunk *c=owner(w,e->mob.x,e->mob.z); int before=e->mob.health;
+    if(!c || !definition(e->mob.type)) return 0;
+    damage(w,c,&e->mob,amount); return e->mob.health<before;
+}
 void world_mobs_tick(World *w,Player *p)
 {
     size_t i; unsigned processed=0;

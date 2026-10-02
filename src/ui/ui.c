@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "../game/crafting.h"
+#include "../game/settings.h"
 #include "../config.h"
 #include "raylib.h"
 #include "pixel_font.h"
@@ -297,6 +298,7 @@ void ui_init(Ui *ui)
     if (!ui) return;
     memset(ui, 0, sizeof(*ui));
     ui->options.difficulty=2;
+    copy_text(ui->options.player_name,sizeof(ui->options.player_name),"Player");
     ui->options.sound_volume=ui->options.music_volume=100;
     ui->screen = UI_SCREEN_MAIN;
     ui->previous_screen = UI_SCREEN_MAIN;
@@ -331,6 +333,7 @@ void ui_set_screen(Ui *ui, UiScreen screen)
     if (!ui) return;
     ui->previous_screen = ui->screen;
     ui->screen = screen;
+    if(screen==UI_SCREEN_OPTIONS) copy_text(ui->player_name_input,sizeof(ui->player_name_input),ui->options.player_name);
     ui->focus = 0;
     ui->select_all = 0;
 }
@@ -748,7 +751,11 @@ static UiAction options_menu(Ui *ui)
     label("1-9 / mouse wheel: hotbar    F3: statistics", 129, 258, 11, col(219, 220, 211, 255));
     label("F: free flight    Shift / Space: down / up", 129, 281, 11, col(219, 220, 211, 255));
     label("Escape: pause / back    Tab: next text field", 129, 304, 11, col(219, 220, 211, 255));
-    if (button(ui, 220, 389, 200, 30, "Done", 1)) ui_set_screen(ui, ui->options_parent);
+    label("Player Name (1-16 letters, digits or _)",175,329,11,col(219,220,211,255));
+    text_field(ui,1,175,348,290,28,ui->player_name_input,sizeof(ui->player_name_input),"Player");
+    edit_text(ui,1,ui->player_name_input,sizeof(ui->player_name_input));
+    if(settings_player_name_valid(ui->player_name_input)) copy_text(ui->options.player_name,sizeof(ui->options.player_name),ui->player_name_input);
+    if (button(ui, 220, 389, 200, 30, "Done", settings_player_name_valid(ui->player_name_input))) ui_set_screen(ui, ui->options_parent);
     return action;
 }
 

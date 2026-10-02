@@ -15,7 +15,8 @@ void world_entities_free(Chunk *chunk)
 { SavedEntity *e,*next; for(e=chunk->saved_entities;e;e=next) { next=e->next; free_one(e); } chunk->saved_entities=NULL; }
 typedef struct Read {
     SavedEntity **tail,*current; NbtWriter writer; uint8_t *scratch; size_t size;
-    int list,pos,motion,index,item,records,rotation,health_seen,pos_seen;
+    int list,pos,motion,index,item,records,rotation,health_seen,pos_seen,items,slot;
+    InventorySlot cargo_item;
 } Read;
 static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
 {
@@ -27,6 +28,7 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
         r->current=(SavedEntity *)calloc(1,sizeof(*r->current)); if(!r->current) return 0;
         r->current->item.id=-1; r->current->item.health=5;
         r->health_seen=r->pos_seen=0; r->current->mob.health=10;
+        r->current->transport.x_tile=r->current->transport.y_tile=r->current->transport.z_tile=-1;
         nbt_writer_init(&r->writer,r->scratch,r->size,NULL);
     }
     if(!r->current) return 1;
@@ -34,6 +36,8 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
     if(event==NBT_VALUE && depth==4) {
         if(t->type==NBT_STRING && named(t,"id") && t->value.bytes.size==4 && !memcmp(t->value.bytes.data,"Item",4)) r->current->item_entity=1;
         if(t->type==NBT_STRING && named(t,"id")) {
+            if(t->value.bytes.size==5 && !memcmp(t->value.bytes.data,"Arrow",5)) r->current->transport.kind=1;
+            if(t->value.bytes.size==8 && !memcmp(t->value.bytes.data,"Minecart",8)) r->current->transport.kind=2;
             r->current->mob.type=mob_type(t->value.bytes.data,t->value.bytes.size);
             if(!r->health_seen) r->current->mob.health=mob_default_health(r->current->mob.type);
         }
@@ -43,6 +47,25 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
         if(t->type==NBT_BYTE && named(t,"OnGround")) r->current->mob.on_ground=t->value.byte!=0;
         if(t->type==NBT_BYTE && named(t,"Color")) r->current->mob.color=t->value.byte&15;
         if(t->type==NBT_BYTE && named(t,"Sheared")) r->current->mob.sheared=t->value.byte!=0;
+        {
+            TransportState *s=&r->current->transport;
+            if(t->type==NBT_SHORT) {
+                if(named(t,"xTile")) s->x_tile=t->value.short_value;
+                if(named(t,"yTile")) s->y_tile=t->value.short_value;
+                if(named(t,"zTile")) s->z_tile=t->value.short_value;
+                if(named(t,"Fuel")) s->fuel=t->value.short_value;
+            }
+            if(t->type==NBT_BYTE) {
+                if(named(t,"inTile")) s->in_tile=(uint8_t)t->value.byte;
+                if(named(t,"inData")) s->in_data=(uint8_t)t->value.byte;
+                if(named(t,"shake")) s->shake=(uint8_t)t->value.byte;
+                if(named(t,"inGround")) s->in_ground=t->value.byte!=0;
+                if(named(t,"player")) s->player=t->value.byte!=0;
+            }
+            if(t->type==NBT_INT && named(t,"Type")) s->type=t->value.int_value;
+            if(t->type==NBT_DOUBLE && named(t,"PushX")) s->push_x=(float)t->value.double_value;
+            if(t->type==NBT_DOUBLE && named(t,"PushZ")) s->push_z=(float)t->value.double_value;
+        }
     }
     if(event==NBT_BEGIN && depth==4) {
         if(t->type==NBT_LIST && t->list_type==NBT_DOUBLE && t->count==3) {
@@ -50,6 +73,7 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
         }
         if(t->type==NBT_LIST && named(t,"Rotation") && t->list_type==NBT_FLOAT && t->count==2) { r->rotation=1; r->index=0; }
         if(t->type==NBT_COMPOUND && named(t,"Item")) r->item=1;
+        if(t->type==NBT_LIST && named(t,"Items")) r->items=1;
     }
     if(event==NBT_VALUE && depth==5) {
         ItemDrop *d=&r->current->item;
@@ -67,8 +91,20 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
             if(t->type==NBT_BYTE && named(t,"Count")) d->count=(uint8_t)t->value.byte;
         }
     }
+    if(r->items && depth==5 && event==NBT_BEGIN && t->type==NBT_COMPOUND) { r->slot=-1; inventory_clear_slot(&r->cargo_item); }
+    if(r->items && depth==6 && event==NBT_VALUE) {
+        if(t->type==NBT_BYTE && named(t,"Slot")) r->slot=(uint8_t)t->value.byte;
+        {
+            InventorySlot *s=&r->cargo_item;
+            if(t->type==NBT_SHORT && named(t,"id")) s->id=(uint16_t)t->value.short_value;
+            if(t->type==NBT_SHORT && named(t,"Damage")) s->damage=(uint16_t)t->value.short_value;
+            if(t->type==NBT_BYTE && named(t,"Count")) s->count=(uint8_t)t->value.byte;
+        }
+    }
+    if(r->items && depth==5 && event==NBT_FINISH && t->type==NBT_COMPOUND && r->slot>=0 && r->slot<27)
+        r->current->transport.cargo[r->slot]=r->cargo_item;
     if(event==NBT_FINISH && depth==4) {
-        if(t->type==NBT_LIST) { if(r->pos && r->index==3) r->pos_seen=1; r->pos=r->motion=r->rotation=0; }
+        if(t->type==NBT_LIST) { if(r->pos && r->index==3) r->pos_seen=1; r->pos=r->motion=r->rotation=r->items=0; }
         if(t->type==NBT_COMPOUND) r->item=0;
     }
     if(event==NBT_FINISH && depth==3) {
@@ -82,8 +118,16 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
         e->item.active=e->item_entity && e->item.id>0 && e->item.count>0;
         e->mob.x=e->item.x; e->mob.y=e->item.y; e->mob.z=e->item.z;
         e->mob.vx=e->item.vx; e->mob.vy=e->item.vy; e->mob.vz=e->item.vz;
+        if(e->transport.kind==1) e->mob.yaw=180-e->mob.yaw;
+        if(e->transport.kind) {
+            if(fabsf(e->mob.vx)>200) e->mob.vx=0;
+            if(fabsf(e->mob.vy)>200) e->mob.vy=0;
+            if(fabsf(e->mob.vz)>200) e->mob.vz=0;
+            if(e->transport.kind==2 && (e->transport.type<0 || e->transport.type>2)) e->transport.kind=0;
+        }
         if(!r->pos_seen) e->mob.type=0; /* Preserve incomplete reference records verbatim. */
-        if(e->mob.type && (!isfinite(e->mob.x) || !isfinite(e->mob.y) || !isfinite(e->mob.z) ||
+        if(!r->pos_seen) e->transport.kind=0;
+        if((e->mob.type || e->transport.kind) && (!isfinite(e->mob.x) || !isfinite(e->mob.y) || !isfinite(e->mob.z) ||
            !isfinite(e->mob.vx) || !isfinite(e->mob.vy) || !isfinite(e->mob.vz) ||
            !isfinite(e->mob.yaw) || !isfinite(e->mob.pitch) || fabsf(e->mob.x)>32000000 ||
            fabsf(e->mob.z)>32000000 || fabsf(e->mob.y)>32000000)) return 0;
@@ -156,10 +200,11 @@ int world_entities_write_list(const Chunk *chunk,NbtWriter *w)
 {
     NbtTag t={0}; const SavedEntity *e;
     t.type=NBT_LIST; t.name=nbt_span("Entities"); t.list_type=NBT_COMPOUND;
-    for(e=chunk->saved_entities;e;e=e->next) if(!e->item_entity || e->item.active) ++t.count;
+    for(e=chunk->saved_entities;e;e=e->next) if((!e->item_entity || e->item.active) && !e->transport.dead) ++t.count;
     if(nbt_writer_tag(w,&t)!=NBT_OK) return 0;
     for(e=chunk->saved_entities;e;e=e->next) {
-        if(e->item_entity && !e->item.active) continue;
+        if((e->item_entity && !e->item.active) || e->transport.dead) continue;
+        if(e->transport.kind) { if(!world_transport_write(w,e)) return 0; continue; }
         if(e->mob.type) { if(!world_mob_write(w,e)) return 0; continue; }
         if(e->raw) {
             WriteItem rewrite; memset(&rewrite,0,sizeof(rewrite)); rewrite.writer=w; rewrite.d=&e->item;
@@ -191,7 +236,7 @@ static int rewrite_tag(void *context,NbtEvent event,const NbtTag *t,unsigned dep
 int world_entities_rewrite(const Chunk *chunk,const uint8_t *in,size_t size,uint8_t **out,size_t *out_size)
 {
     Rewrite r; const SavedEntity *e; size_t capacity=size+64;
-    for(e=chunk->saved_entities;e;e=e->next) capacity+=e->raw_size+512;
+    for(e=chunk->saved_entities;e;e=e->next) capacity+=e->raw_size+2048;
     if(capacity>16u*1024u*1024u) return 0;
     *out=(uint8_t *)malloc(capacity); if(!*out) return 0;
     memset(&r,0,sizeof(r)); r.chunk=chunk; nbt_writer_init(&r.w,*out,capacity,NULL);

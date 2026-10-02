@@ -24,6 +24,9 @@ static const BlockDef block_defs[BLOCK_COUNT] = {
     [BETA_BLOCK_FLOWING_WATER] = {"Water", 0, 0, BLOCK_LAYER_TRANSPARENT,11,11,11,0},
     [BLOCK_GLASS] = {"Glass",       1, 0, BLOCK_LAYER_CUTOUT,     12, 12, 12,  0},
     [BLOCK_TORCH] = {"Torch",       0, 0, BLOCK_LAYER_CUTOUT,     13, 13, 13, 14},
+    [BETA_BLOCK_RAIL] = {"Rail",0,0,BLOCK_LAYER_CUTOUT,1,1,1,0},
+    [BETA_BLOCK_POWERED_RAIL] = {"Powered Rail",0,0,BLOCK_LAYER_CUTOUT,1,1,1,0},
+    [BETA_BLOCK_DETECTOR_RAIL] = {"Detector Rail",0,0,BLOCK_LAYER_CUTOUT,1,1,1,0},
     [BETA_BLOCK_PLANKS] = {"Planks", 1, 1, BLOCK_LAYER_OPAQUE, 17, 17, 17, 0},
     [BETA_BLOCK_WOOL] = {"Wool", 1, 1, BLOCK_LAYER_OPAQUE, 18, 18, 18, 0},
     [BETA_BLOCK_BEDROCK] = {"Bedrock", 1, 1, BLOCK_LAYER_OPAQUE, 34,34,34,0},
@@ -834,28 +837,28 @@ uint8_t world_peek_block(const World *world, int wx, int y, int wz)
     return chunk ? chunk_get_block(chunk,x,y,z) : BLOCK_AIR;
 }
 
-int world_set_block(World *world, int wx, int y, int wz, uint8_t id)
+int world_set_state(World *world,int wx,int y,int wz,BetaBlockState state)
 {
     int32_t cx,cz;
     int x,z;
     Chunk *chunk;
+    uint8_t id=state.id;
     if ((unsigned)y>=WORLD_HEIGHT || id>=BLOCK_COUNT) return 0;
     x=local_from_world(wx,&cx);
     z=local_from_world(wz,&cz);
     chunk=world_get_chunk(world,cx,cz);
     if (!chunk) return 0;
     if (world->beta_format && !chunk->beta_raw) return 0;
-    if (chunk_get_block(chunk,x,y,z)==id) return 1;
+    if (chunk_get_block(chunk,x,y,z)==id) return world_set_metadata(world,wx,y,wz,state.metadata);
     {
         uint8_t old=chunk_get_block(chunk,x,y,z);
-        if ((old==54 || old==61 || old==62 || old==63 || old==68) &&
+        if ((old==54 || old==61 || old==62 || old==63 || old==68 || old==84) &&
             !((old==61 || old==62) && (id==61 || id==62)))
             block_entity_remove(world,wx,y,wz,!world->network_mode);
     }
     chunk_set_block(chunk,x,y,z,id);
-    /* A newly placed block starts with metadata zero. Network block-change
-     * packets set their transmitted nibble immediately afterward. */
-    chunk_set_metadata(chunk,x,y,z,0);
+    /* Neighbour callbacks must see the final attachment metadata. */
+    chunk_set_metadata(chunk,x,y,z,state.metadata);
     relight_sky_column(chunk,x,z);
     chunk->dirty_flags|=CHUNK_DIRTY_LIGHT;
     if (!world->physics_processing) flush_block_light(world);
@@ -863,6 +866,12 @@ int world_set_block(World *world, int wx, int y, int wz, uint8_t id)
     mark_mesh_neighbors(world,cx,cz);
     world_physics_notify(world,wx,y,wz);
     return 1;
+}
+
+int world_set_block(World *world,int wx,int y,int wz,uint8_t id)
+{
+    uint8_t metadata=world_peek_block(world,wx,y,wz)==id ? world_peek_metadata(world,wx,y,wz) : 0;
+    return world_set_state(world,wx,y,wz,(BetaBlockState){id,metadata});
 }
 
 void world_drop_stack(World *world,int x,int y,int z,InventorySlot item)

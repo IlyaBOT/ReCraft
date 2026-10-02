@@ -3,6 +3,7 @@
 #include "../game/bed.h"
 #include "../game/sign.h"
 #include "redstone.h"
+#include "rail.h"
 #include "ticks.h"
 #include "environment.h"
 #include "../game/mining.h"
@@ -106,7 +107,7 @@ static void notify_cell(World *w,int x,int y,int z)
     if (id==8 || id==10) world_schedule_tick(w,x,y,z,(uint8_t)id,id==8 ? 5 : 30);
     else if (id==12 || id==13) world_schedule_tick(w,x,y,z,(uint8_t)id,3);
     else if (id==75 || id==76) world_schedule_tick(w,x,y,z,(uint8_t)id,2);
-    else if (id==50 || id==81 || id==55 || id==26 || sign_is_block(id)) world_schedule_tick(w,x,y,z,(uint8_t)id,id==55 ? 0 : 1);
+    else if (id==50 || id==81 || id==55 || id==26 || sign_is_block(id) || rail_is(id)) world_schedule_tick(w,x,y,z,(uint8_t)id,id==55 || rail_is(id) ? 0 : 1);
     else if(id==93 || id==94) {
         unsigned meta=world_peek_metadata(w,x,y,z);
         int input=world_repeater_input(w,x,y,z,meta);
@@ -122,10 +123,15 @@ static void notify_cell(World *w,int x,int y,int z)
 }
 void world_physics_notify(World *w,int x,int y,int z)
 {
-    int i;
+    int i,height;
     if (!w || w->network_mode) return;
     notify_cell(w,x,y,z);
     for (i=0;i<6;++i) notify_cell(w,x+dx[i],y+dy[i],z+dz[i]);
+    /* Rails connect diagonally across a one-block elevation change. */
+    for(i=0;i<6;++i) if(!dy[i]) for(height=-1;height<=1;height+=2) {
+        unsigned id=world_peek_block(w,x+dx[i],y+height,z+dz[i]);
+        if(rail_is(id)) world_schedule_tick(w,x+dx[i],y+height,z+dz[i],(uint8_t)id,0);
+    }
 }
 void world_physics_loaded(World *w,Chunk *c)
 {
@@ -159,7 +165,7 @@ void world_redstone_notify(World *w,int x,int y,int z)
     for (i=0;i<6;++i) for (j=0;j<6;++j) {
         int nx=x+dx[i]+dx[j],ny=y+dy[i]+dy[j],nz=z+dz[i]+dz[j];
         unsigned id=world_peek_block(w,nx,ny,nz);
-        if (id==75 || id==76 || id==55 || id==93 || id==94) notify_cell(w,nx,ny,nz);
+        if (id==75 || id==76 || id==55 || id==93 || id==94 || rail_is(id)) notify_cell(w,nx,ny,nz);
     }
 }
 static int burned_out(const World *w,int x,int y,int z)
@@ -182,6 +188,7 @@ static void step(World *w,WorldPhysicsCell c)
     unsigned id=world_peek_block(w,x,y,z),meta=world_peek_metadata(w,x,y,z);
     if (id!=c.id || !loaded(w,x,y,z)) return;
     if(sign_is_block(id)) { sign_neighbor_tick(w,x,y,z); return; }
+    if(rail_is(id)) { rail_update(w,x,y,z); return; }
     if(id==26) { bed_neighbor_tick(w,x,y,z); return; }
     if(id==77) {
         if(meta&8) {

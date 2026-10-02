@@ -84,6 +84,7 @@ typedef struct UiPlayerEntry { char name[64]; int ping_ms; } UiPlayerEntry;
 /* A field changing in this struct is a request to the platform/game layer.
    Unsupported visual features remain visible but disabled. */
 typedef struct UiOptions {
+    char player_name[17];    /* Offline Beta username; shared with Protocol 14. */
     int difficulty;           /* 0 peaceful, 1 easy, 2 normal, 3 hard. */
     int sound_volume,music_volume; /* 0..100, independent. */
     int fancy_graphics;
@@ -132,6 +133,7 @@ typedef struct Ui {
     UiScreen screen;
     UiScreen previous_screen;
     UiOptions options;
+    char player_name_input[17];
     int selected_world;
     int selected_server;
     int world_scroll;

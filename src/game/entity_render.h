@@ -10,6 +10,8 @@ typedef struct RenderEntity {
     float yaw,pitch,draw_x,draw_y,draw_z,walk;
     int positioned;
     int color,sheared;
+    int local_interpolation;
+    float previous_x,previous_y,previous_z,phase;
 } RenderEntity;
 /* Pick the nearest supported living entity; block_distance occludes targets.
  * Returns an entity id, or -1. Camera yaw/pitch follow local Player radians. */
@@ -24,6 +26,9 @@ int entity_render_draw(RenderEntity *entities, int count,
 int item_drop_draw(const ItemDrop *drops, int count, const RendererCamera *camera,
                    int width, int height, int render_distance_chunks);
 void first_person_draw(const InventorySlot *item,int width,int height,float swing,int hurt);
+typedef struct FirstPersonState { InventorySlot item; int slot; float equip,previous_equip; } FirstPersonState;
+void first_person_tick(FirstPersonState *state,const InventorySlot *item,int slot);
+void first_person_draw_pose(const InventorySlot *item,int width,int height,float swing,int hurt,float equip,float bob);
 /* Beta inventory biped; screen coordinates and pixels per world unit. Uses
  * the existing skin/model and restores GL state, without a render target. */
 void player_inventory_draw(int x,int feet_y,int scale,float mouse_x,float mouse_y,

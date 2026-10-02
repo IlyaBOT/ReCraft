@@ -188,6 +188,14 @@ endif()
 add_test(NAME music_stream_test COMMAND music_stream_test
     "${CMAKE_SOURCE_DIR}/assets/sounds/random/click.ogg" "${CMAKE_SOURCE_DIR}/assets/music/calm1.ogg")
 set_tests_properties(music_stream_test PROPERTIES ENVIRONMENT "ALSOFT_DRIVERS=null" SKIP_RETURN_CODE 77)
+add_executable(audio_record_test tests/audio_record_test.c src/audio/audio.c src/audio/music_stream.c
+    src/audio/sound_policy.c src/assets/assets.c src/assets/server_icon_png.c src/util/game_paths.c
+    src/world/world.c src/world/storage.c src/world/beta_blocks.c)
+target_include_directories(audio_record_test PRIVATE src "${RAYLIB_ROOT}/src" "${OPENAL_INCLUDE_DIR}")
+target_compile_options(audio_record_test PRIVATE -include "${CMAKE_SOURCE_DIR}/src/win_gl_compat.h")
+target_link_libraries(audio_record_test raylib_legacy glfw "${OPENAL_LIBRARY}" ${PLATFORM_LIBRARIES} ${ZLIB_LIBRARIES} Threads::Threads m)
+add_test(NAME audio_record_test COMMAND audio_record_test "${CMAKE_SOURCE_DIR}")
+set_tests_properties(audio_record_test PROPERTIES ENVIRONMENT "ALSOFT_DRIVERS=null" SKIP_RETURN_CODE 77)
 add_executable(sound_policy_test tests/sound_policy_test.c src/audio/sound_policy.c)
 add_executable(climate_test tests/climate_test.c src/world/climate.c)
 target_include_directories(climate_test PRIVATE src)
@@ -195,12 +203,19 @@ target_link_libraries(climate_test m)
 add_test(NAME climate_test COMMAND climate_test)
 target_include_directories(sound_policy_test PRIVATE src)
 add_test(NAME sound_policy_test COMMAND sound_policy_test)
+add_executable(settings_test tests/settings_test.c src/game/settings.c)
+target_include_directories(settings_test PRIVATE src)
+add_test(NAME settings_test COMMAND settings_test)
 add_executable(gameplay_test tests/gameplay_test.c src/world/world.c src/world/storage.c src/world/beta_blocks.c src/game/player.c)
 target_include_directories(gameplay_test PRIVATE src)
 target_link_libraries(gameplay_test m)
 add_test(NAME gameplay_test COMMAND gameplay_test)
 set_tests_properties(gameplay_test PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 add_executable(sign_test tests/sign_test.c src/world/world.c src/world/storage.c src/world/beta_blocks.c)
+add_executable(transport_test tests/transport_test.c src/world/world.c src/world/storage.c src/world/beta_blocks.c)
+target_include_directories(transport_test PRIVATE src)
+target_link_libraries(transport_test m)
+add_test(NAME transport_test COMMAND transport_test)
 target_include_directories(sign_test PRIVATE src)
 target_link_libraries(sign_test m)
 add_test(NAME sign_test COMMAND sign_test)
@@ -308,10 +323,10 @@ endif()
 
 # Headless world tests use the same container persistence/smelting modules as
 # the client. None of these sources depend on raylib or a graphics context.
-foreach(_world_test world_test renderer_test network_test beta_region_test gameplay_test sign_test)
+foreach(_world_test world_test renderer_test network_test beta_region_test gameplay_test sign_test transport_test audio_record_test)
     if(TARGET ${_world_test})
         target_sources(${_world_test} PRIVATE src/world/block_entity.c src/world/environment.c src/world/climate.c src/world/redstone.c src/world/beta_session.c src/game/bed.c src/game/sign.c src/game/player.c
-            src/world/entities.c src/world/mobs.c
+            src/world/entities.c src/world/mobs.c src/world/transport.c src/world/rail.c
             src/world/physics.c src/world/ticks.c src/world/fluid.c src/game/mining.c
             src/game/crafting.c src/game/inventory.c src/nbt/nbt.c)
     endif()

@@ -50,8 +50,8 @@ required. Item sprite coordinates are explicit Beta registry values in
 `src/game/creative.c` (including dye damage variants and music discs), not
 `item_id - 256`. Block previews retain metadata and use terrain.png.
 
-The shared [runtime allowlist](../assets/runtime_assets.txt) contains 28 PNGs
-and 105 OGGs (93 effects/variants and 12 music tracks), 133 files in total. All OGG copies were
+The shared [runtime allowlist](../assets/runtime_assets.txt) contains 30 PNGs
+and 108 OGGs (94 effects/variants, 12 music tracks and two records), 138 files in total. All OGG copies were
 compared byte-for-byte to the read-only installed instance. Textures already
 in the normalized pack remain unchanged. Some sound-pool entries prepare
 future actions; the [mechanics audit](BETA_MECHANICS_AUDIT.md) records which
@@ -79,3 +79,10 @@ invalid favicons use the original default icon.
 CMake, legacy GNU make and CI packaging read the same allowlist and never copy
 the full reference tree. Runtime paths never depend on `third_party/` or on
 the downloaded reference JAR.
+
+Transport assets: `textures/entity/arrows.png` (32x32) and `cart.png` (64x32)
+are unchanged `item/arrows.png` and `item/cart.png` from that vanilla Beta JAR.
+`records/13.ogg`, `records/cat.ogg` and `sounds/random/drr.ogg` are unchanged
+copies of the read-only installed Beta resources. No additional discs are used.
+Entity textures use nearest filtering; records use the existing bounded
+Vorbis/OpenAL streaming system.

@@ -18,4 +18,5 @@ int world_mobs_interact(World *world,struct Player *player,InventorySlot *held,f
 int world_mobs_visible(World *world,struct RenderEntity *out,int capacity);
 int world_mob_write(NbtWriter *writer,const struct SavedEntity *entity);
 int beta_attack_damage(int item);
+int world_mob_hit(World *world,struct SavedEntity *entity,int amount);
 #endif

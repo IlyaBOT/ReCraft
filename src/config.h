@@ -7,7 +7,6 @@
 #ifndef RECRAFT_TITLE
 #define RECRAFT_TITLE "ReCraft"
 #endif
-#define RECRAFT_OFFLINE_NAME "Player"
 #define RECRAFT_SAVE_DIRECTORY "saves"
 #define RECRAFT_SERVER_FILE "servers.txt"
 #define RECRAFT_OPTIONS_FILE "options.txt"

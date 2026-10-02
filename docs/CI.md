@@ -46,13 +46,15 @@ upstream translation units. GLFW/WGL tries accelerated pixel formats first,
 then permits GDI OpenGL 1.1 when none exists (including Windows CI machines).
 raylib's window creation is checked before centering, and its fixed-function
 path no longer asks GL 1.1 for an unsupported GLSL version enum. Cocoa startup
-backports [GLFW's launch ordering fix](https://github.com/glfw/glfw/commit/eda12dd94938504ccaba0734b41485de91aac0c4):
-defer activation until after startup and wake the temporary event loop before
-stopping it. It also uses [current GLFW's launch-state guard](https://github.com/glfw/glfw/blob/master/src/cocoa_init.m):
-skip `NSApplication run` if `NSRunningApplication.isFinishedLaunching` is already
-true. This API exists in the 10.6 SDK. The preceding patch still timed out inside
-`NSApplication run` on Vesper (run 36912363163); this additional guard needs a
-new native run, since Vesper was offline during local verification.
+uses synchronous `NSApplication.finishLaunching`, then sets activation policy;
+both are available in the 10.6 SDK. It does not enter the old unbounded nested
+`NSApplication run` loop. Dependency sources remain pinned and unchanged.
+The music EOF test stops/drains/refills the OpenAL queue deterministically;
+Apple OpenAL ignores the OpenAL Soft null-driver environment and CI output
+devices need not advance at wall-clock speed. No tests are disabled by this fix.
+Run 37073222917 passed Windows/Linux and built macOS, but Vesper lost communication
+with GitHub during CTest. macOS test completion remains unverified; this failure
+has no published job log and requires restoring the runner's connection.
 The macOS renderer test also checks the actual CGL vertex-processing result.
 CTest on Vesper has a 60-second per-test timeout and captures a bounded stack
 sample after a startup failure. The dependency

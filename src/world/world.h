@@ -203,6 +203,8 @@ void world_set_render_data_destroy(World *world, void (*destroy)(void *));
 uint8_t world_get_block(World *world, int wx, int y, int wz);
 uint8_t world_peek_block(const World *world, int wx, int y, int wz);
 int world_set_block(World *world, int wx, int y, int wz, uint8_t id);
+/* Publish ID and metadata together before neighbour/support callbacks. */
+int world_set_state(World *world,int wx,int y,int wz,BetaBlockState state);
 uint8_t world_get_metadata(World *world, int wx, int y, int wz);
 int world_set_metadata(World *world, int wx, int y, int wz, uint8_t value);
 /* Bounded local block updates; authoritative multiplayer worlds skip these. */

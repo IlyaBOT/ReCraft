@@ -99,6 +99,36 @@ static void inventory_preview_test(void)
     puts("Inventory biped: textured pixels, cursor pose and GL state preservation passed");
 }
 
+static void first_person_test(void)
+{
+    static GLubyte pixels[320*240*3],swung[320*240*3];
+    static const int ids[]={0,1,278,276,261,260,69};
+    FirstPersonState state={0}; InventorySlot item={1,1,0}; GLfloat texture[16],after[16];
+    GLint binding,mode; GLdouble range[2]; int k,i,colored;
+    assets_init(RECRAFT_TEST_ASSET_ROOT);
+    for(i=0;i<4;++i) first_person_tick(&state,&item,0);
+    assert(state.item.id==1 && state.equip>.9f);
+    item.id=261; first_person_tick(&state,&item,1); assert(state.item.id==1 && state.equip<.7f);
+    first_person_tick(&state,&item,1); first_person_tick(&state,&item,1); assert(state.item.id==261 && state.equip<.1f);
+    glDisable(GL_SCISSOR_TEST); glDepthMask(GL_TRUE); glClearDepth(1);
+    glMatrixMode(GL_TEXTURE); glLoadIdentity(); glTranslatef(.125f,.25f,0); glGetFloatv(GL_TEXTURE_MATRIX,texture);
+    glBindTexture(GL_TEXTURE_2D,0); glDepthRange(.2,.8);
+    for(k=0;k<7;++k) {
+        item=(InventorySlot){ids[k],ids[k] ? 1 : 0,0}; glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        first_person_draw_pose(&item,320,240,0,0,1,0);
+        glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,pixels); colored=0;
+        for(i=0;i<(int)sizeof(pixels);i+=3) if(pixels[i] || pixels[i+1] || pixels[i+2]) ++colored;
+        assert(colored>100);
+        glGetFloatv(GL_TEXTURE_MATRIX,after); equal_matrix(texture,after);
+        glGetIntegerv(GL_MATRIX_MODE,&mode); assert(mode==GL_TEXTURE);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D,&binding); assert(binding==0);
+        glGetDoublev(GL_DEPTH_RANGE,range); assert(fabs(range[0]-.2)<1e-6 && fabs(range[1]-.8)<1e-6);
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); first_person_draw_pose(&item,320,240,.4f,0,1,0);
+        glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,swung);
+        assert(memcmp(pixels,swung,sizeof(pixels))!=0 && glGetError()==GL_NO_ERROR);
+    }
+    assets_shutdown(); puts("First person: skin arm, block, extruded sprites, equip/swing and GL state passed");
+}
 static void sign_render_test(void)
 {
     static GLubyte board[320*240*3],text[320*240*3];
@@ -287,6 +317,19 @@ int main(int argc, char **argv)
     /* Bed frame V uses atlas rows 7..16, not the mattress's top strip.
      * Both halves share Beta's top rotation and omit their joining face. */
     memset(chunk->blocks,0,sizeof(chunk->blocks));
+    for(x=1;x<=6;++x) {
+        ChunkMesh off={0},on={0}; unsigned tile=(unsigned)beta_render_tile(96);
+        emit_lever(&basic,&world,&off,chunk,4,100,4,(uint8_t)x);
+        emit_lever(&basic,&world,&on,chunk,4,100,4,(uint8_t)(x|8));
+        assert(off.layers[0].vertex_count==48 && on.layers[0].vertex_count==48);
+        assert(memcmp(off.layers[0].vertices+24,on.layers[0].vertices+24,24*sizeof(VoxelVertex))!=0);
+        for(i=24;i<48;++i) {
+            const VoxelVertex *v=&off.layers[0].vertices[i];
+            assert(v->u>=partial_texcoord(tile,7.0f/16,0,0) && v->u<=partial_texcoord(tile,8.99f/16,0,0));
+            assert(v->v>=partial_texcoord(tile,6.0f/16,0,1) && v->v<=partial_texcoord(tile,15.99f/16,0,1));
+        }
+        free(off.layers[0].vertices); free(on.layers[0].vertices);
+    }
     for(x=0;x<4;++x) for(y=0;y<=8;y+=8) {
         ChunkMesh bed_mesh={0}; unsigned top_tile=beta_render_tile(y ? 135 : 134);
         int top_vertices=0,bottom_vertices=0,side_vertices=0;
@@ -696,6 +739,7 @@ int main(int argc, char **argv)
     }
     pixel_text_test();
     inventory_preview_test();
+    first_person_test();
     sign_render_test();
     server_icon_test();
 #ifdef _WIN32

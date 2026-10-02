@@ -8,7 +8,7 @@ static int connected(const World *w,int x,int y,int z,int direction)
     /* ModelBed.footInvisibleFaceRemap: wire's neighbour direction is the
      * opposite of the repeater metadata direction, including idle repeaters. */
     if(id==93 || id==94) return direction>=0 && (int)(world_peek_metadata(w,x,y,z)&3)==((direction+2)&3);
-    return id==55 || id==69 || id==77 || id==75 || id==76;
+    return id==55 || id==69 || id==77 || id==75 || id==76 || id==28;
 }
 static int wire_connect(const World *w,int x,int y,int z,int n)
 {
@@ -24,6 +24,7 @@ static int emit(const World *w,int x,int y,int z,int tx,int ty,int tz,int wire,i
     if(dir==1) { sx=x-1; sy=y; } else if(dir==2) { sx=x+1; sy=y; }
     else if(dir==3) { sz=z-1; sy=y; } else if(dir==4) { sz=z+1; sy=y; }
     if(id==69 || id==77) return (meta&8) && (!strong || (sx==tx && sy==ty && sz==tz)) ? 15 : 0;
+    if(id==28) return (meta&8) && (!strong || ty==y-1) ? 15 : 0;
     if(id==76) return strong ? (ty==y+1 ? 15 : 0) : sx==tx && sy==ty && sz==tz ? 0 : 15;
     if(id==94) return tx==x-bx[meta&3] && tz==z-bz[meta&3] && ty==y ? 15 : 0;
     if(id==55 && wire && meta) {

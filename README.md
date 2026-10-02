@@ -16,7 +16,10 @@ The interface uses selected user-provided CoterieCraft Beta textures and an orig
 The current [mechanics audit](docs/BETA_MECHANICS_AUDIT.md) distinguishes working,
 partial and missing features. Day/night, weather, beds and saved mobs have a
 local implementation; full Beta terrain generation, mob spawning/pathfinding,
-pistons, armor, arrows and explosions remain unfinished.
+pistons, armor and explosions remain unfinished. Instant Beta bows/projectile
+arrows, jukebox discs 13/cat, legacy rails and three minecart variants now have
+local simulation and vanilla NBT persistence. See [transport, fixes and remaining
+differences](docs/BETA_TRANSPORT.md).
 
 ## Manual build and launch
 
@@ -124,6 +127,12 @@ working directory. See [runtime layout](docs/RUNTIME_LAYOUT.md) and
   Up/Down or Enter changes the active line; Done/Esc saves the text. Signs have
   16 standing directions or four wall attachments, and persist in native/Beta
   TileEntity data. Multiplayer waits for the server to confirm placement.
+- Options: edit Player Name (1-16 letters, digits or `_`); it is saved in
+  `config/options.txt` and used by the offline protocol 14 connection.
+- Right click with a bow and arrows in inventory to fire instantly (Beta has
+  no charging). Right click a jukebox with disc 13/cat to insert, again to eject.
+- Place cart items on rails. Right click a normal cart to ride; Shift exits.
+  Chest carts open 27 slots; right click a furnace cart with coal to fuel it.
 
 The local simulation runs at 20 Hz and interpolates the camera between ticks.
 Creative placement leaves stack counts unchanged; survival placement consumes a

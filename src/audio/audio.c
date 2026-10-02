@@ -25,6 +25,20 @@ void audio_init(AudioState *a)
 void audio_named(AudioState *a,const char *key,float volume,float pitch,int spatial,float x,float y,float z)
 {
     Sound sample; AssetSoundId id; unsigned i,voice; int state;
+    if(a && a->ready && !strncmp(key,"records.",8)) {
+        char path[512]; int item=!strcmp(key,"records.13") ? 2256 : !strcmp(key,"records.cat") ? 2257 : 0;
+        /* SoundManager Beta has one global streaming source. Ejection stops
+         * that source, even when another jukebox started it more recently. */
+        music_stream_close(&a->record);
+        if(item && a->sound_volume>0 && assets_record_path(item,path,sizeof(path)) && music_stream_open(&a->record,path)) {
+            unsigned source=a->record.source;
+            music_stream_close(&a->music);
+            music_stream_update(&a->record,.5f*a->sound_volume);
+            alSourcei(source,AL_SOURCE_RELATIVE,AL_FALSE); alSource3f(source,AL_POSITION,x,y,z);
+            alSourcef(source,AL_REFERENCE_DISTANCE,0); alSourcef(source,AL_MAX_DISTANCE,64); alSourcef(source,AL_ROLLOFF_FACTOR,1);
+        }
+        return;
+    }
     if(!a || !a->ready || volume<=0 || a->sound_volume<=0) return;
     id=assets_find_sound(key,music_schedule_random(&a->effects_random,UINT32_C(0x10000)));
     sample=assets_get_sound(id); if(!sample.buffer) return;
@@ -125,11 +139,13 @@ void audio_update(AudioState *a,double elapsed,int active,int music_volume,int s
     if(sound_volume==0) { unsigned i; for(i=0;i<16;++i) alSourceStop(a->voices[i]); }
     if(a->music.source && music_volume==0) music_stream_close(&a->music);
     music_stream_update(&a->music,a->music_volume);
+    if(sound_volume==0) music_stream_close(&a->record);
+    music_stream_update(&a->record,.5f*a->sound_volume);
     if(!active) { a->controller_time=0; return; }
     a->controller_time+=elapsed;
     while(a->controller_time>=.05) {
         a->controller_time-=.05;
-        if(music_schedule_tick(&a->schedule,music_volume>0,a->music.source!=0,0)) {
+        if(music_schedule_tick(&a->schedule,music_volume>0,a->music.source!=0,a->record.source!=0)) {
             unsigned track=music_schedule_random(&a->schedule,assets_music_count());
             if(assets_music_path(track,path,sizeof(path)) && !music_stream_open(&a->music,path))
                 fprintf(stderr,"Missing or invalid optional music: %s\n",path);
@@ -140,6 +156,11 @@ void audio_update(AudioState *a,double elapsed,int active,int music_volume,int s
 void audio_shutdown(AudioState *a)
 {
     if(!a || !a->ready) return;
+    music_stream_close(&a->record);
     music_stream_close(&a->music); alDeleteSources(16,a->voices);
     assets_release_sounds(); CloseAudioDevice(); memset(a,0,sizeof(*a));
+}
+void audio_stop_records(AudioState *a)
+{
+    if(a && a->ready) music_stream_close(&a->record);
 }

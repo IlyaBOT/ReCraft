@@ -21,6 +21,7 @@ typedef enum AssetId {
     ASSET_MOB_PIG,ASSET_MOB_SHEEP,ASSET_MOB_SHEEP_FUR,ASSET_MOB_COW,ASSET_MOB_CHICKEN,
     ASSET_MOB_ZOMBIE,ASSET_MOB_SKELETON,ASSET_MOB_SPIDER,ASSET_MOB_CREEPER,
     ASSET_SIGN,ASSET_SERVER_DEFAULT_ICON,
+    ASSET_ARROW,ASSET_MINECART,
     ASSET_COUNT
 } AssetId;
 typedef enum AssetSoundId {
@@ -43,6 +44,7 @@ Sound assets_get_sound(AssetSoundId id);
 AssetSoundId assets_find_sound(const char *key,unsigned variant);
 unsigned assets_music_count(void);
 const char *assets_music_path(unsigned index,char *buffer,size_t capacity);
+const char *assets_record_path(int item,char *buffer,size_t capacity);
 void assets_release_sounds(void);
 void assets_shutdown(void);
 

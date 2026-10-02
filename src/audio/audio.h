@@ -18,6 +18,7 @@ typedef struct AudioState {
     int ready;
     unsigned voices[16],voice_next;
     MusicStream music;
+    MusicStream record;
     MusicSchedule schedule;
     MusicSchedule effects_random;
     float sound_volume,music_volume;
@@ -39,5 +40,6 @@ void audio_weather_tick(AudioState *audio,struct World *world,float x,float y,fl
 void audio_ambient_tick(AudioState *audio,struct World *world,float x,float y,float z);
 void audio_update(AudioState *audio,double elapsed,int controller_active,int music_volume,int sound_volume);
 void audio_shutdown(AudioState *audio);
+void audio_stop_records(AudioState *audio);
 
 #endif
