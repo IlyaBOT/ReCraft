@@ -59,6 +59,10 @@ GUI использует bitmap font и текстурные панели. Ат�
 - Loopback protocol 14: сундук с 63 серверными слотами, rejected/accepted
   transactions, cursor resync, свойства печи и same-dimension Respawn.
 - GUI: просмотрены снимки верстака, печи, большого сундука, HP и набора блоков.
+- Survival GUI: `Crafting` перенесён в строку текстуры, убрана надпись поверх
+  модели. Используется существующая skin/biped-модель с реакцией на курсор;
+  fixed-function preview восстанавливает состояние GL. `renderer_test` и
+  GL 1.1 test проверяют реальные pixels, смену позы, матрицы, depth и scissor.
 - Новые проверки: ночь/погода/сон через границу чанков, сохранение старого
   native world.dat и новых environmental fields, кнопка/повторитель/dust branch,
   сложность/мобы/преграда на луче/стрижка/молоко/яйца, Java golden climate,

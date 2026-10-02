@@ -115,14 +115,16 @@ These previews seed **in-memory** smoke worlds only; persistent worlds never
 receive sample inventory or fixture blocks:
 
 ```powershell
+build\ReCraft.exe --smoke-test --screen player --no-audio --frames 40 --capture build/player-inventory.png
 build\ReCraft.exe --smoke-test --screen crafting --no-audio --frames 40 --capture build/crafting.png
 build\ReCraft.exe --smoke-test --screen furnace --no-audio --frames 40 --capture build/furnace.png
 build\ReCraft.exe --smoke-test --screen large-chest --no-audio --frames 40 --capture build/chest.png
 build\ReCraft.exe --smoke-test --screen blocks --no-audio --frames 50 --capture build/blocks.png
 ```
 
-Other views are `player` (2 x 2 crafting), `inventory` (Creative catalogue),
+The `player` view shows the Survival panel, textured biped and 2 x 2 crafting.
+Other views are `inventory` (Creative catalogue),
 `chest`, `health`, `day`, `night`, `rain`, `snow`, `bed` and `mobs`.
 The `snow` view forces snow classification in its transient fixture.
-Smoke views ignore live movement/mouse input so captures
-are reproducible. Normal interactive play remains available from the menu.
+Smoke views ignore live gameplay movement; GUI hover and the inventory player
+preview still follow the cursor. Normal interactive play remains available from the menu.

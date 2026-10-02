@@ -1,5 +1,6 @@
 #include "../src/renderer/renderer.c"
 #include "../src/renderer/menu_background.c"
+#include "../src/game/entity_render.h"
 #include <assert.h>
 #ifndef _WIN32
 #define GLFW_INCLUDE_NONE
@@ -10,6 +11,52 @@ static void equal_matrix(const GLfloat *a, const GLfloat *b)
 {
     int i;
     for (i = 0; i < 16; ++i) assert(fabsf(a[i] - b[i]) < 0.00001f);
+}
+
+static void inventory_preview_test(void)
+{
+    static GLubyte neutral[128*192*3],turned[128*192*3];
+    GLfloat model[16],projection[16],texture[16],after[16];
+    GLint viewport[4],scissor[4],binding,mode;
+    GLdouble range[2],clear_depth; int i,colored=0;
+    assets_init(RECRAFT_TEST_ASSET_ROOT);
+    glDisable(GL_SCISSOR_TEST); glClearColor(0,0,0,1); glDepthMask(GL_TRUE);
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+    glViewport(7,9,200,160); glEnable(GL_SCISSOR_TEST); glScissor(1,2,20,21);
+    glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); glDepthRange(.2,.8); glClearDepth(.25);
+    glDisable(GL_LIGHTING); glEnable(GL_BLEND); glBindTexture(GL_TEXTURE_2D,0);
+    glMatrixMode(GL_MODELVIEW); glLoadIdentity(); glTranslatef(3,4,5);
+    glGetFloatv(GL_MODELVIEW_MATRIX,model);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity(); glScalef(2,3,4);
+    glGetFloatv(GL_PROJECTION_MATRIX,projection);
+    glMatrixMode(GL_TEXTURE); glLoadIdentity(); glTranslatef(.125f,.25f,0);
+    glGetFloatv(GL_TEXTURE_MATRIX,texture);
+    player_inventory_draw(160,200,65,160,200-50*(65.0f/30),320,240);
+    assert(glGetError()==GL_NO_ERROR);
+    glGetFloatv(GL_MODELVIEW_MATRIX,after); equal_matrix(model,after);
+    glGetFloatv(GL_PROJECTION_MATRIX,after); equal_matrix(projection,after);
+    glGetFloatv(GL_TEXTURE_MATRIX,after); equal_matrix(texture,after);
+    glGetIntegerv(GL_MATRIX_MODE,&mode); assert(mode==GL_TEXTURE);
+    glGetIntegerv(GL_VIEWPORT,viewport);
+    assert(viewport[0]==7 && viewport[1]==9 && viewport[2]==200 && viewport[3]==160);
+    glGetIntegerv(GL_SCISSOR_BOX,scissor);
+    assert(scissor[0]==1 && scissor[1]==2 && scissor[2]==20 && scissor[3]==21);
+    assert(glIsEnabled(GL_SCISSOR_TEST) && glIsEnabled(GL_BLEND));
+    assert(!glIsEnabled(GL_DEPTH_TEST) && !glIsEnabled(GL_LIGHTING));
+    glGetIntegerv(GL_DEPTH_WRITEMASK,&mode); assert(!mode);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D,&binding); assert(binding==0);
+    glGetDoublev(GL_DEPTH_RANGE,range); glGetDoublev(GL_DEPTH_CLEAR_VALUE,&clear_depth);
+    assert(fabs(range[0]-.2)<1e-6 && fabs(range[1]-.8)<1e-6 && clear_depth==.25);
+    glReadPixels(96,32,128,192,GL_RGB,GL_UNSIGNED_BYTE,neutral);
+    for(i=0;i<(int)sizeof(neutral);i+=3) if(neutral[i] || neutral[i+1] || neutral[i+2]) ++colored;
+    assert(colored>100); /* Real textured geometry, not an empty model window. */
+    glDisable(GL_SCISSOR_TEST); glClear(GL_COLOR_BUFFER_BIT);
+    player_inventory_draw(160,200,65,40,60,320,240);
+    glReadPixels(96,32,128,192,GL_RGB,GL_UNSIGNED_BYTE,turned);
+    assert(memcmp(neutral,turned,sizeof(neutral))!=0); /* Pose follows the cursor. */
+    assert(glGetError()==GL_NO_ERROR);
+    assets_shutdown();
+    puts("Inventory biped: textured pixels, cursor pose and GL state preservation passed");
 }
 
 int main(int argc, char **argv)
@@ -437,6 +484,7 @@ int main(int argc, char **argv)
         assert(bg.texture_width==512 && bg.texture_height==512);
         menu_background_clear(&bg);
     }
+    inventory_preview_test();
 #ifdef _WIN32
     wglMakeCurrent(NULL, NULL); wglDeleteContext(context);
     ReleaseDC(window, dc); DestroyWindow(window);

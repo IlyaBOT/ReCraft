@@ -45,15 +45,19 @@ static void skin_box(float x,float y,float z,int w,int h,int d,int u,int v,int m
     const float p[8][3]={{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
         {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
     static const int face[6][4]={{5,1,2,6},{0,4,7,3},{5,4,0,1},{2,3,7,6},{1,0,3,2},{4,5,6,7}};
+    static const float normal[6][3]={{1,0,0},{-1,0,0},{0,-1,0},{0,1,0},{0,0,-1},{0,0,1}};
     const int uv[6][4]={{u+d+w,v+d,u+d+w+d,v+d+h},{u,v+d,u+d,v+d+h},
         {u+d,v,u+d+w,v+d},{u+d+w,v,u+d+w+w,v+d},{u+d,v+d,u+d+w,v+d+h},
         {u+d+w+d,v+d,u+d+w+d+w,v+d+h}};
     int f,i; glBegin(GL_QUADS);
-    for(f=0;f<6;++f) for(i=0;i<4;++i) {
-        int c=mirror ? 3-i : i;
-        float a=(float)uv[f][(c==0 || c==3) ? 2 : 0]/64;
-        float b=(float)uv[f][c<2 ? 1 : 3]/32;
-        glTexCoord2f(a,b); glVertex3fv(p[face[f][i]]);
+    for(f=0;f<6;++f) {
+        glNormal3fv(normal[f]);
+        for(i=0;i<4;++i) {
+            int c=mirror ? 3-i : i;
+            float a=(float)uv[f][(c==0 || c==3) ? 2 : 0]/64;
+            float b=(float)uv[f][c<2 ? 1 : 3]/32;
+            glTexCoord2f(a,b); glVertex3fv(p[face[f][i]]);
+        }
     }
     glEnd();
 }
@@ -63,17 +67,61 @@ static void limb(float x,float y,float angle,int arm,int mirror)
     skin_box(arm ? (mirror ? -1 : -3) : -2,arm ? -2 : 0,-2,4,12,4,arm ? 40 : 0,16,mirror);
     glPopMatrix();
 }
-static void player_model(const RenderEntity *e)
+static void player_model_pose(const RenderEntity *e,float head_yaw)
 {
     float angle=sinf(e->walk)*32;
     glPushMatrix(); glTranslatef(e->draw_x,e->draw_y+1.40625f,e->draw_z);
     glRotatef(180-e->yaw,0,1,0); glScalef(.05859375f,-.05859375f,.05859375f);
     glColor3ub(255,255,255);
     skin_box(-4,0,-2,8,12,4,16,16,0);
-    glPushMatrix(); glRotatef(e->pitch,1,0,0); skin_box(-4,-8,-4,8,8,8,0,0,0); glPopMatrix();
+    glPushMatrix(); glRotatef(head_yaw,0,1,0); glRotatef(e->pitch,1,0,0);
+    skin_box(-4,-8,-4,8,8,8,0,0,0); glPopMatrix();
     limb(-5,2,e->type==54 || e->type==51 ? -90 : angle,1,0);
     limb(5,2,e->type==54 || e->type==51 ? -90 : -angle,1,1);
     limb(-2,12,-angle,0,0); limb(2,12,angle,0,1); glPopMatrix();
+}
+static void player_model(const RenderEntity *e) { player_model_pose(e,0); }
+
+void player_inventory_draw(int x,int feet_y,int scale,float mouse_x,float mouse_y,int width,int height)
+{
+    RenderEntity preview={0}; GLint mode; Texture2D skin;
+    float units,yaw,pitch;
+    const GLfloat light0[4]={-.2f,.8f,.6f,0},light1[4]={.2f,.8f,-.6f,0};
+    const GLfloat diffuse[4]={.6f,.6f,.6f,1},ambient[4]={.4f,.4f,.4f,1},none[4]={0,0,0,1};
+    int left,bottom,clip_width,clip_height,i;
+    if(scale<=0 || width<=0 || height<=0) return;
+    units=(float)scale/30;
+    yaw=atanf((x-mouse_x)/(40*units))*20;
+    pitch=-atanf((feet_y-50*units-mouse_y)/(40*units))*20;
+    preview.yaw=yaw; preview.pitch=pitch;
+    glGetIntegerv(GL_MATRIX_MODE,&mode); glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
+    glOrtho(0,width,height,0,-500,500);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glMatrixMode(GL_TEXTURE); glPushMatrix(); glLoadIdentity(); glMatrixMode(GL_MODELVIEW);
+    glViewport(0,0,width,height); glDisable(GL_FOG); glDisable(GL_BLEND); glDisable(GL_CULL_FACE);
+    glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthRange(0,1); glDepthMask(GL_TRUE);
+    /* Clear only the model window's depth, so terrain near the camera cannot
+     * occlude the GUI model. Color/borders and other UI regions stay intact. */
+    left=(int)floorf(x-25*units); bottom=(int)floorf(height-feet_y-3*units);
+    clip_width=(int)ceilf(50*units); clip_height=(int)ceilf(70*units);
+    glEnable(GL_SCISSOR_TEST); glScissor(left,bottom,clip_width,clip_height);
+    glClearDepth(1); glClear(GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_TEXTURE_2D); glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_MODULATE);
+    glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_GREATER,.1f);
+    skin=assets_get_texture(ASSET_PLAYER_SKIN); glBindTexture(GL_TEXTURE_2D,skin.id);
+    for(i=0;i<8;++i) glDisable(GL_LIGHT0+i);
+    glEnable(GL_LIGHTING); glEnable(GL_LIGHT0); glEnable(GL_LIGHT1); glEnable(GL_NORMALIZE);
+    glEnable(GL_COLOR_MATERIAL); glColorMaterial(GL_FRONT_AND_BACK,GL_AMBIENT_AND_DIFFUSE);
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT,ambient);
+    glLightfv(GL_LIGHT0,GL_POSITION,light0); glLightfv(GL_LIGHT1,GL_POSITION,light1);
+    glLightfv(GL_LIGHT0,GL_DIFFUSE,diffuse); glLightfv(GL_LIGHT1,GL_DIFFUSE,diffuse);
+    glLightfv(GL_LIGHT0,GL_AMBIENT,none); glLightfv(GL_LIGHT1,GL_AMBIENT,none);
+    glLightfv(GL_LIGHT0,GL_SPECULAR,none); glLightfv(GL_LIGHT1,GL_SPECULAR,none);
+    glTranslatef((float)x,(float)feet_y,50); glScalef((float)scale,(float)-scale,(float)scale);
+    glRotatef(pitch,1,0,0); player_model_pose(&preview,-yaw);
+    glMatrixMode(GL_TEXTURE); glPopMatrix(); glMatrixMode(GL_MODELVIEW); glPopMatrix();
+    glMatrixMode(GL_PROJECTION); glPopMatrix(); glPopAttrib(); glMatrixMode(mode);
 }
 static void model_part(float x,float y,float z,float rotation,int bx,int by,int bz,int w,int h,int d,int u,int v)
 {

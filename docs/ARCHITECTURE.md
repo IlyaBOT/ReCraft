@@ -153,6 +153,15 @@ displays 9 x 5 items, a scrollbar and the hotbar. Only a local Creative player
 can grant items. All container screens use the common bitmap text, slot and
 cursor-stack helpers.
 
+The Survival panel places its `Crafting` caption at Beta's source coordinates
+86,16 and draws the existing 64 x 32 player skin/biped in the model window.
+`player_inventory_draw()` uses an orthographic fixed-function pass, two small
+lights and cursor-dependent pose. It clears depth only inside that window and
+restores matrices, viewport, texture binding, lighting, depth and scissor state.
+The transparent pack window receives an opaque black backing; assets are not
+modified. Container captions use eight-pixel bitmap glyphs at atlas scale,
+without shadows. Survival has no extra Inventory caption over the model.
+
 Block light relaxation uses loaded chunk edges as boundary conditions and
 revisits neighbours whose boundary values changed. Every propagation step
 loses a light level. It never loads chunks recursively; physics batches flush

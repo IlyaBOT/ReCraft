@@ -7,6 +7,7 @@
 #include "../assets/assets.h"
 #include "../world/beta_blocks.h"
 #include "../game/creative.h"
+#include "../game/entity_render.h"
 #include "../util/display.h"
 
 #if defined(__APPLE__)
@@ -1169,6 +1170,13 @@ static void container_texture(Texture2D texture,int sx,int sy,int width,int heig
     DrawTexturePro(texture,src,dst,origin,0,WHITE);
 }
 
+static void container_label(const char *text,int x,int y)
+{
+    /* Vanilla foreground captions are eight source pixels tall, without a
+     * shadow. Match the atlas's 2x scale instead of shrinking the glyphs. */
+    DrawMinecraftText(text,px((float)x),py((float)y),ps(16),col(64,64,64,255),0);
+}
+
 void ui_draw_container(const Ui *ui,const ContainerSession *s,const InventorySlot *inventory,
                        const InventorySlot *contents,int burn,int fuel,int cook)
 {
@@ -1181,13 +1189,14 @@ void ui_draw_container(const Ui *ui,const ContainerSession *s,const InventorySlo
     InventorySlot result;
     begin_layout(ui);
     DrawRectangle(0,0,recraft_screen_width(),recraft_screen_height(),col(0,0,0,150));
+    if(s->kind==CONTAINER_PLAYER) rect(left+52,top+16,100,140,BLACK);
     if (s->kind==CONTAINER_CHEST) {
         container_texture(texture,0,0,176,rows*18+17,left,top);
         container_texture(texture,0,126,176,96,left,top+(rows*18+17)*2);
-        label(s->size==54 ? "Large Chest" : "Chest",left+16,top+12,12,col(64,64,64,255));
+        container_label(s->size==54 ? "Large Chest" : "Chest",left+16,top+12);
     } else container_texture(texture,0,0,176,166,left,top);
     if (s->kind==CONTAINER_FURNACE) {
-        label("Furnace",left+116,top+12,12,col(64,64,64,255));
+        container_label("Furnace",left+120,top+12);
         if (burn>0) {
             int n=fuel>0 ? burn*12/fuel : 0;
             if (n>12) n=12;
@@ -1196,8 +1205,11 @@ void ui_draw_container(const Ui *ui,const ContainerSession *s,const InventorySlo
         if (cook>0) container_texture(texture,176,14,cook*24/200+1,16,left+158,top+68);
     }
     if (s->kind==CONTAINER_PLAYER || s->kind==CONTAINER_WORKBENCH)
-        label("Crafting",left+(s->kind==CONTAINER_PLAYER ? 172 : 56),top+12,12,col(64,64,64,255));
-    label("Inventory",left+16,top+(s->kind==CONTAINER_CHEST ? rows*18+21 : 72)*2,12,col(64,64,64,255));
+        container_label("Crafting",left+(s->kind==CONTAINER_PLAYER ? 172 : 56),
+                        top+(s->kind==CONTAINER_PLAYER ? 32 : 12));
+    if(s->kind==CONTAINER_PLAYER) player_inventory_draw(px((float)(left+102)),py((float)(top+150)),ps(60),
+        (float)px(layout.mouse_x),(float)py(layout.mouse_y),recraft_screen_width(),recraft_screen_height());
+    else container_label("Inventory",left+16,top+(s->kind==CONTAINER_CHEST ? rows*18+21 : 72)*2);
     inventory_clear_slot(&result);
     if (s->kind==CONTAINER_PLAYER || s->kind==CONTAINER_WORKBENCH)
         crafting_match(s->grid,s->kind==CONTAINER_WORKBENCH ? 3 : 2,&result);

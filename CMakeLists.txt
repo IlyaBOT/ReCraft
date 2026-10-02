@@ -227,8 +227,10 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/tests/nbt_test.c")
 endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests/renderer_test.c")
     add_executable(renderer_test tests/renderer_test.c src/world/world.c src/world/storage.c
-        src/world/beta_blocks.c src/assets/assets.c src/util/game_paths.c src/renderer/texture_animation.c)
+        src/world/beta_blocks.c src/assets/assets.c src/util/game_paths.c src/renderer/texture_animation.c
+        src/game/entity_render.c src/game/creative.c)
     target_include_directories(renderer_test PRIVATE src "${RAYLIB_ROOT}/src")
+    target_compile_definitions(renderer_test PRIVATE RECRAFT_TEST_ASSET_ROOT="${CMAKE_SOURCE_DIR}")
     target_compile_options(renderer_test PRIVATE -include "${CMAKE_SOURCE_DIR}/src/win_gl_compat.h")
     target_include_directories(renderer_test PRIVATE "${GLFW_ROOT}/include")
     target_link_libraries(renderer_test raylib_legacy glfw "${OPENAL_LIBRARY}"

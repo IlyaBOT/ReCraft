@@ -20,6 +20,10 @@ int entity_render_draw(RenderEntity *entities, int count,
 int item_drop_draw(const ItemDrop *drops, int count, const RendererCamera *camera,
                    int width, int height, int render_distance_chunks);
 void first_person_draw(const InventorySlot *item,int width,int height,float swing,int hurt);
+/* Beta inventory biped; screen coordinates and pixels per world unit. Uses
+ * the existing skin/model and restores GL state, without a render target. */
+void player_inventory_draw(int x,int feet_y,int scale,float mouse_x,float mouse_y,
+                           int width,int height);
 void mining_cracks_draw(const RendererCamera *camera,int width,int height,
                         int x,int y,int z,BetaBlockState block,float progress);
 
