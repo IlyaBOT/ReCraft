@@ -55,6 +55,11 @@ devices need not advance at wall-clock speed. No tests are disabled by this fix.
 Run 37073222917 passed Windows/Linux and built macOS, but Vesper lost communication
 with GitHub during CTest. macOS test completion remains unverified; this failure
 has no published job log and requires restoring the runner's connection.
+Run 37079001771 passed Windows (21/21) and Linux (20/20), while Vesper again lost
+communication, this time during the build before CTest. No job log was uploaded.
+This leaves the native macOS fix unverified; restoring runner connectivity is
+required before further test diagnosis. Local-only world tests use private save
+fixtures, so their count is higher than CI's.
 The macOS renderer test also checks the actual CGL vertex-processing result.
 CTest on Vesper has a 60-second per-test timeout and captures a bounded stack
 sample after a startup failure. The dependency

@@ -178,7 +178,10 @@ Arrow читаются обратно. 102 исходных save-файла со
 Vesper: старый unbounded NSApplication run заменён finishLaunching; music test
 управляет queue без wall-clock sleep. Run **37073222917** собрал macOS клиент,
 затем runner **lost communication** во время CTest, logs не опубликованы.
-Успешное завершение macOS пока не подтверждено. Windows/Linux run прошли.
+Повторный run **37079001771** также потерял связь с Vesper, уже во время сборки;
+до CTest он не дошёл, job log недоступен. Успешное завершение macOS пока не подтверждено.
+Windows CI прошёл 21/21, Linux — 20/20; дополнительные локальные world tests
+требуют read-only save fixtures, отсутствующих в CI.
 
 ## Reference
 
