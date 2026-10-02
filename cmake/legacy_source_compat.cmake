@@ -22,17 +22,15 @@ function(recraft_compat_source source output)
         recraft_replace("    if (!usableCount)"
             "    /* ReCraft: prefer hardware, then permit GDI OpenGL 1.1 if none exists. */\n    if (!usableCount && !allowSoftware)\n    {\n        allowSoftware = 1;\n        goto enumerate_formats;\n    }\n\n    if (!usableCount)")
     elseif(name STREQUAL "cocoa_window.m")
-        # Backport GLFW's Cocoa launch ordering fix (eda12dd94938504c).
-        # The temporary startup loop must not run after Cocoa has already sent
-        # its launch notification. Match current GLFW's isFinishedLaunching
-        # guard (NSRunningApplication is present in the 10.6 SDK), then promote
-        # the unbundled process after startup, even if no delegate was called.
+        # Complete AppKit startup synchronously. A nested NSApplication run
+        # relies on a launch notification stopping it and can hang on a CI
+        # runner. finishLaunching is available in the original 10.6 SDK.
         recraft_replace("    // In case we are unbundled, make us a proper UI application\n    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];"
             "    // ReCraft: defer activation policy until after Cocoa startup.")
         recraft_replace("    [NSApp stop:nil];\n\n    _glfwPlatformPostEmptyEvent();"
             "    // ReCraft: wake the temporary startup loop before stopping it.\n    _glfwPlatformPostEmptyEvent();\n    [NSApp stop:nil];")
         recraft_replace("    [NSApp run];"
-            "    // ReCraft: the launch notification may precede delegate setup.\n#if MAC_OS_X_VERSION_MAX_ALLOWED >= 1060\n    if (![[NSRunningApplication currentApplication] isFinishedLaunching])\n#endif\n        [NSApp run];\n    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];")
+            "    // ReCraft: do not enter an unbounded nested event loop.\n    [NSApp finishLaunching];\n    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];")
     elseif(name STREQUAL "core.c")
         recraft_replace("window = glfwCreateWindow(" "window = recraft_glfw_create_window(")
         set(_compat_text "/* ReCraft: checked window creation for raylib 1.4. */\n#include \"util/legacy_window_guard.h\"\n${_compat_text}")

@@ -3,11 +3,6 @@
 #include <AL/alc.h>
 #include <assert.h>
 #include <stdio.h>
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <unistd.h>
-#endif
 int main(int argc,char **argv)
 {
     MusicStream s={0}; int i,loop; ALCdevice *device=alcOpenDevice(NULL);
@@ -18,14 +13,13 @@ int main(int argc,char **argv)
     assert(!music_stream_open(&s,"missing-file.ogg") && !s.source && !s.decoder);
     assert(music_stream_open(&s,argv[1]));
     alGetSourcei(s.source,AL_LOOPING,&loop); assert(loop==AL_FALSE);
-    alSourcef(s.source,AL_PITCH,4);
+    /* Drive the OpenAL queue deterministically. Apple's framework ignores
+     * ALSOFT_DRIVERS=null and a runner may have no advancing output device.
+     * A stopped streaming source marks its queued buffers processed by the
+     * OpenAL contract; update must drain/refill and release the final buffer. */
     for(i=0;i<300 && s.source;++i) {
+        alSourceStop(s.source);
         music_stream_update(&s,.25f);
-#ifdef _WIN32
-        Sleep(10);
-#else
-        usleep(10000);
-#endif
     }
     assert(!s.source && !s.decoder); /* Short track drains its last partial buffer and never loops. */
     assert(music_stream_open(&s,argv[2]));
