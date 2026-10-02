@@ -9,6 +9,7 @@
 typedef struct OptionField { const char *name; size_t offset; int min, max; } OptionField;
 #define FIELD(n,a,b) { #n, offsetof(UiOptions,n), a, b }
 static const OptionField fields[] = {
+    FIELD(difficulty,0,3), FIELD(sound_volume,0,100), FIELD(music_volume,0,100),
     FIELD(fancy_graphics,0,1), FIELD(render_distance,2,12), FIELD(smooth_lighting,0,1),
     FIELD(menu_blur,0,1), FIELD(max_framerate,0,144), FIELD(anaglyph,0,0), FIELD(view_bobbing,0,1),
     FIELD(gui_scale,0,3), FIELD(brightness,0,100), FIELD(clouds,0,0),

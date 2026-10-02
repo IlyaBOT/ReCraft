@@ -20,6 +20,9 @@ int main(void)
     drop=mining_drop((BetaBlockState){17,2},0,1); assert(drop.id==17 && drop.damage==2);
     drop=mining_drop((BetaBlockState){20,0},278,1); assert(drop.count==0);
     mining_wear(&tool,1); assert(tool.count==0);
+    tool=(InventorySlot){359,1,0};
+    mining_wear(&tool,35); assert(tool.damage==0);
+    mining_wear(&tool,18); mining_wear(&tool,30); assert(tool.damage==2);
     puts("Beta mining speed, harvest, drops and durability passed");
     return 0;
 }

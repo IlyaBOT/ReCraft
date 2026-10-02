@@ -46,6 +46,20 @@ int beta_block_selection_box(BetaBlockState state, BetaBlockBox *out)
         out->max_y = 0.5f;
         return 1;
     }
+    if(state.id==26 || state.id==93 || state.id==94 || state.id==78) {
+        *out=(BetaBlockBox){0,0,0,1,state.id==26 ? .5625f : .125f,1}; return 1;
+    }
+    if(state.id==69 || state.id==77) {
+        unsigned dir=state.metadata&7;
+        float depth=state.id==77 ? ((state.metadata&8) ? .0625f : .125f) : .375f;
+        *out=(BetaBlockBox){.3125f,.375f,.3125f,.6875f,.625f,.6875f};
+        if(dir==1) { out->min_x=0; out->max_x=depth; }
+        else if(dir==2) { out->min_x=1-depth; out->max_x=1; }
+        else if(dir==3) { out->min_z=0; out->max_z=depth; }
+        else if(dir==4) { out->min_z=1-depth; out->max_z=1; }
+        else { out->min_y=0; out->max_y=.6f; }
+        return 1;
+    }
     if (state.id==BETA_BLOCK_CACTUS) {
         *out=(BetaBlockBox){0.0625f,0.0f,0.0625f,0.9375f,1.0f,0.9375f};
         return 1;
@@ -100,6 +114,22 @@ int beta_block_terrain_tile(BetaBlockState state, unsigned face)
     if (!beta_block_state_valid(state) || face > 5u) return -1;
     variant = state.metadata & 3u;
     switch (state.id) {
+    case BETA_BLOCK_BED: {
+        /* ModelBed.bedDirection converts the world face to the unrotated
+         * head/foot atlas face. Top textures are rotated in mesh emission. */
+        static const unsigned map[4][6]={{1,0,3,2,5,4},{1,0,5,4,2,3},{1,0,2,3,4,5},{1,0,4,5,3,2}};
+        unsigned f=map[state.metadata&3][face];
+        if(face==0) return 4;
+        if(face==1) return (state.metadata&8) ? 135 : 134;
+        if(state.metadata&8) return f==2 ? 152 : f==4 || f==5 ? 152-1 : 135;
+        return f==3 ? 149 : f==4 || f==5 ? 150 : 134;
+    }
+    case BETA_BLOCK_UNPOWERED_REPEATER: return face==0 ? 115 : face==1 ? 131 : 5;
+    case BETA_BLOCK_POWERED_REPEATER: return face==0 ? 99 : face==1 ? 147 : 5;
+    case BETA_BLOCK_LEVER: return 16;
+    case BETA_BLOCK_STONE_BUTTON: return 1;
+    case BETA_BLOCK_SNOW_LAYER: case BETA_BLOCK_SNOW_BLOCK: return 66;
+    case BETA_BLOCK_ICE: return 67;
     case BETA_BLOCK_DOUBLE_SLAB:
     case BETA_BLOCK_SLAB:
         switch (state.metadata) {
@@ -179,7 +209,7 @@ int beta_render_source_tile(unsigned slot)
         17,32,33,34,160,144,7,36,37,50,51,72,103,104,105,
         15,63,79,39,55,56,13,12,29,28,73,5,208,176,192,
         237,238,14,69,70,71,43,59,60,25,26,27,62,45,44,61,99,115,164,
-        205,206,41,42,57,58};
+        205,206,41,42,57,58,134,135,149,150,151,152,131,147,66,67};
     return slot<sizeof(tiles)/sizeof(tiles[0]) ? tiles[slot] : -1;
 }
 unsigned beta_render_tile(int terrain_tile)

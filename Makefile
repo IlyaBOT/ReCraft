@@ -38,12 +38,10 @@ help:
 legacy: $(APP_EXE) $(APP_BUNDLE)/Contents/Info.plist runtime-assets
 
 runtime-assets:
-	@mkdir -p $(OUT_DIR)/assets/gui $(OUT_DIR)/assets/fonts $(OUT_DIR)/assets/textures/mob $(OUT_DIR)/assets/sounds/portal
-	@cp assets/gui/widgets.png assets/gui/background.png assets/gui/icons.png assets/gui/inventory.png assets/gui/items.png assets/gui/panorama.png assets/gui/crafting.png assets/gui/furnace.png assets/gui/container.png $(OUT_DIR)/assets/gui/
-	@cp assets/fonts/ascii.png $(OUT_DIR)/assets/fonts/
-	@cp assets/textures/terrain.png $(OUT_DIR)/assets/textures/
-	@cp assets/textures/mob/char.png $(OUT_DIR)/assets/textures/mob/
-	@cp assets/sounds/portal/portal.ogg $(OUT_DIR)/assets/sounds/portal/
+	@while IFS= read -r asset; do \
+	    mkdir -p "$(OUT_DIR)/assets/$${asset%/*}" && \
+	    cp "assets/$$asset" "$(OUT_DIR)/assets/$$asset" || exit 1; \
+	done < assets/runtime_assets.txt
 
 $(BUILD_DIR)/raylib/%.o: $(RAYLIB_ROOT)/src/%.c
 	@mkdir -p $(@D)

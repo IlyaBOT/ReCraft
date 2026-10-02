@@ -185,6 +185,13 @@ static void begin_layout(const Ui *ui)
     layout.clicked = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
     layout.world_background = ui && ui->world_background;
 }
+int ui_draw_sleep(Ui *ui,int ticks)
+{
+    begin_layout(ui);
+    if(ticks>100) ticks=100;
+    rect(0,0,VW,VH,col(8,10,35,(unsigned char)(ticks*180/100)));
+    return button(ui,220,400,200,24,"Leave Bed",1);
+}
 
 /* One tiled Beta dirt texture or one static panorama; no FBO or shader pass. */
 static void draw_background(int dirt)
@@ -272,6 +279,8 @@ void ui_init(Ui *ui)
 {
     if (!ui) return;
     memset(ui, 0, sizeof(*ui));
+    ui->options.difficulty=2;
+    ui->options.sound_volume=ui->options.music_volume=100;
     ui->screen = UI_SCREEN_MAIN;
     ui->previous_screen = UI_SCREEN_MAIN;
     ui->options_parent = UI_SCREEN_MAIN;
@@ -689,11 +698,17 @@ static UiAction server_form(Ui *ui, int direct)
 static UiAction options_menu(Ui *ui)
 {
     UiAction action = empty_action();
+    static const char *const difficulties[]={"Peaceful","Easy","Normal","Hard"};
+    char text[64];
     draw_background(1);
     title("Options");
     if (button(ui, 175, 104, 290, 30, "Video Settings...", 1)) ui_set_screen(ui, UI_SCREEN_VIDEO);
-    panel(104, 163, 432, 189);
-    centered("Controls", 320, 181, 14, col(246, 246, 238, 255));
+    snprintf(text,sizeof(text),"Music: %d%%",ui->options.music_volume);
+    if(button(ui,104,146,210,28,text,1)) ui->options.music_volume=ui->options.music_volume>=25 ? ui->options.music_volume-25 : 100;
+    snprintf(text,sizeof(text),"Sound: %d%%",ui->options.sound_volume);
+    if(button(ui,326,146,210,28,text,1)) ui->options.sound_volume=ui->options.sound_volume>=25 ? ui->options.sound_volume-25 : 100;
+    snprintf(text,sizeof(text),"Difficulty: %s",difficulties[ui->options.difficulty]);
+    if(button(ui,175,180,290,28,text,!ui->network_mode)) ui->options.difficulty=(ui->options.difficulty+1)%4;
     label("WASD: move    Mouse: look    Space: jump", 129, 212, 11, col(219, 220, 211, 255));
     label("Left mouse: break    Right mouse: place", 129, 235, 11, col(219, 220, 211, 255));
     label("1-9 / mouse wheel: hotbar    F3: statistics", 129, 258, 11, col(219, 220, 211, 255));

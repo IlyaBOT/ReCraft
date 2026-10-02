@@ -4,6 +4,11 @@
 #include "world/entities.h"
 #include "world/ticks.h"
 #include "game/player.h"
+#include "game/bed.h"
+#include "world/environment.h"
+#include "world/redstone.h"
+#include "world/mobs.h"
+#include "game/entity_render.h"
 #include "nbt/nbt.h"
 #include <assert.h>
 #include <stdio.h>
@@ -96,7 +101,11 @@ static void health_redstone_tests(void)
 {
     World w; Player p; PlayerInput in={0}; int i;
     assert(world_init(&w,42,1,16)==WORLD_OK); player_spawn(&p,&w,0);
-    assert(p.health==20 && p.air==300); p.y=70;
+    assert(p.health==20 && p.air==300);
+    p.y=67.2f;
+    for(i=0;i<50;++i) player_tick(&p,&w,&in,.05f);
+    assert(p.on_ground && p.health==19 && p.fall_distance==0);
+    p.health=20; p.hurt_ticks=0; p.y=70; p.vy=0; p.on_ground=0;
     for (i=0;i<100;++i) player_tick(&p,&w,&in,.05f);
     assert(p.health==17); player_damage(&p,2); assert(p.health==15);
     player_damage(&p,2); assert(p.health==15); player_damage(&p,4); assert(p.health==13);
@@ -106,10 +115,10 @@ static void health_redstone_tests(void)
     }
     assert(world_set_block(&w,5,64,5,1));
     assert(world_set_block(&w,5,65,5,76)); assert(world_set_metadata(&w,5,65,5,5));
-    assert(world_set_block(&w,4,64,5,69)); assert(world_set_metadata(&w,4,64,5,9));
-    world_physics_notify(&w,4,64,5); ticks(&w,2);
+    assert(world_set_block(&w,6,64,5,69)); assert(world_set_metadata(&w,6,64,5,9));
+    world_physics_notify(&w,6,64,5); ticks(&w,2);
     assert(world_peek_block(&w,5,65,5)==75);
-    world_set_metadata(&w,4,64,5,1); world_physics_notify(&w,4,64,5); ticks(&w,2);
+    world_set_metadata(&w,6,64,5,1); world_physics_notify(&w,6,64,5); ticks(&w,2);
     assert(world_peek_block(&w,5,65,5)==76);
     assert(world_close(&w)==WORLD_OK);
 }
@@ -151,13 +160,13 @@ static void tick_save_tests(void)
     /* Unsupported mechanisms and their private tags survive unchanged. */
     nbt_writer_init(&writer,raw,sizeof(raw),NULL);
     tag.type=NBT_COMPOUND; assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
-    tag.type=NBT_INT; tag.name=nbt_span("i"); tag.value.int_value=93; assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+    tag.type=NBT_INT; tag.name=nbt_span("i"); tag.value.int_value=95; assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
     tag.name=nbt_span("t"); tag.value.int_value=44; assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
     tag.name=nbt_span("custom"); tag.value.int_value=5678; assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
     assert(nbt_writer_end(&writer)==NBT_OK && nbt_writer_finish(&writer,&size)==NBT_OK);
     unknown=(SavedTick *)calloc(1,sizeof(*unknown)); assert(unknown);
     unknown->raw=(uint8_t *)malloc(size); assert(unknown->raw); memcpy(unknown->raw,raw,size);
-    unknown->raw_size=size; unknown->id=93; unknown->delay=44; unknown->next=c->ticks; c->ticks=unknown;
+    unknown->raw_size=size; unknown->id=95; unknown->delay=44; unknown->next=c->ticks; c->ticks=unknown;
     assert(world_save(&w)==WORLD_OK);
     assert(world_set_block(&w,1,65,1,20) && world_save(&w)==WORLD_OK);
     /* Eviction removes queue pointers before freeing the owning records. */
@@ -217,8 +226,171 @@ static void entity_nbt_tests(void)
     assert(nbt_read(updated,out_size,NULL,entity_canaries,&seen,NULL)==NBT_OK && seen==7);
     free(updated); world_entities_free(c); free(c);
 }
+static void environment_bed_tests(void)
+{
+    World w; Player p; PlayerInput input={0}; int i; uint64_t tick; int64_t night;
+    assert(world_init(&w,42,1,16)==WORLD_OK);
+    assert(world_get_chunk(&w,0,0) && world_get_chunk(&w,1,0));
+    w.beta_world_time=6000; world_environment_refresh(&w); assert(w.sky_subtracted==0);
+    w.beta_world_time=18000; world_environment_refresh(&w); assert(w.sky_subtracted==11);
+    w.rain_time=1; w.thunder_time=1; world_environment_tick(&w);
+    assert(w.raining && w.thundering && w.rain_strength>0);
+    for(i=0;i<100;++i) world_environment_tick(&w);
+    assert(w.rain_strength>.999f && w.thunder_strength>.999f && w.rain_time>0);
+    assert(bed_place(&w,15,64,8,3));
+    assert(world_peek_block(&w,16,64,8)==26 && world_peek_metadata(&w,16,64,8)==11);
+    player_spawn(&p,&w,0); p.x=15.5f; p.z=8.5f; p.y=64;
+    assert(!player_sleep(&p,&w,15,64,8));
+    tick=w.tick; night=w.beta_world_time;
+    for(i=0;i<99;++i) player_tick(&p,&w,&input,.05f);
+    assert(p.sleeping && p.sleep_ticks==99);
+    player_tick(&p,&w,&input,.05f);
+    assert(!p.sleeping && p.has_bed_spawn && p.spawn_x==16 && w.beta_world_time%24000==0);
+    assert(w.tick==tick+(uint64_t)(24000-night%24000));
+    assert(!w.raining && !w.thundering && w.rain_time==0 && w.thunder_time==0);
+    p.health=0; player_respawn(&p,&w); assert(p.health==20 && p.x>=14 && p.x<=18);
+    for(i=0;i<100;++i) world_environment_tick(&w);
+    assert(player_sleep(&p,&w,16,64,8)==1);
+    assert(world_set_block(&w,16,64,8,0)); ticks(&w,1);
+    assert(world_peek_block(&w,15,64,8)==0);
+    p.health=19; w.difficulty=0; p.age=0;
+    for(i=0;i<20;++i) player_tick(&p,&w,&input,.05f);
+    assert(p.health==20);
+    assert(world_close(&w)==WORLD_OK);
+}
+static void mechanisms_tests(void)
+{
+    World w;
+    assert(world_init(&w,42,1,16)==WORLD_OK); assert(world_get_chunk(&w,0,0));
+    assert(world_set_block(&w,7,64,8,1));
+    assert(world_set_block(&w,8,64,8,77)); world_set_metadata(&w,8,64,8,1);
+    assert(world_redstone_activate(&w,8,64,8)); ticks(&w,19);
+    assert(world_peek_metadata(&w,8,64,8)&8);
+    assert(world_redstone_activate(&w,8,64,8)); ticks(&w,1); /* Reclick does not restart the timer. */
+    assert(!(world_peek_metadata(&w,8,64,8)&8));
+    assert(world_set_block(&w,12,64,12,93));
+    assert(world_set_block(&w,12,64,13,69)); world_set_metadata(&w,12,64,13,5);
+    assert(world_redstone_activate(&w,12,64,13)); ticks(&w,1); assert(world_peek_block(&w,12,64,12)==93);
+    ticks(&w,1); assert(world_peek_block(&w,12,64,12)==94);
+    /* A side branch into the input of an idle repeater changes wire power
+     * direction. This is Beta's remap, not the repeater's output direction. */
+    assert(world_set_block(&w,4,64,4,55)); world_set_metadata(&w,4,64,4,15);
+    assert(world_set_block(&w,5,64,4,55)); world_set_metadata(&w,5,64,4,14);
+    assert(world_set_block(&w,4,64,5,93)); world_set_metadata(&w,4,64,5,2);
+    assert(world_redstone_signal(&w,4,64,4,3,64,4,1)==0);
+    world_set_metadata(&w,4,64,5,0);
+    assert(world_redstone_signal(&w,4,64,4,3,64,4,1)==15);
+    assert(world_redstone_signal(&w,12,64,12,12,64,11,1)==15);
+    assert(world_redstone_signal(&w,12,64,12,11,64,12,1)==0);
+    assert(world_redstone_activate(&w,12,64,13)); ticks(&w,2); assert(world_peek_block(&w,12,64,12)==93);
+    assert(world_redstone_activate(&w,12,64,12)); assert(world_peek_metadata(&w,12,64,12)==4);
+    assert(world_redstone_activate(&w,12,64,13)); ticks(&w,3); assert(world_peek_block(&w,12,64,12)==93);
+    ticks(&w,1); assert(world_peek_block(&w,12,64,12)==94);
+    assert(world_close(&w)==WORLD_OK);
+}
+static void mob_tests(void)
+{
+    World w; Player p; RenderEntity visible[16]={0}; InventorySlot sword={276,1,0}; SavedEntity *e;
+    int difficulty;
+    assert(world_init(&w,42,1,16)==WORLD_OK); player_spawn(&p,&w,0);
+    for(difficulty=0;difficulty<4;++difficulty) {
+        static const int expected[4]={20,18,15,13};
+        p.health=20; p.hurt_ticks=0; w.difficulty=difficulty;
+        player_mob_damage(&p,&w,5); assert(p.health==expected[difficulty]);
+    }
+    assert(beta_attack_damage(268)==4 && beta_attack_damage(283)==4 && beta_attack_damage(272)==6);
+    assert(beta_attack_damage(267)==8 && beta_attack_damage(276)==10);
+    assert(world_mob_spawn(&w,54,8.5f,64,6.5f));
+    p.x=8.5f; p.y=64; p.z=9; p.yaw=p.pitch=0; p.health=20; p.hurt_ticks=0; w.difficulty=2;
+    assert(world_mobs_attack(&w,&p,&sword,3));
+    assert(sword.damage==1);
+    e=world_peek_chunk(&w,0,0)->saved_entities; assert(e->mob.health==10);
+    assert(world_mobs_visible(&w,visible,16)==1 && visible[0].type==54);
+    assert(world_set_block(&w,8,65,7,1));
+    assert(!world_mobs_attack(&w,&p,&sword,3) && sword.damage==1);
+    assert(world_set_block(&w,8,65,7,0));
+    p.z=7.5f;
+    ticks(&w,1); world_mobs_tick(&w,&p); assert(p.health==15);
+    w.difficulty=0; ticks(&w,1); world_mobs_tick(&w,&p);
+    assert(world_mobs_visible(&w,visible,16)==0);
+    assert(world_close(&w)==WORLD_OK);
+    assert(world_init(&w,42,1,16)==WORLD_OK); player_spawn(&p,&w,0); p.x=8.5f; p.y=64; p.z=10; p.yaw=0; p.pitch=-.4f;
+    assert(world_mob_spawn(&w,91,8.5f,64,7.5f));
+    {
+        InventorySlot shears={359,1,238}; WorldDropEvent drop;
+        assert(world_mobs_interact(&w,&p,&shears,3) && shears.count==0);
+        e=world_peek_chunk(&w,0,0)->saved_entities;
+        while(e && e->mob.type!=91) e=e->next;
+        assert(e && e->mob.sheared);
+        assert(world_take_drop(&w,&drop) && drop.id==35 && drop.count>=2 && drop.count<=4);
+    }
+    assert(world_mob_spawn(&w,92,11.5f,64,7.5f)); p.x=11.5f;
+    {
+        InventorySlot bucket={325,1,0};
+        assert(world_mobs_interact(&w,&p,&bucket,3) && bucket.id==335);
+    }
+    assert(world_mob_spawn(&w,93,13.5f,64,7.5f));
+    e=world_peek_chunk(&w,0,0)->saved_entities; assert(e->mob.type==93); e->mob.egg_ticks=1;
+    ticks(&w,1); world_mobs_tick(&w,&p);
+    {
+        WorldDropEvent drop; assert(world_take_drop(&w,&drop) && drop.id==344 && drop.count==1);
+        assert(e->mob.egg_ticks>=6000 && e->mob.egg_ticks<12000);
+    }
+    assert(world_close(&w)==WORLD_OK);
+    {
+        char root[128]; Chunk *c; unsigned char raw[8192]; size_t size; NbtWriter writer; NbtTag tag={0};
+        snprintf(root,sizeof(root),"build/mob-test-%d",(int)test_pid()); assert(test_mkdir(root)==0);
+        assert(world_create(&w,root,"fixture","Mob fixture",42,1,0,0,16)==WORLD_OK); assert(world_get_chunk(&w,0,0));
+        assert(world_mob_spawn(&w,90,8.5f,64,8.5f)); e=world_peek_chunk(&w,0,0)->saved_entities; e->mob.health=6; e->mob.fire=27;
+        assert(world_mob_spawn(&w,91,10.5f,64,8.5f)); e=world_peek_chunk(&w,0,0)->saved_entities; e->mob.color=11; e->mob.sheared=1;
+        assert(world_save(&w)==WORLD_OK && world_close(&w)==WORLD_OK);
+        assert(world_open(&w,root,"fixture",16)==WORLD_OK); c=world_get_chunk(&w,0,0); assert(c);
+        e=c->saved_entities; assert(e && e->mob.type==91 && e->mob.color==11 && e->mob.sheared);
+        e=e->next; assert(e && e->mob.type==90 && e->mob.health==6 && e->mob.fire==27 && e->mob.x==8.5f);
+        /* Entity scalar order is not fixed in NBT. Health before id must survive. */
+        nbt_writer_init(&writer,raw,sizeof(raw),NULL); tag.type=NBT_COMPOUND; assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+        tag.name=nbt_span("Level"); assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+        tag.type=NBT_LIST; tag.name=nbt_span("Entities"); tag.list_type=NBT_COMPOUND; tag.count=1; assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+        tag.type=NBT_COMPOUND; tag.name=nbt_span(""); assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+        tag.type=NBT_SHORT; tag.name=nbt_span("Health"); tag.value.short_value=3; assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+        tag.type=NBT_STRING; tag.name=nbt_span("id"); tag.value.bytes=nbt_span("Pig"); assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+        tag.type=NBT_LIST; tag.name=nbt_span("Pos"); tag.list_type=NBT_DOUBLE; tag.count=3; assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+        tag.type=NBT_DOUBLE; tag.name=nbt_span(""); tag.value.double_value=8.5;
+        assert(nbt_writer_tag(&writer,&tag)==NBT_OK && nbt_writer_tag(&writer,&tag)==NBT_OK && nbt_writer_tag(&writer,&tag)==NBT_OK);
+        assert(nbt_writer_end(&writer)==NBT_OK && nbt_writer_end(&writer)==NBT_OK && nbt_writer_end(&writer)==NBT_OK && nbt_writer_end(&writer)==NBT_OK && nbt_writer_end(&writer)==NBT_OK && nbt_writer_finish(&writer,&size)==NBT_OK);
+        assert(world_entities_read(c,raw,size));
+        e=c->saved_entities; while(e->next) e=e->next;
+        assert(e->mob.health==3 && e->mob.type==90);
+        assert(world_close(&w)==WORLD_OK);
+        assert(world_storage_delete(root,"fixture")==WORLD_OK && test_rmdir(root)==0);
+    }
+}
+static void mob_collision_tests(void)
+{
+    World w; Player p={0}; SavedEntity *e;
+    assert(world_init(&w,42,1,16)==WORLD_OK && world_get_chunk(&w,0,0));
+    p.x=p.z=8.5f; p.y=82; p.health=20; p.creative=1;
+    assert(world_set_block(&w,8,80,8,1));
+    assert(world_mob_spawn(&w,90,8.5f,82.2f,8.5f));
+    e=world_peek_chunk(&w,0,0)->saved_entities;
+    e->mob.walk_ticks=100; e->mob.vy=-100;
+    ++w.tick; world_mobs_tick(&w,&p);
+    /* A fast fall must hit a one-block platform, even when the next tick's
+     * endpoint is empty air below it. */
+    assert(e->mob.y>=80.999f && e->mob.y<81.002f && e->mob.on_ground && e->mob.health==10);
+    e->mob.x=15.5f; e->mob.y=64; e->mob.vx=20; e->mob.vy=0; e->mob.on_ground=1;
+    assert(!world_peek_chunk(&w,1,0));
+    ++w.tick; world_mobs_tick(&w,&p);
+    assert(e->mob.x>=15.5f && e->mob.x<15.72f && w.cache_count==1);
+    assert(world_get_chunk(&w,1,0));
+    e->mob.vy=0; e->mob.on_ground=1;
+    ++w.tick; world_mobs_tick(&w,&p);
+    assert(world_peek_chunk(&w,0,0)->saved_entities==NULL);
+    assert(world_peek_chunk(&w,1,0)->saved_entities==e && e->mob.x>16);
+    assert(world_close(&w)==WORLD_OK);
+}
 int main(void)
 {
-    fluid_tests(); container_tests(); health_redstone_tests(); bucket_tests(); tick_save_tests(); entity_nbt_tests();
+    mob_collision_tests(); mob_tests(); environment_bed_tests(); mechanisms_tests(); fluid_tests(); container_tests(); health_redstone_tests(); bucket_tests(); tick_save_tests(); entity_nbt_tests();
     puts("Scheduled Beta water/lava, containers, persistence, health and torch inversion passed"); return 0;
 }

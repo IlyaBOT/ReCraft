@@ -1,6 +1,7 @@
 #include "renderer.h"
 #include "../assets/assets.h"
 #include "../world/fluid.h"
+#include "../world/environment.h"
 #include "../world/block_entity.h"
 #include "texture_animation.h"
 
@@ -642,7 +643,7 @@ void renderer_set_options(Renderer *renderer, World *world, RendererOptions opti
 static uint8_t light_at(const World *world, const Chunk *chunk, int x, int y, int z)
 {
     const Chunk *source = chunk;
-    if (y >= WORLD_HEIGHT) return 15;
+    if (y >= WORLD_HEIGHT) return (uint8_t)(15-world->sky_subtracted);
     if (y < 0) return 0;
     if (x < 0 || z < 0 || x >= WORLD_CHUNK_SIZE || z >= WORLD_CHUNK_SIZE) {
         int32_t cx = chunk->x, cz = chunk->z;
@@ -651,12 +652,12 @@ static uint8_t light_at(const World *world, const Chunk *chunk, int x, int y, in
         if (z < 0) { --cz; z += WORLD_CHUNK_SIZE; }
         else if (z >= WORLD_CHUNK_SIZE) { ++cz; z -= WORLD_CHUNK_SIZE; }
         source = world_peek_chunk(world, cx, cz);
-        if (!source) return 15;
+        if (!source) return (uint8_t)(15-world->sky_subtracted);
     }
     {
-        uint8_t sky = chunk_get_sky_light(source, x, y, z);
+        int sky = chunk_get_sky_light(source, x, y, z)-world->sky_subtracted;
         uint8_t block = chunk_get_block_light(source, x, y, z);
-        return sky > block ? sky : block;
+        return sky > block ? (uint8_t)sky : block;
     }
 }
 
@@ -675,6 +676,7 @@ static int visible_face(uint8_t self, uint8_t neighbor)
     if (self == BLOCK_AIR || self == BLOCK_TORCH || self == BETA_BLOCK_SLAB ||
         self==BETA_BLOCK_REDSTONE_TORCH || self==BETA_BLOCK_UNLIT_REDSTONE_TORCH ||
         self==BETA_BLOCK_CACTUS || self==BETA_BLOCK_NETHER_PORTAL || self==BETA_BLOCK_REDSTONE_WIRE ||
+        self==26 || self==93 || self==94 || self==69 || self==77 || self==78 ||
         beta_block_cross_plant(self))
         return 0;
     if (fluid_kind(self) && fluid_kind(self)==fluid_kind(neighbor))
@@ -1084,6 +1086,40 @@ static void emit_cactus(const Renderer *renderer,const World *world,ChunkMesh *m
         emit_partial_face(renderer,world,mesh,chunk,x,y,z,BETA_BLOCK_CACTUS,0,axis,direction,low,high);
     }
 }
+static void emit_low_block(const Renderer *r,const World *w,ChunkMesh *mesh,const Chunk *chunk,
+                           int x,int y,int z,uint8_t id,uint8_t metadata)
+{
+    float lo[3]={0,0,0},hi[3]={1,id==26 ? .5625f : .125f,1};
+    int axis,sign;
+    if(id==69 || id==77) {
+        BetaBlockBox box; beta_block_selection_box((BetaBlockState){id,metadata},&box);
+        lo[0]=box.min_x; lo[1]=box.min_y; lo[2]=box.min_z;
+        hi[0]=box.max_x; hi[1]=box.max_y; hi[2]=box.max_z;
+    }
+    for(axis=0;axis<3;++axis) for(sign=-1;sign<=1;sign+=2) {
+        MeshLayer *layer=&mesh->layers[BLOCK_LAYER_OPAQUE-1]; unsigned before=layer->vertex_count,i;
+        emit_partial_face(r,w,mesh,chunk,x,y,z,id,metadata,axis,sign,lo,hi);
+        /* Bed/repeater sides occupy the top strip of their own atlas tile. */
+        if(axis!=1 && id==26) {
+            unsigned tile=block_face_tile(world_block_def(id),id,metadata,axis,sign);
+            for(i=before;i<layer->vertex_count;++i) {
+                float height=(float)layer->vertices[i].y/VERTEX_COORD_SCALE-y;
+                layer->vertices[i].v=partial_texcoord(tile,.5625f-height,0,1);
+            }
+        }
+        if(axis==1 && sign==1) {
+            unsigned tile=block_face_tile(world_block_def(id),id,metadata,axis,sign);
+            for(i=before;i<layer->vertex_count;++i) {
+                float u=(float)layer->vertices[i].x/VERTEX_COORD_SCALE-x;
+                float v=(float)layer->vertices[i].z/VERTEX_COORD_SCALE-z;
+                int n;
+                for(n=0;n<(metadata&3);++n) { float t=u; u=1-v; v=t; }
+                layer->vertices[i].u=partial_texcoord(tile,u,0,0);
+                layer->vertices[i].v=partial_texcoord(tile,v,0,1);
+            }
+        }
+    }
+}
 
 static void emit_decorative_plane(ChunkMesh *mesh,int x,int y,int z,unsigned tile,int axis,int power)
 {
@@ -1327,6 +1363,9 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                     else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_SLAB)
                         emit_slab(renderer,world,mesh,chunk,x,y,z,
                                   chunk_get_metadata(chunk,x,y,z));
+                    else if(chunk_get_block(chunk,x,y,z)==26 || chunk_get_block(chunk,x,y,z)==93 || chunk_get_block(chunk,x,y,z)==94 ||
+                            chunk_get_block(chunk,x,y,z)==69 || chunk_get_block(chunk,x,y,z)==77 || chunk_get_block(chunk,x,y,z)==78)
+                        emit_low_block(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
     }
     return mesh;
 }
@@ -1529,6 +1568,33 @@ static void draw_layer(Renderer *renderer, const MeshLayer *layer)
             (uint64_t)layer->vertex_count * sizeof(VoxelVertex);
 }
 
+static void draw_celestials(const World *world,const RendererCamera *camera,float aspect)
+{
+    int i;
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); camera_projection(camera,aspect,256);
+    glMatrixMode(GL_TEXTURE); glPushMatrix(); glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW); glPushMatrix();
+    glTranslatef(camera->x,camera->y,camera->z);
+    glRotatef(-90,0,1,0); glRotatef(world_celestial_angle(world,0)*360,1,0,0);
+    glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); glDisable(GL_CULL_FACE);
+    glDisable(GL_FOG); glDisable(GL_LIGHTING); glDisable(GL_ALPHA_TEST);
+    glEnable(GL_TEXTURE_2D); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE);
+    glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_MODULATE);
+    glColor4f(1,1,1,1-world->rain_strength);
+    for(i=0;i<2;++i) {
+        Texture2D texture=assets_get_texture(i ? ASSET_MOON : ASSET_SUN);
+        float y=i ? -100 : 100,size=i ? 20 : 30;
+        glBindTexture(GL_TEXTURE_2D,texture.id); glBegin(GL_QUADS);
+        glTexCoord2f(0,0); glVertex3f(-size,y,-size);
+        glTexCoord2f(1,0); glVertex3f(size,y,-size);
+        glTexCoord2f(1,1); glVertex3f(size,y,size);
+        glTexCoord2f(0,1); glVertex3f(-size,y,size);
+        glEnd();
+    }
+    glPopMatrix(); glMatrixMode(GL_TEXTURE); glPopMatrix();
+    glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW); glPopAttrib();
+}
 void renderer_draw(Renderer *renderer, const World *world,
                    const RendererCamera *camera,
                    int viewport_width, int viewport_height,
@@ -1542,6 +1608,13 @@ void renderer_draw(Renderer *renderer, const World *world,
     GLint old_matrix_mode, old_array_buffer = 0;
     GLfloat fog_color[4] = {0.58f, 0.73f, 0.94f, 1.0f};
     if (!renderer || !world || !camera || viewport_width <= 0 || viewport_height <= 0) return;
+    {
+        float daylight=world_daylight(world,0);
+        float weather=1-world->rain_strength*.5f;
+        fog_color[0]*=(daylight*.94f+.06f)*weather;
+        fog_color[1]*=(daylight*.94f+.06f)*weather;
+        fog_color[2]*=(daylight*.91f+.09f)*weather;
+    }
     if (render_distance_chunks < 1) render_distance_chunks = 1;
     if (render_distance_chunks > 32) render_distance_chunks = 32;
     aspect = (float)viewport_width / (float)viewport_height;
@@ -1622,6 +1695,7 @@ void renderer_draw(Renderer *renderer, const World *world,
     glDepthMask(GL_TRUE);
     glClearDepth(1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    draw_celestials(world,camera,aspect);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_TRUE);

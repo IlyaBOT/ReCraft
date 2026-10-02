@@ -7,8 +7,13 @@ of the main menu. `ReCraft --version` prints it without opening a window.
 GitHub Actions builds Windows/Linux and macOS on the local Vesper runner.
 See [CI, artifacts and host build instructions](docs/CI.md).
 
-The game has 16 x 16 x 128 chunk columns, deterministic terrain for ReCraft saves, walking and flying controls, block interaction, crafting and chest/furnace inventories, survival health and mining, menus, video settings, a debug overlay, and reproducible benchmark scenes. Chunk block bytes use the Beta 1.7.3 ID range 0..96 with separate metadata nibbles; native `.rcg` version 1 saves are migrated on load to version 2. Minecraft Beta 1.7.3 `level.dat` and existing McRegion `.mcr` chunks can also be opened for play. Edits to loaded Beta chunks are written back in McRegion format. Missing Beta chunks are not generated yet. Most Beta blocks still use placeholder geometry and behavior, and ReCraft's own terrain generator is not Beta-compatible. The per-block status is in the [Beta compatibility matrix](docs/BETA_COMPATIBILITY_MATRIX.md).
-The offline Minecraft Beta 1.7.3 protocol 14 client is experimental. It needs testing against a real compatible server; it does not authenticate to online servers. The interface uses selected user-provided CoterieCraft Beta textures and an original bitmap font atlas. Portal ambience uses the original sound asset; other effects remain synthesized. See [asset sources](docs/ASSET_SOURCES.md).
+The game has 16 x 16 x 128 chunk columns, deterministic terrain for ReCraft saves, walking and flying controls, block interaction, crafting and chest/furnace inventories, survival health and mining, menus, video settings, a debug overlay, and reproducible benchmark scenes. Chunk block bytes use the Beta 1.7.3 ID range 0..96 with separate metadata nibbles; native `.rcg` version 1 saves are migrated on load to version 2. Minecraft Beta 1.7.3 `level.dat` and existing McRegion `.mcr` chunks can also be opened for play. Edits to loaded Beta chunks are written back in McRegion format. Missing Beta chunks are not generated yet. Some Beta blocks still use proxy geometry and behavior, and ReCraft's own terrain generator is not Beta-compatible. The per-block status is in the [Beta compatibility matrix](docs/BETA_COMPATIBILITY_MATRIX.md).
+The offline Minecraft Beta 1.7.3 protocol 14 client is experimental. It needs testing against a real compatible server; it does not authenticate to online servers. The interface uses selected user-provided CoterieCraft Beta textures and an original bitmap font atlas. Effects and music now use original OGG assets with Beta sound keys and a non-looping music schedule. See [asset sources](docs/ASSET_SOURCES.md).
+
+The current [mechanics audit](docs/BETA_MECHANICS_AUDIT.md) distinguishes working,
+partial and missing features. Day/night, weather, beds and saved mobs have a
+local implementation; full Beta terrain generation, mob spawning/pathfinding,
+pistons, armor, arrows and explosions remain unfinished.
 
 ## Build
 
@@ -35,7 +40,7 @@ See [runtime layout](docs/RUNTIME_LAYOUT.md).
 ## Play
 
 - WASD and mouse: move and look; Space: jump; Ctrl: sprint.
-- Left/right mouse: break/place the selected block. Number keys 1-9 and the
+- Left/right mouse: attack/break and interact/place. Number keys 1-9 and the
   mouse wheel select the hotbar slot.
 - F: fly in creative worlds. Shift descends while flying.
 - E: open the inventory. Survival has 36 slots and a 2 x 2 crafting grid.
@@ -55,8 +60,14 @@ when broken. Health, damage, air and death/respawn are present. Food heals
 immediately as in Beta; buckets collect sources and place water/lava.
 Water/lava use scheduled 5/30-tick updates, sloping surfaces and side faces.
 Pending updates, item entities and container contents survive saving. Redstone
-supports torch inversion/burnout and basic flat wire; other mechanisms remain
-incomplete. See [the gameplay milestone and checks](docs/GAMEPLAY_PARITY.md).
+supports torch inversion/burnout, wire steps, weak/strong power, levers,
+20-tick stone buttons and directional 2/4/6/8-tick repeaters; other mechanisms
+remain incomplete. Beds advance the night after 100 sleep ticks and save a
+respawn point. Day/night and rain/snow use the Beta world clock and climate.
+Peaceful/Easy/Normal/Hard are selectable in Options. Saved animals and monsters
+have bounded local simulation; cows provide milk, sheep can be sheared and
+chickens lay eggs. Natural spawning and full mob AI are still missing.
+See [the gameplay milestone and checks](docs/GAMEPLAY_PARITY.md).
 Minecraft Beta worlds load their
 player position and inventory from `level.dat` and now save those fields back
 through a gzip temporary file. Reads fall back to `level.dat_old` when the primary
@@ -111,5 +122,7 @@ build\ReCraft.exe --smoke-test --screen blocks --no-audio --frames 50 --capture 
 ```
 
 Other views are `player` (2 x 2 crafting), `inventory` (Creative catalogue),
-`chest` and `health`. Smoke views ignore live movement/mouse input so captures
+`chest`, `health`, `day`, `night`, `rain`, `snow`, `bed` and `mobs`.
+The `snow` view forces snow classification in its transient fixture.
+Smoke views ignore live movement/mouse input so captures
 are reproducible. Normal interactive play remains available from the menu.

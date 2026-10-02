@@ -1,5 +1,6 @@
 #include "entities.h"
 #include "../game/player.h"
+#include "environment.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +15,7 @@ void world_entities_free(Chunk *chunk)
 { SavedEntity *e,*next; for(e=chunk->saved_entities;e;e=next) { next=e->next; free_one(e); } chunk->saved_entities=NULL; }
 typedef struct Read {
     SavedEntity **tail,*current; NbtWriter writer; uint8_t *scratch; size_t size;
-    int list,pos,motion,index,item,records;
+    int list,pos,motion,index,item,records,rotation,health_seen,pos_seen;
 } Read;
 static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
 {
@@ -25,19 +26,29 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
         if(++r->records>4096) return 0;
         r->current=(SavedEntity *)calloc(1,sizeof(*r->current)); if(!r->current) return 0;
         r->current->item.id=-1; r->current->item.health=5;
+        r->health_seen=r->pos_seen=0; r->current->mob.health=10;
         nbt_writer_init(&r->writer,r->scratch,r->size,NULL);
     }
     if(!r->current) return 1;
     if((event==NBT_FINISH ? nbt_writer_end(&r->writer) : nbt_writer_tag(&r->writer,t))!=NBT_OK) return 0;
     if(event==NBT_VALUE && depth==4) {
         if(t->type==NBT_STRING && named(t,"id") && t->value.bytes.size==4 && !memcmp(t->value.bytes.data,"Item",4)) r->current->item_entity=1;
+        if(t->type==NBT_STRING && named(t,"id")) {
+            r->current->mob.type=mob_type(t->value.bytes.data,t->value.bytes.size);
+            if(!r->health_seen) r->current->mob.health=mob_default_health(r->current->mob.type);
+        }
         if(t->type==NBT_SHORT && named(t,"Age")) r->current->item.age=t->value.short_value/20.0f;
-        if(t->type==NBT_SHORT && named(t,"Health")) r->current->item.health=t->value.short_value;
+        if(t->type==NBT_SHORT && named(t,"Health")) { r->health_seen=1; r->current->item.health=t->value.short_value; r->current->mob.health=t->value.short_value; }
+        if(t->type==NBT_SHORT && named(t,"Fire")) r->current->mob.fire=t->value.short_value;
+        if(t->type==NBT_BYTE && named(t,"OnGround")) r->current->mob.on_ground=t->value.byte!=0;
+        if(t->type==NBT_BYTE && named(t,"Color")) r->current->mob.color=t->value.byte&15;
+        if(t->type==NBT_BYTE && named(t,"Sheared")) r->current->mob.sheared=t->value.byte!=0;
     }
     if(event==NBT_BEGIN && depth==4) {
         if(t->type==NBT_LIST && t->list_type==NBT_DOUBLE && t->count==3) {
             r->pos=named(t,"Pos"); r->motion=named(t,"Motion"); r->index=0;
         }
+        if(t->type==NBT_LIST && named(t,"Rotation") && t->list_type==NBT_FLOAT && t->count==2) { r->rotation=1; r->index=0; }
         if(t->type==NBT_COMPOUND && named(t,"Item")) r->item=1;
     }
     if(event==NBT_VALUE && depth==5) {
@@ -47,13 +58,19 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
                 (r->index==0 ? &d->vx : r->index==1 ? &d->vy : &d->vz);
             *p=(float)t->value.double_value*(r->motion ? 20 : 1); ++r->index;
         }
+        if(t->type==NBT_FLOAT && r->rotation && r->index<2) {
+            if(r->index++==0) r->current->mob.yaw=t->value.float_value; else r->current->mob.pitch=t->value.float_value;
+        }
         if(r->item) {
             if(t->type==NBT_SHORT && named(t,"id")) d->id=(uint16_t)t->value.short_value;
             if(t->type==NBT_SHORT && named(t,"Damage")) d->damage=(uint16_t)t->value.short_value;
             if(t->type==NBT_BYTE && named(t,"Count")) d->count=(uint8_t)t->value.byte;
         }
     }
-    if(event==NBT_FINISH && depth==4) { if(t->type==NBT_LIST) r->pos=r->motion=0; if(t->type==NBT_COMPOUND) r->item=0; }
+    if(event==NBT_FINISH && depth==4) {
+        if(t->type==NBT_LIST) { if(r->pos && r->index==3) r->pos_seen=1; r->pos=r->motion=r->rotation=0; }
+        if(t->type==NBT_COMPOUND) r->item=0;
+    }
     if(event==NBT_FINISH && depth==3) {
         SavedEntity *e=r->current; size_t size;
         if(nbt_writer_finish(&r->writer,&size)!=NBT_OK) return 0;
@@ -63,6 +80,13 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
             !isfinite(e->item.vx) || !isfinite(e->item.vy) || !isfinite(e->item.vz) ||
             fabsf(e->item.x)>32000000 || fabsf(e->item.z)>32000000 || fabsf(e->item.y)>32000000)) return 0;
         e->item.active=e->item_entity && e->item.id>0 && e->item.count>0;
+        e->mob.x=e->item.x; e->mob.y=e->item.y; e->mob.z=e->item.z;
+        e->mob.vx=e->item.vx; e->mob.vy=e->item.vy; e->mob.vz=e->item.vz;
+        if(!r->pos_seen) e->mob.type=0; /* Preserve incomplete reference records verbatim. */
+        if(e->mob.type && (!isfinite(e->mob.x) || !isfinite(e->mob.y) || !isfinite(e->mob.z) ||
+           !isfinite(e->mob.vx) || !isfinite(e->mob.vy) || !isfinite(e->mob.vz) ||
+           !isfinite(e->mob.yaw) || !isfinite(e->mob.pitch) || fabsf(e->mob.x)>32000000 ||
+           fabsf(e->mob.z)>32000000 || fabsf(e->mob.y)>32000000)) return 0;
         *r->tail=e; r->tail=&e->next; r->current=NULL;
     }
     return 1;
@@ -136,6 +160,7 @@ int world_entities_write_list(const Chunk *chunk,NbtWriter *w)
     if(nbt_writer_tag(w,&t)!=NBT_OK) return 0;
     for(e=chunk->saved_entities;e;e=e->next) {
         if(e->item_entity && !e->item.active) continue;
+        if(e->mob.type) { if(!world_mob_write(w,e)) return 0; continue; }
         if(e->raw) {
             WriteItem rewrite; memset(&rewrite,0,sizeof(rewrite)); rewrite.writer=w; rewrite.d=&e->item;
             if(nbt_read(e->raw,e->raw_size,NULL,e->item_entity ? item_rewrite : copy_tag,e->item_entity ? (void *)&rewrite : (void *)w,NULL)!=NBT_OK) return 0;
@@ -205,7 +230,10 @@ void world_items_tick(World *w,const Player *player,InventorySlot *inventory)
                 if(world_peek_block(w,bx,by,bz)==81 || world_peek_block(w,bx,by,bz)==10 || world_peek_block(w,bx,by,bz)==11) d->health=0;
                 dx=d->x-player->x; dz=d->z-player->z;
                 if(player->health>0 && d->pickup_delay==0 && dx*dx+dz*dz<1 && fabsf(d->y-player->y-0.9f)<1.3f) {
-                    InventorySlot stack={d->id,d->count,d->damage}; d->count-=inventory_add_stack(inventory,36,stack);
+                    InventorySlot stack={d->id,d->count,d->damage}; int added=inventory_add_stack(inventory,36,stack);
+                    d->count-=added;
+                    if(added) world_sound(w,"random.pop",d->x,d->y,d->z,.2f,
+                        2*((float)world_random(w,10000)/10000-(float)world_random(w,10000)/10000)*.7f+2);
                 }
                 if(d->count<=0 || d->age>=300 || d->y< -64 || d->health<=0) d->active=0;
                 c->entities_modified=1; c->dirty_flags|=CHUNK_DIRTY_SAVE|CHUNK_DIRTY_ENTITIES;

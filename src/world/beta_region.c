@@ -2,6 +2,7 @@
 #include "block_entity.h"
 #include "entities.h"
 #include "ticks.h"
+#include "beta_session.h"
 #include "../nbt/nbt.h"
 
 #include <limits.h>
@@ -241,6 +242,7 @@ WorldError beta_region_write_chunk(const World *world,const Chunk *chunk)
     WorldError result=WORLD_ERROR_IO;
     if (!world || !chunk || !chunk->beta_raw ||
         !region_path(world,chunk,path,sizeof(path))) return WORLD_ERROR_INVALID_ARGUMENT;
+    if(world->beta_session && !beta_session_check(world->path,world->beta_session)) return WORLD_ERROR_SESSION_LOCK;
     raw=(uint8_t *)malloc(chunk->beta_raw_size);
     if (!raw) return WORLD_ERROR_OUT_OF_MEMORY;
     memcpy(raw,chunk->beta_raw,chunk->beta_raw_size);

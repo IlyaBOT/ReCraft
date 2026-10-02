@@ -1,6 +1,9 @@
 #include "world.h"
 #include "fluid.h"
+#include "../game/bed.h"
+#include "redstone.h"
 #include "ticks.h"
+#include "environment.h"
 #include "../game/mining.h"
 #include <stdio.h>
 #include <string.h>
@@ -90,6 +93,7 @@ static WorldPhysicsCell pop(World *w)
     if (!w->physics_count) memset(w->physics_hash,0,sizeof(w->physics_hash));
     return result;
 }
+static void support(int x,int y,int z,int meta,int *sx,int *sy,int *sz);
 static void notify_cell(World *w,int x,int y,int z)
 {
     Chunk *c=loaded(w,x,y,z); unsigned id;
@@ -101,7 +105,19 @@ static void notify_cell(World *w,int x,int y,int z)
     if (id==8 || id==10) world_schedule_tick(w,x,y,z,(uint8_t)id,id==8 ? 5 : 30);
     else if (id==12 || id==13) world_schedule_tick(w,x,y,z,(uint8_t)id,3);
     else if (id==75 || id==76) world_schedule_tick(w,x,y,z,(uint8_t)id,2);
-    else if (id==50 || id==81 || id==55) world_schedule_tick(w,x,y,z,(uint8_t)id,1);
+    else if (id==50 || id==81 || id==55 || id==26) world_schedule_tick(w,x,y,z,(uint8_t)id,id==55 ? 0 : 1);
+    else if(id==93 || id==94) {
+        unsigned meta=world_peek_metadata(w,x,y,z);
+        int input=world_repeater_input(w,x,y,z,meta);
+        if(!world_block_def(world_peek_block(w,x,y-1,z))->opaque) {
+            world_drop_stack(w,x,y,z,(InventorySlot){356,1,0}); world_set_block(w,x,y,z,0);
+        } else if((id==93 && input) || (id==94 && !input)) world_schedule_tick(w,x,y,z,(uint8_t)id,(((meta>>2)&3)+1)*2);
+    } else if(id==69 || id==77) {
+        int sx,sy,sz; support(x,y,z,world_peek_metadata(w,x,y,z)&7,&sx,&sy,&sz);
+        if(loaded(w,sx,sy,sz) && !world_block_def(world_peek_block(w,sx,sy,sz))->opaque) {
+            world_drop_stack(w,x,y,z,(InventorySlot){(int)id,1,0}); world_set_block(w,x,y,z,0);
+        }
+    }
 }
 void world_physics_notify(World *w,int x,int y,int z)
 {
@@ -135,27 +151,6 @@ static void support(int x,int y,int z,int meta,int *sx,int *sy,int *sz)
     else if (meta==3) { *sz=z-1; *sy=y; }
     else if (meta==4) { *sz=z+1; *sy=y; }
 }
-static int emitter(const World *w,int x,int y,int z,int tx,int ty,int tz,int wire)
-{
-    unsigned id=world_peek_block(w,x,y,z),meta=world_peek_metadata(w,x,y,z);
-    if (id==69 || id==77) return (meta&8) ? 15 : 0;
-    if (id==55) return wire ? meta : 0;
-    if (id==76) {
-        int sx,sy,sz; support(x,y,z,meta,&sx,&sy,&sz);
-        return sx==tx && sy==ty && sz==tz ? 0 : 15;
-    }
-    return 0;
-}
-static int power_at(const World *w,int x,int y,int z,int ex,int ey,int ez,int wire)
-{
-    int i,best=0;
-    for (i=0;i<6;++i) {
-        int nx=x+dx[i],ny=y+dy[i],nz=z+dz[i],n;
-        if (nx==ex && ny==ey && nz==ez) continue;
-        n=emitter(w,nx,ny,nz,x,y,z,wire); if (n>best) best=n;
-    }
-    return best;
-}
 void world_redstone_notify(World *w,int x,int y,int z)
 {
     int i,j;
@@ -163,7 +158,7 @@ void world_redstone_notify(World *w,int x,int y,int z)
     for (i=0;i<6;++i) for (j=0;j<6;++j) {
         int nx=x+dx[i]+dx[j],ny=y+dy[i]+dy[j],nz=z+dz[i]+dz[j];
         unsigned id=world_peek_block(w,nx,ny,nz);
-        if (id==75 || id==76 || id==55) notify_cell(w,nx,ny,nz);
+        if (id==75 || id==76 || id==55 || id==93 || id==94) notify_cell(w,nx,ny,nz);
     }
 }
 static int burned_out(const World *w,int x,int y,int z)
@@ -185,6 +180,26 @@ static void step(World *w,WorldPhysicsCell c)
     int x=c.x,y=c.y,z=c.z,sx,sy,sz;
     unsigned id=world_peek_block(w,x,y,z),meta=world_peek_metadata(w,x,y,z);
     if (id!=c.id || !loaded(w,x,y,z)) return;
+    if(id==26) { bed_neighbor_tick(w,x,y,z); return; }
+    if(id==77) {
+        if(meta&8) {
+            world_set_metadata(w,x,y,z,(uint8_t)(meta&7)); world_redstone_notify(w,x,y,z);
+            world_sound(w,"random.click",x+.5f,y+.5f,z+.5f,.3f,.5f);
+        }
+        return;
+    }
+    if(id==93 || id==94) {
+        int input=world_repeater_input(w,x,y,z,meta);
+        if(!world_block_def(world_peek_block(w,x,y-1,z))->opaque) {
+            world_drop_stack(w,x,y,z,(InventorySlot){356,1,0}); world_set_block(w,x,y,z,0); return;
+        }
+        if(id==93 || !input) {
+            world_set_block(w,x,y,z,(uint8_t)(id==93 ? 94 : 93)); world_set_metadata(w,x,y,z,(uint8_t)meta);
+            if(id==93 && !input) world_schedule_tick(w,x,y,z,94,(((meta>>2)&3)+1)*2);
+            world_redstone_notify(w,x,y,z);
+        }
+        return;
+    }
     if (id==8 || id==10) { fluid_tick(w,x,y,z,id); return; }
     if (id==12 || id==13) {
         int bottom=y;
@@ -211,12 +226,14 @@ static void step(World *w,WorldPhysicsCell c)
             world_drop_stack(w,x,y,z,(InventorySlot){id==50 ? 50 : 76,1,0}); world_set_block(w,x,y,z,0); return;
         }
         if (id!=50) {
-            int powered=power_at(w,sx,sy,sz,x,y,z,1)>0;
+            int powered=world_redstone_signal(w,sx,sy,sz,x,y,z,1)>0;
             if ((id==76 && powered) || (id==75 && !powered && !burned_out(w,x,y,z))) {
                 world_set_block(w,x,y,z,(uint8_t)(id==76 ? 75 : 76)); world_set_metadata(w,x,y,z,(uint8_t)meta);
                 if (id==76) {
                     unsigned n=w->torch_toggle_head++%128;
                     w->torch_toggles[n].x=x; w->torch_toggles[n].y=y; w->torch_toggles[n].z=z; w->torch_toggles[n].tick=w->tick;
+                    if(burned_out(w,x,y,z)) world_sound(w,"random.fizz",x+.5f,y+.5f,z+.5f,.5f,
+                        2.6f+((float)world_random(w,16777216)-(float)world_random(w,16777216))/16777216*.8f);
                 }
                 world_redstone_notify(w,x,y,z);
             }
@@ -224,13 +241,18 @@ static void step(World *w,WorldPhysicsCell c)
         return;
     }
     if (id==55) {
-        int i,power=power_at(w,x,y,z,x,y,z,0)>0 ? 15 : 0;
+        int i,power=world_redstone_power(w,x,y,z,x,y,z,0)>0 ? 15 : 0;
         if (!world_block_def(world_peek_block(w,x,y-1,z))->opaque) {
             world_drop_stack(w,x,y,z,(InventorySlot){331,1,0}); world_set_block(w,x,y,z,0); return;
         }
         for (i=0;i<6;++i) if (!dy[i]) {
-            int n=world_peek_metadata(w,x+dx[i],y,z+dz[i]);
-            if (world_peek_block(w,x+dx[i],y,z+dz[i])==55 && n-1>power) power=n-1;
+            int nx=x+dx[i],nz=z+dz[i],ny=y,n;
+            if(world_block_def(world_peek_block(w,nx,y,nz))->opaque) {
+                if(world_block_def(world_peek_block(w,x,y+1,z))->opaque) continue;
+                ++ny;
+            } else if(world_peek_block(w,nx,y,nz)!=55) --ny;
+            n=world_peek_metadata(w,nx,ny,nz);
+            if(world_peek_block(w,nx,ny,nz)==55 && n-1>power) power=n-1;
         }
         if (power!=(int)meta) { world_set_metadata(w,x,y,z,(uint8_t)power); world_redstone_notify(w,x,y,z); }
     }
@@ -245,8 +267,11 @@ static void random_cactus(World *w)
             unsigned bits,index; int x,y,z,height;
             w->random_tick=w->random_tick*3u+UINT32_C(1013904223); bits=w->random_tick>>2;
             x=bits&15; z=(bits>>8)&15; y=(bits>>16)&127; index=(unsigned)(x+z*16+y*256);
-            if (chunk->blocks[index]!=81 || y==127) continue;
             x+=chunk->x*16; z+=chunk->z*16;
+            if(chunk->blocks[index]==75 || chunk->blocks[index]==76) {
+                step(w,(WorldPhysicsCell){x,z,(uint8_t)y,chunk->blocks[index],0,0,0,NULL}); continue;
+            }
+            if (chunk->blocks[index]!=81 || y==127) continue;
             if (world_peek_block(w,x,y+1,z)!=0 || !cactus_valid(w,x,y,z)) continue;
             for (height=1;world_peek_block(w,x,y-height,z)==81;++height) { }
             if (height<3) {

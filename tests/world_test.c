@@ -53,6 +53,22 @@ static void write_native_v1_fixture(const char *path)
     free(raw);
 }
 
+static void downgrade_world_metadata(const char *directory,const char *id)
+{
+    char path[256]; uint8_t data[512],legacy[512]; size_t size,i,name;
+    uint32_t hash=UINT32_C(2166136261); FILE *file;
+    snprintf(path,sizeof(path),"%s/%s/world.dat",directory,id);
+    file=fopen(path,"rb"); assert(file);
+    size=fread(data,1,sizeof(data),file); assert(fclose(file)==0);
+    name=data[7]; assert(size==48+name+4 && data[4]==2);
+    memcpy(legacy,data,24); legacy[4]=1;
+    memcpy(legacy+24,data+48,name);
+    for(i=0;i<24+name;++i) { hash^=legacy[i]; hash*=UINT32_C(16777619); }
+    put_u32(legacy+24+name,hash);
+    file=fopen(path,"wb"); assert(file);
+    assert(fwrite(legacy,1,28+name,file)==28+name); assert(fclose(file)==0);
+}
+
 int main(void)
 {
     World a = {0}, b = {0}, c = {0};
@@ -133,16 +149,29 @@ int main(void)
     assert(world_set_metadata(&a,-1,70,-1,13));
     /* Capacity one forces the dirty negative chunk to disk before close. */
     assert(world_get_chunk(&a,2,3));
+    a.beta_world_time=INT64_C(1234567890123);
+    a.rain_time=12345; a.thunder_time=6789; a.raining=1; a.thundering=1;
     assert(world_close(&a) == WORLD_OK);
     assert(world_storage_list(dir,infos,4) == 1);
     assert(!strcmp(infos[0].name,"Persistence Fixture"));
     assert(infos[0].creative == 1 && infos[0].structures == 0);
+    assert(infos[0].world_time==INT64_C(1234567890123) && infos[0].rain_time==12345);
+    assert(infos[0].thunder_time==6789 && infos[0].raining && infos[0].thundering);
     assert(world_storage_rename(dir,id,"Renamed") == WORLD_OK);
     assert(world_open(&b,dir,id,2) == WORLD_OK);
     assert(!strcmp(b.name,"Renamed"));
+    assert(b.beta_world_time==INT64_C(1234567890123) && b.rain_time==12345 && b.thunder_time==6789);
+    assert(b.raining && b.thundering && b.rain_strength==1 && b.thunder_strength==1);
     assert(world_get_block(&b,-1,70,-1) == BLOCK_GLASS);
     assert(world_get_metadata(&b,-1,70,-1) == 13);
     assert(world_close(&b) == WORLD_OK);
+    /* Existing RCW1/v1 worlds remain readable and acquire a v2 metadata file
+     * on save, without altering their chunk IDs or world name. */
+    downgrade_world_metadata(dir,id);
+    assert(world_open(&b,dir,id,2)==WORLD_OK);
+    assert(!strcmp(b.name,"Renamed") && b.beta_world_time==0 && !b.raining && !b.thundering);
+    assert(world_get_block(&b,-1,70,-1)==BLOCK_GLASS);
+    assert(world_close(&b)==WORLD_OK);
 
     snprintf(chunk_path,sizeof(chunk_path),"%s/%s/chunk_0_0.rcg",dir,id);
     write_native_v1_fixture(chunk_path);

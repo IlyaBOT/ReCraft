@@ -16,6 +16,13 @@
 #include "game/container.h"
 #include "world/block_entity.h"
 #include "world/entities.h"
+#include "world/fluid.h"
+#include "world/environment.h"
+#include "world/beta_session.h"
+#include "world/redstone.h"
+#include "renderer/weather.h"
+#include "game/bed.h"
+#include "world/mobs.h"
 #include "ui/ui.h"
 #include "audio/audio.h"
 #include "network/network.h"
@@ -76,11 +83,10 @@ typedef struct App {
     float mining_progress;
     int mining_item,mining_active,mining_wait,attack,attack_pressed,swing_ticks;
     uint64_t animation_tick;
-    unsigned portal_sound_wait;
     char inventory_labels[9][32];
     const char *inventory_label_ptrs[9];
     char chat[128], message[256];
-    double message_until, step_time;
+    double message_until;
     Vector2 last_mouse;
     int mouse_settle;
     PlayerInput input;
@@ -100,6 +106,7 @@ typedef struct RunOptions {
 } RunOptions;
 
 static void close_inventory(App *app);
+static void cancel_mining(App *app);
 static void open_inventory(App *app,ContainerKind kind,BlockHit hit,int size);
 
 static void copy_text(char *dst, size_t size, const char *src)
@@ -169,6 +176,10 @@ static void refresh_lists(App *app)
             entry->spawn_z = beta[j].spawn_z;
             entry->region_files = beta[j].region_files;
             entry->world_time = beta[j].world_time;
+            entry->rain_time=beta[j].rain_time; entry->thunder_time=beta[j].thunder_time;
+            entry->raining=beta[j].raining; entry->thundering=beta[j].thundering;
+            entry->has_bed=beta[j].has_bed==7;
+            entry->bed_x=beta[j].bed_x; entry->bed_y=beta[j].bed_y; entry->bed_z=beta[j].bed_z;
             entry->save_version = beta[j].save_version;
             entry->dimension = beta[j].dimension;
             entry->has_player=beta[j].has_player;
@@ -243,9 +254,10 @@ static int save_player(App *app)
         !path_join(temporary, sizeof(temporary), app->world.path, "player.tmp")) return 0;
     f = fopen(temporary, "wb");
     if (!f) return 0;
-    ok = fprintf(f, "2 %.9g %.9g %.9g %.9g %.9g %d %d %d %d %d\n", app->player.x,
+    ok = fprintf(f, "3 %.9g %.9g %.9g %.9g %.9g %d %d %d %d %d %d %d %d %d\n", app->player.x,
         app->player.y, app->player.z, app->player.yaw, app->player.pitch,
-        app->player.selected_slot, app->player.flying,app->player.health,app->player.air,app->player.fire) > 0;
+        app->player.selected_slot, app->player.flying,app->player.health,app->player.air,app->player.fire,
+        app->player.has_bed_spawn,app->player.spawn_x,app->player.spawn_y,app->player.spawn_z) > 0;
     if (fclose(f) != 0) ok = 0;
     if (!ok) return 0;
 #ifdef _WIN32
@@ -265,16 +277,23 @@ static void load_player(App *app)
     f = fopen(path, "rb");
     if (!f) return;
     if (fscanf(f, "%d %f %f %f %f %f %d %d", &version, &p.x, &p.y, &p.z,
-        &p.yaw, &p.pitch, &p.selected_slot, &p.flying) == 8 && (version==1 || version==2) &&
+        &p.yaw, &p.pitch, &p.selected_slot, &p.flying) == 8 && (version>=1 && version<=3) &&
         isfinite(p.x) && isfinite(p.y) && isfinite(p.z) && isfinite(p.yaw) &&
         isfinite(p.pitch) && fabsf(p.x) < 10000000.0f && fabsf(p.z) < 10000000.0f &&
         p.y >= 0 && p.y < 256 && fabsf(p.pitch) <= 1.48f &&
         p.selected_slot >= 0 && p.selected_slot < 9) {
         p.flying = p.creative && p.flying;
-        if (version==2) {
+        if (version>=2) {
             int health,air,fire;
             if (fscanf(f,"%d %d %d",&health,&air,&fire)==3 && health>=0 && health<=20 && air>=-20 && air<=300 && fire>=0 && fire<=32767) {
                 p.health=health; p.air=air; p.fire=fire;
+            }
+        }
+        if(version==3) {
+            int has,x,y,z;
+            if(fscanf(f,"%d %d %d %d",&has,&x,&y,&z)==4 && (has==0 || has==1) &&
+                y>=0 && y<128 && x>-10000000 && x<10000000 && z>-10000000 && z<10000000) {
+                p.has_bed_spawn=has; p.spawn_x=x; p.spawn_y=y; p.spawn_z=z;
             }
         }
         app->player = p;
@@ -331,7 +350,12 @@ static int leave_world(App *app)
 {
     if (app->has_world) {
         BetaLevelState beta_state;
+        if(app->world.beta_format && !beta_session_check(app->world.path,app->world.beta_session)) {
+            notice(app,"World opened by another client, or session.lock is missing. Saving is blocked.");
+            ui_set_screen(&app->ui,UI_SCREEN_PAUSE); capture_cursor(app,0); return 0;
+        }
         close_inventory(app);
+        player_wake(&app->player,&app->world,0);
         if (app->world.beta_format) {
             memset(&beta_state,0,sizeof(beta_state));
             beta_state.x=app->player.x;
@@ -341,6 +365,12 @@ static int leave_world(App *app)
             beta_state.pitch=-app->player.pitch*180.0f/PI_F;
             beta_state.on_ground=app->player.on_ground;
             beta_state.world_time=app->world.beta_world_time;
+            beta_state.session=app->world.beta_session;
+            beta_state.has_environment=1;
+            beta_state.rain_time=app->world.rain_time; beta_state.thunder_time=app->world.thunder_time;
+            beta_state.raining=app->world.raining; beta_state.thundering=app->world.thundering;
+            beta_state.has_bed=app->player.has_bed_spawn;
+            beta_state.bed_x=app->player.spawn_x; beta_state.bed_y=app->player.spawn_y; beta_state.bed_z=app->player.spawn_z;
             beta_state.has_vitals=1; beta_state.health=app->player.health;
             beta_state.air=app->player.air; beta_state.fire=app->player.fire;
             memcpy(beta_state.inventory,app->inventory,sizeof(beta_state.inventory));
@@ -374,6 +404,9 @@ static int leave_world(App *app)
 static void enter_world(App *app)
 {
     app->has_world = 1;
+    app->audio.walked=0; app->audio.next_step=1;
+    app->world.difficulty=app->ui.options.difficulty;
+    world_environment_refresh(&app->world);
     player_spawn(&app->player, &app->world, app->world.creative);
     if (app->world.beta_format && app->world.beta_has_player) {
         app->player.x=(float)app->world.beta_player_x;
@@ -381,6 +414,10 @@ static void enter_world(App *app)
         app->player.z=(float)app->world.beta_player_z;
         app->player.yaw=(app->world.beta_player_yaw-180.0f)*PI_F/180.0f;
         app->player.pitch=-app->world.beta_player_pitch*PI_F/180.0f;
+    }
+    if(app->world.beta_has_bed) {
+        app->player.has_bed_spawn=1;
+        app->player.spawn_x=app->world.beta_bed_x; app->player.spawn_y=app->world.beta_bed_y; app->player.spawn_z=app->world.beta_bed_z;
     }
     app->previous_player=app->player;
     inventory_init(app->inventory,app->world.creative);
@@ -564,11 +601,19 @@ static WorldError open_beta_world(App *app,const UiWorldEntry *entry)
     error=world_init(&app->world,entry->seed,0,CACHE_CHUNKS);
     if (error!=WORLD_OK) return error;
     copy_text(app->world.path,sizeof(app->world.path),path);
+    if(!beta_session_start(path,&app->world.beta_session)) {
+        world_close(&app->world); return WORLD_ERROR_SESSION_LOCK;
+    }
     copy_text(app->world.id,sizeof(app->world.id),entry->id);
     copy_text(app->world.name,sizeof(app->world.name),entry->name);
     app->world.persistent=1;
     app->world.beta_format=1;
     app->world.beta_world_time=entry->world_time;
+    app->world.rain_time=entry->rain_time; app->world.thunder_time=entry->thunder_time;
+    app->world.raining=entry->raining; app->world.thundering=entry->thundering;
+    app->world.rain_strength=entry->raining ? 1 : 0; app->world.thunder_strength=entry->thundering ? 1 : 0;
+    app->world.beta_has_bed=entry->has_bed;
+    app->world.beta_bed_x=entry->bed_x; app->world.beta_bed_y=entry->bed_y; app->world.beta_bed_z=entry->bed_z;
     app->world.spawn_x=entry->spawn_x;
     app->world.spawn_y=entry->spawn_y;
     app->world.spawn_z=entry->spawn_z;
@@ -658,7 +703,7 @@ static void handle_action(App *app, UiAction action)
             ui_set_screen(&app->ui, UI_SCREEN_GAME); capture_cursor(app, 1); break;
         case UI_ACTION_RESPAWN:
             if (!app->network) {
-                player_spawn(&app->player,&app->world,app->world.creative);
+                player_respawn(&app->player,&app->world);
                 app->previous_player=app->player; app->health=20;
                 ui_set_screen(&app->ui,UI_SCREEN_GAME); capture_cursor(app,1);
                 menu_background_clear(&app->menu_background);
@@ -814,6 +859,11 @@ static void game_input(App *app)
     Vector2 mouse = GetMousePosition();
     int i, wheel;
     app->attack=0;
+    if(app->player.sleeping) {
+        memset(&app->input,0,sizeof(app->input));
+        if(IsKeyPressed(KEY_ESCAPE)) { player_wake(&app->player,&app->world,0); capture_cursor(app,1); }
+        return;
+    }
     if (IsKeyPressed(KEY_F3)) app->debug = !app->debug;
     if (app->chat_open) {
         size_t n = strlen(app->chat);
@@ -883,6 +933,10 @@ static void game_input(App *app)
     }
     app->attack=IsMouseButtonDown(MOUSE_LEFT_BUTTON)!=0;
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) app->attack_pressed=1;
+    if(app->attack_pressed && !app->network && world_mobs_attack(&app->world,&app->player,
+        &app->inventory[app->player.selected_slot],3)) {
+        app->attack=app->attack_pressed=0; cancel_mining(app); app->swing_ticks=6;
+    }
     if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON)) {
         if (app->network) {
             BlockHit hit = player_raycast(&app->player, &app->world, 5);
@@ -893,7 +947,14 @@ static void game_input(App *app)
         } else {
             BlockHit hit=player_raycast(&app->player,&app->world,5);
             InventorySlot *item=&app->inventory[app->player.selected_slot];
+            if(world_mobs_interact(&app->world,&app->player,item,3)) { app->swing_ticks=6; return; }
             if (hit.hit && !IsKeyDown(KEY_LEFT_SHIFT)) {
+                if(hit.block==26) {
+                    int result=player_sleep(&app->player,&app->world,hit.x,hit.y,hit.z);
+                    if(result==1) notice(app,"You can only sleep at night.");
+                    if(!result) { capture_cursor(app,0); cancel_mining(app); }
+                    return;
+                }
                 if (hit.block==58) { open_inventory(app,CONTAINER_WORKBENCH,hit,0); return; }
                 if (hit.block==54) {
                     BlockEntity *a,*b;
@@ -906,19 +967,14 @@ static void game_input(App *app)
                         open_inventory(app,CONTAINER_FURNACE,hit,3);
                     return;
                 }
-                if(hit.block==69 || hit.block==77) {
-                    world_set_metadata(&app->world,hit.x,hit.y,hit.z,
-                        world_get_metadata(&app->world,hit.x,hit.y,hit.z)^8);
-                    world_redstone_notify(&app->world,hit.x,hit.y,hit.z);
-                    return;
-                }
+                if(world_redstone_activate(&app->world,hit.x,hit.y,hit.z)) return;
             }
             if(player_use_item(&app->player,&app->world,item)) { app->health=app->player.health; app->swing_ticks=6; return; }
             if (item->id>0 && item->id<BETA_BLOCK_COUNT && item->count>0 &&
                 player_place_block_state(&app->player,&app->world,
                     (BetaBlockState){(uint8_t)item->id,(uint8_t)item->damage})) {
+                audio_block(&app->audio,(unsigned)item->id,3,hit.place_x+.5f,hit.place_y+.5f,hit.place_z+.5f);
                 inventory_take(app->inventory,app->player.selected_slot,app->player.creative);
-                audio_play(&app->audio,RECRAFT_SOUND_PLACE);
             }
         }
     }
@@ -962,6 +1018,8 @@ static void tick_mining(App *app)
     /* A click instantly removes zero-hardness blocks. Other targets start
      * accumulating only on the subsequent controller tick, like Beta. */
     if (!new_target || strength>=1) app->mining_progress+=strength;
+    if(app->animation_tick%4==0 && !app->player.creative)
+        audio_block(&app->audio,hit.block,1,hit.x+.5f,hit.y+.5f,hit.z+.5f);
     if (app->mining_progress<1) return;
     if (app->network) network_mine_block(app->network,2,hit.x,hit.y,hit.z,hit_face(hit));
     else {
@@ -971,8 +1029,9 @@ static void tick_mining(App *app)
             if (!app->player.creative) {
                 world_drop_stack(&app->world,hit.x,hit.y,hit.z,drop);
                 mining_wear(item,hit.block);
+                if(item->count<=0) audio_named(&app->audio,"random.break",.8f,1,1,app->player.x,app->player.y,app->player.z);
             }
-            audio_play(&app->audio,RECRAFT_SOUND_BREAK);
+            audio_block(&app->audio,hit.block,2,hit.x+.5f,hit.y+.5f,hit.z+.5f);
         }
     }
     app->mining_active=0; app->mining_progress=0; app->mining_wait=5;
@@ -986,7 +1045,12 @@ static void tick_game(App *app)
         return;
     }
     app->previous_player=app->player;
+    if(!app->network) app->world.difficulty=app->ui.options.difficulty;
+    else world_environment_tick(&app->world);
     player_tick(&app->player, &app->world, &app->input, (float)RECRAFT_TICK_SECONDS);
+    if(app->previous_player.sleeping && !app->player.sleeping) capture_cursor(app,1);
+    if(app->player.health<app->previous_player.health)
+        audio_named(&app->audio,"random.hurt",1,1,1,app->player.x,app->player.y,app->player.z);
     app->health=app->player.health;
     if (app->health<=0 && !app->player.creative) {
         int i;
@@ -1001,32 +1065,42 @@ static void tick_game(App *app)
     }
     tick_mining(app);
     renderer_animate(app->renderer,++app->animation_tick);
-    if(app->portal_sound_wait) --app->portal_sound_wait;
-    else {
-        int x,y,z,found=0,px=(int)floorf(app->player.x),py=(int)floorf(app->player.y),pz=(int)floorf(app->player.z);
-        for(y=-3;y<=3 && !found;++y) for(z=-6;z<=6 && !found;++z) for(x=-6;x<=6;++x)
-            if(world_peek_block(&app->world,px+x,py+y,pz+z)==90) { found=1; break; }
-        if(found) audio_play(&app->audio,RECRAFT_SOUND_PORTAL);
-        app->portal_sound_wait=found ? 100+(unsigned)(app->animation_tick%100) : 20;
-    }
     if (!app->network) {
         WorldDropEvent drop;
-        if (app->world.beta_format) ++app->world.beta_world_time;
+        world_environment_tick(&app->world);
         world_step_physics(&app->world,64);
         block_entities_tick(&app->world);
+        world_mobs_tick(&app->world,&app->player);
+        app->entity_count=world_mobs_visible(&app->world,app->entities,ENTITY_LIMIT);
+        app->health=app->player.health;
         while(world_take_drop(&app->world,&drop)) { }
         world_items_tick(&app->world,&app->player,app->inventory);
         memset(app->drops,0,sizeof(app->drops));
         world_items_visible(&app->world,app->drops,128);
+    }
+    audio_weather_tick(&app->audio,&app->world,app->player.x,app->player.y,app->player.z,app->ui.options.fancy_graphics);
+    audio_ambient_tick(&app->audio,&app->world,app->player.x,app->player.y,app->player.z);
+    {
+        unsigned i;
+        for(i=0;i<app->world.sound_count;++i) audio_named(&app->audio,app->world.sounds[i].key,
+            app->world.sounds[i].volume,app->world.sounds[i].pitch,1,
+            app->world.sounds[i].x,app->world.sounds[i].y,app->world.sounds[i].z);
+        app->world.sound_count=0;
     }
     app->input.look_dx = app->input.look_dy = 0;
     if (app->network) network_send_position(app->network, app->player.x, app->player.y,
         app->player.z, app->player.yaw*180.0f/PI_F+180.0f,
         -app->player.pitch*180.0f/PI_F, app->player.on_ground);
     if (app->player.on_ground && (app->input.forward || app->input.strafe)) {
-        app->step_time += RECRAFT_TICK_SECONDS;
-        if (app->step_time >= 0.42) { audio_play(&app->audio, RECRAFT_SOUND_STEP); app->step_time = 0; }
-    } else app->step_time = 0;
+        float dx=app->player.x-app->previous_player.x,dz=app->player.z-app->previous_player.z;
+        app->audio.walked+=sqrtf(dx*dx+dz*dz)*.6f;
+        if(app->audio.walked>app->audio.next_step) {
+            unsigned block=world_get_block(&app->world,(int)floorf(app->player.x),(int)floorf(app->player.y-.2f),(int)floorf(app->player.z));
+            if(world_peek_block(&app->world,(int)floorf(app->player.x),(int)floorf(app->player.y),(int)floorf(app->player.z))==78) block=78;
+            app->audio.next_step=(int)app->audio.walked+1;
+            if(block && !fluid_kind(block)) audio_block(&app->audio,block,0,app->player.x,app->player.y,app->player.z);
+        }
+    }
 }
 
 static int capture_png(const char *path)
@@ -1199,14 +1273,44 @@ static int gameplay_preview(App *app,const char *name)
         open_inventory(app,CONTAINER_CHEST,hit,large ? 54 : 27);
     } else if(!strcmp(name,"health")) {
         app->player.creative=0; app->player.health=13; app->health=13;
+    } else if(!strcmp(name,"day") || !strcmp(name,"night") || !strcmp(name,"rain") ||
+              !strcmp(name,"snow") || !strcmp(name,"bed") || !strcmp(name,"mobs")) {
+        int snowy=!strcmp(name,"snow"),sleeping=!strcmp(name,"bed"),mobs=!strcmp(name,"mobs");
+        int cx,cz;
+        app->world.beta_world_time=(!strcmp(name,"night") || sleeping) ? 18000 : 6000;
+        app->world.rain_time=app->world.thunder_time=12000;
+        app->world.raining=snowy || !strcmp(name,"rain");
+        app->world.rain_strength=app->world.raining ? 1 : 0;
+        world_environment_refresh(&app->world);
+        for(cz=-2;cz<=2;++cz) for(cx=-2;cx<=2;++cx) {
+            Chunk *c=world_get_chunk(&app->world,cx,cz);
+            if(snowy && c) {
+                /* Snow rendering fixture, independent of the seed's biome.
+                 * Climate itself is tested against the Java golden values. */
+                memset(c->precipitation,2,sizeof(c->precipitation)); c->climate_ready=1;
+            }
+        }
+        for(i=0;i<5;++i) world_set_block(&app->world,1,64+i,4,1);
+        world_set_block(&app->world,2,64,4,50); world_set_metadata(&app->world,2,64,4,1);
+        app->player.x=8.5f; app->player.y=64; app->player.z=17; app->player.yaw=0; app->player.pitch=.12f;
+        if(sleeping) {
+            bed_place(&app->world,7,64,8,0);
+            app->player.x=7.5f; app->player.z=10.5f;
+            player_sleep(&app->player,&app->world,7,64,8); capture_cursor(app,0);
+        } else if(mobs) {
+            static const int types[8]={50,51,52,54,90,91,92,93};
+            for(i=0;i<8;++i) world_mob_spawn(&app->world,types[i],i*2+.5f,64,6.5f);
+            app->entity_count=world_mobs_visible(&app->world,app->entities,ENTITY_LIMIT);
+        }
+        world_environment_refresh(&app->world); app->previous_player=app->player;
     } else if(!strcmp(name,"blocks")) {
         static const uint8_t ids[6]={58,61,62,54,54,76};
         for(i=0;i<6;++i) { world_set_block(&app->world,i*2,64,4,ids[i]); world_set_metadata(&app->world,i*2,64,4,ids[i]==76 ? 5 : 3); }
         world_set_block(&app->world,9,64,4,54);
         world_set_block(&app->world,12,63,4,12); world_set_block(&app->world,12,64,4,81); world_set_block(&app->world,12,65,4,81);
-        for(i=0;i<6;++i) world_set_block(&app->world,14+i%2,64+i/2,4,90);
-        for(i=0;i<3;++i) { world_set_block(&app->world,13,64+i,4,49); world_set_block(&app->world,16,64+i,4,49); }
-        for(i=0;i<2;++i) { world_set_block(&app->world,14+i,63,4,49); world_set_block(&app->world,14+i,67,4,49); }
+        for(i=0;i<6;++i) world_set_block(&app->world,15+i%2,64+i/2,4,90);
+        for(i=0;i<3;++i) { world_set_block(&app->world,14,64+i,4,49); world_set_block(&app->world,17,64+i,4,49); }
+        for(i=0;i<2;++i) { world_set_block(&app->world,15+i,63,4,49); world_set_block(&app->world,15+i,67,4,49); }
         app->player.x=7.5f; app->player.y=64; app->player.z=14; app->player.yaw=0; app->player.pitch=-.05f;
         app->previous_player=app->player;
     } else return 0;
@@ -1236,7 +1340,7 @@ int main(int argc, char **argv)
             "  [--client-arrays] [--basic-mesh] [--distance 2..12] [--mipmaps 0..4]\n"
             "  [--smooth-lighting 0|1] [--menu-blur 0|1] [--fancy-leaves 0|1] [--chunk-budget 1..8] [--vbo-budget 4|8|16|32]\n"
             "  [--screen main|worlds|create|multiplayer|add|direct|video|inventory|pause]\n"
-            "  [--smoke-test --screen player|crafting|furnace|chest|large-chest|health|blocks]\n"
+            "  [--smoke-test --screen player|crafting|furnace|chest|large-chest|health|blocks|day|night|rain|snow|bed|mobs]\n"
             "  [--no-audio] [--debug] [--fullscreen]\n"
             "  [--connect host:port] [--world save-directory] [--data-dir directory] [--profile-gpu]\n");
         return 2;
@@ -1353,6 +1457,10 @@ int main(int argc, char **argv)
         }
         last = start;
         if (elapsed > 0.25) elapsed = 0.25;
+        app.ui.network_mode=app.network!=NULL;
+        audio_listener(&app.audio,app.player.x,app.player.y+1.62f,app.player.z,app.player.yaw);
+        audio_update(&app.audio,elapsed,app.has_world && (app.network || app.ui.screen==UI_SCREEN_GAME),
+            app.ui.options.music_volume,app.ui.options.sound_volume);
         if (app.network) network_tick(app.network);
         if (app.has_world && app.ui.screen == UI_SCREEN_GAME && !run.benchmark && !run.smoke) game_input(&app);
         app.ui.world_background=app.has_world && app.ui.screen!=UI_SCREEN_GAME;
@@ -1434,14 +1542,16 @@ int main(int argc, char **argv)
                     scene_width,scene_height,app.ui.options.render_distance,(float)elapsed);
                 app.rendered_entities += item_drop_draw(app.drops,128,&camera,
                     scene_width,scene_height,app.ui.options.render_distance);
+                renderer_weather(&app.world,&camera,scene_width,scene_height,
+                    app.ui.options.fancy_graphics,(float)(accumulator/RECRAFT_TICK_SECONDS));
                 hit = player_raycast(&app.player,&app.world,5);
-                if (hit.hit && !app.ui.world_background) {
+                if (hit.hit && !app.ui.world_background && !app.player.sleeping) {
                     BetaBlockState state = { hit.block,
                         world_get_metadata(&app.world,hit.x,hit.y,hit.z) };
                     renderer_draw_selection(app.renderer,&camera,recraft_screen_width(),recraft_screen_height(),
                                             hit.x,hit.y,hit.z,state);
                 }
-                if (!app.ui.world_background && !app.inventory_open && !run.benchmark) {
+                if (!app.ui.world_background && !app.inventory_open && !app.player.sleeping && !run.benchmark) {
                     if (app.mining_active) mining_cracks_draw(&camera,scene_width,scene_height,
                         app.mining_hit.x,app.mining_hit.y,app.mining_hit.z,
                         (BetaBlockState){app.mining_hit.block,world_get_metadata(&app.world,app.mining_hit.x,app.mining_hit.y,app.mining_hit.z)},app.mining_progress);
@@ -1544,6 +1654,9 @@ int main(int argc, char **argv)
                     }
                 }
                 if (app.message_until > start) DrawMinecraftText(app.message,12,recraft_screen_height()-120,12,WHITE,1);
+                if(app.player.sleeping && ui_draw_sleep(&app.ui,app.player.sleep_ticks)) {
+                    player_wake(&app.player,&app.world,0); capture_cursor(&app,1);
+                }
                 if (app.chat_open) {
                     DrawRectangle(8,recraft_screen_height()-145,recraft_screen_width()-16,24,(Color){0,0,0,210});
                     DrawMinecraftText(app.chat,12,recraft_screen_height()-141,16,WHITE,1);

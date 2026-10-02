@@ -30,6 +30,21 @@ public final class ExtractBetaRecipes {
         // The client initializes blocks before crafting; reversing this order
         // recurses through the original statistics registry during class init.
         Class.forName("uu");
+        if (args.length>0 && args[0].equals("--sounds")) {
+            Class<?> type=Class.forName("uu"),soundType=Class.forName("ct");
+            Object[] blocks=null;
+            for (Field f:type.getDeclaredFields()) if (f.getType().isArray() && f.getType().getComponentType()==type) {
+                f.setAccessible(true); blocks=(Object[])f.get(null); break;
+            }
+            System.setOut(output);
+            output.println("/* Break/step sound names, volume and pitch read from vanilla Beta uu/ct. */");
+            for (int b=0;b<97;++b) if (blocks[b]!=null) {
+                Object sound=field(blocks[b],"by");
+                output.println("["+b+"]={\""+soundType.getMethod("a").invoke(sound)+"\",\""+
+                    soundType.getMethod("d").invoke(sound)+"\","+field(sound,"b")+"f,"+field(sound,"c")+"f},");
+            }
+            return;
+        }
         if (args.length>0 && (args[0].equals("--mining") || args[0].equals("--materials"))) {
             Class<?> blockType=Class.forName("uu"),itemType=Class.forName("gm"),stackType=Class.forName("iz"),materialType=Class.forName("ln");
             Object[] blocks=null;

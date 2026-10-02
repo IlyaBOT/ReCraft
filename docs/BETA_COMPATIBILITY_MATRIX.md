@@ -26,8 +26,10 @@ keeping metadata; the default local hotbar has no slab item yet. Generic block
 drops/pickup exist in survival; exact per-block drops and world-wide light
 propagation are not complete.
 Normal and redstone torches now have attachment geometry and support drops.
-Redstone adds two-tick inversion and burnout, with basic flat wire propagation;
-repeaters, pistons and a complete redstone network remain unfinished.
+Redstone adds two-tick inversion/burnout, stepped wire propagation, weak/strong
+power, lever/button and directional repeaters. Pistons and the remaining
+redstone mechanisms are unfinished. Beds support two halves and local sleep;
+rain/snow, ice and day/night have a bounded local implementation.
 Workbench, furnace, single/double chest and cactus have their own geometry and
 behaviour. Water/lava use scheduled Beta decay and sloping meshes. Portal has
 CPU animation, light and ambience, without dimension transport.
@@ -64,7 +66,7 @@ checks and limits. Unlisted block mechanisms remain unfinished.
 | 23 | dispenser | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 24 | sandStone | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 25 | musicBlock | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 26 | bed | facing, head, occupied | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 26 | bed | facing, head, occupied | two halves + saved spawn | short cuboid, Beta tiles | 9/16 height | bed from foot | place/sleep/wake | orphan check | no | no | no | day/night | no | partial bed/camera; no nightmares |
 | 27 | goldenRail | shape and powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 28 | detectorRail | shape and powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 29 | pistonStickyBase | facing and extended | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
@@ -93,7 +95,7 @@ checks and limits. Unlisted block mechanisms remain unfinished.
 | 52 | mobSpawner | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 53 | stairsWood | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 54 | chest | facing | 27/54 slots + NBT | Beta single/double chest cube | full cube | chest + contents | open; obstruction/triple checks | no | no | Chest | no | local approximation | no | container |
-| 55 | redstoneDust | power level | power metadata | flat cutout | none | redstone dust | dust placement | neighbour updates | no | no | basic flat wire | local approximation | no | partial redstone |
+| 55 | redstoneDust | power level | power metadata | flat cutout | none | redstone dust | dust placement | neighbour updates | no | no | weak/strong, steps | day/night | no | partial redstone |
 | 56 | oreDiamond | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 57 | blockDiamond | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 58 | workbench | none | 3 x 3 crafting | Beta face textures | full cube | workbench | 151 Beta recipes | no | no | no | no | local approximation | no | crafting |
@@ -107,18 +109,18 @@ checks and limits. Unlisted block mechanisms remain unfinished.
 | 66 | rail | shape | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 67 | stairsStone | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 68 | sign | attachment face | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 69 | lever | attachment and powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 69 | lever | attachment and powered | support + toggle | base proxy | none | lever | attach/toggle | support check | no | no | weak/strong support power | day/night | no | partial geometry |
 | 70 | pressurePlate | powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 71 | doorIron | facing, open, upper half | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 72 | pressurePlate | powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 73 | oreRedstone | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 74 | oreRedstone | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | emission 9; local approximation | no | cube texture |
-| 75 | notGate | attachment face | attachment + inversion | unlit narrow prism | none | lit redstone torch | attach/support | 2 ticks | no | no | inversion/burnout | no emission | no | partial redstone |
-| 76 | notGate | attachment face | attachment + inversion | lit narrow prism | none | redstone torch | attach/support | 2 ticks | no | no | inversion/burnout | emission 7 | no | partial redstone |
-| 77 | button | attachment and powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 78 | snow | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 79 | ice | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 80 | snow | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 75 | notGate | attachment face | attachment + inversion | unlit narrow prism | none | lit redstone torch | attach/support | 2 ticks | yes (burnout recovery) | no | inversion/burnout | no emission | no | partial redstone |
+| 76 | notGate | attachment face | attachment + inversion | lit narrow prism | none | redstone torch | attach/support | 2 ticks | yes | no | inversion/burnout | emission 7 | no | partial redstone |
+| 77 | button | attachment and powered | support + held timer | narrow prism | none | button | press, no timer reset | 20 ticks release | no | no | weak/strong support power | day/night | no | partial geometry |
+| 78 | snow | none | layer + cold weather placement | 1/8 layer | none | snowball with shovel | break/place | no | weather placement | no | no | day/night | no | melting/support unfinished |
+| 79 | ice | none | cube + cold source freezing | transparent cube | full cube | none | break/place | no | weather freezing | no | no | day/night | freezing | melting/break-water unfinished |
+| 80 | snow | none | Beta texture | full cube | full cube | 4 snowballs with shovel | break/place | no | no | no | no | day/night | no | cube |
 | 81 | cactus | age | age + support + growth | inset cactus faces | inset box | cactus | sand/cactus support; contact damage | support check | growth to 3 blocks | no | no | local approximation | no | cactus |
 | 82 | clay | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 83 | reeds | age | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | local approximation | no | crossed plant |
@@ -131,8 +133,8 @@ checks and limits. Unlisted block mechanisms remain unfinished.
 | 90 | portal | portal axis | portal visual/ambient | animated double-sided plane | none | no | no dimension transport | no | no | no | no | emission 11 | no | visual/ambient only |
 | 91 | litpumpkin | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 92 | cake | bites eaten | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 93 | diode | facing and delay | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 94 | diode | facing and delay | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 93 | diode | facing and delay | direction/delay + support | 1/8 slab proxy | 1/8 height | repeater item | place/cycle delay | 2/4/6/8 ticks | no | no | directional output | day/night | no | partial geometry |
+| 94 | diode | facing and delay | direction/delay + support | 1/8 slab proxy | 1/8 height | repeater item | place/cycle delay | 2/4/6/8 ticks | no | no | directional output | day/night | no | partial geometry |
 | 95 | lockedchest | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 96 | trapdoor | facing and open | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 
@@ -150,11 +152,13 @@ checks and limits. Unlisted block mechanisms remain unfinished.
 The two Beta worlds in `build/saves/` are read-only test fixtures. The
 McRegion writer test copies a region file, edits that copy, and verifies it
 can read the changed block while retaining nonterrain chunk NBT. Exact Beta terrain generation, most entity AI and many mechanisms remain
-future work. Container, Item-entity and supported pending-tick NBT are now saved.
+future work. Container, Item/mob-entity and supported pending-tick NBT are now saved.
+See [the mechanics audit](BETA_MECHANICS_AUDIT.md) for the current task queue.
 
 Player `level.dat` writeback now covers position/rotation/motion, inventory,
-Health/Air/Fire, Time and LastPlayed with a one-time backup; it is not yet a complete SaveHandler
-replacement (session lock and concurrent writer ownership remain). Fallback loading and
+Health/Air/Fire, Time/weather, bed spawn and LastPlayed with a one-time backup.
+Interactive play acquires and checks the Beta session.lock token. This detects
+a competing opener; it is not a transactional OS lock. Fallback loading and
 old/new save rotation are implemented.
 The Creative catalogue exposes registered IDs/variants; availability there does
 not mean that a block's geometry, mechanism or item-use behavior is implemented.

@@ -148,9 +148,8 @@ endif()
 # Only the files consumed by the current asset IDs are deployed. Rebuilding
 # never removes saves or any other persistent runtime directory.
 add_custom_target(deploy_assets ALL)
-set(RECRAFT_ASSETS gui/widgets.png gui/background.png gui/icons.png gui/inventory.png
-    gui/items.png gui/panorama.png gui/crafting.png gui/furnace.png gui/container.png
-    textures/terrain.png textures/mob/char.png fonts/ascii.png sounds/portal/portal.ogg)
+file(STRINGS "${CMAKE_SOURCE_DIR}/assets/runtime_assets.txt" RECRAFT_ASSETS)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/assets/runtime_assets.txt")
 foreach(_asset ${RECRAFT_ASSETS})
     get_filename_component(_directory "${_asset}" DIRECTORY)
     add_custom_command(TARGET deploy_assets POST_BUILD
@@ -175,6 +174,26 @@ if(WIN32 AND OPENAL_RUNTIME)
 endif()
 
 enable_testing()
+add_executable(beta_session_test tests/beta_session_test.c src/world/beta_session.c)
+target_include_directories(beta_session_test PRIVATE src)
+add_test(NAME beta_session_test COMMAND beta_session_test)
+set_tests_properties(beta_session_test PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+add_executable(music_stream_test tests/music_stream_test.c src/audio/music_stream.c)
+target_include_directories(music_stream_test PRIVATE src "${RAYLIB_ROOT}/src" "${OPENAL_INCLUDE_DIR}")
+target_link_libraries(music_stream_test raylib_legacy glfw "${OPENAL_LIBRARY}" ${PLATFORM_LIBRARIES} Threads::Threads)
+if(NOT WIN32)
+    target_link_libraries(music_stream_test m)
+endif()
+add_test(NAME music_stream_test COMMAND music_stream_test
+    "${CMAKE_SOURCE_DIR}/assets/sounds/random/click.ogg" "${CMAKE_SOURCE_DIR}/assets/music/calm1.ogg")
+set_tests_properties(music_stream_test PROPERTIES ENVIRONMENT "ALSOFT_DRIVERS=null" SKIP_RETURN_CODE 77)
+add_executable(sound_policy_test tests/sound_policy_test.c src/audio/sound_policy.c)
+add_executable(climate_test tests/climate_test.c src/world/climate.c)
+target_include_directories(climate_test PRIVATE src)
+target_link_libraries(climate_test m)
+add_test(NAME climate_test COMMAND climate_test)
+target_include_directories(sound_policy_test PRIVATE src)
+add_test(NAME sound_policy_test COMMAND sound_policy_test)
 add_executable(gameplay_test tests/gameplay_test.c src/world/world.c src/world/storage.c src/world/beta_blocks.c src/game/player.c)
 target_include_directories(gameplay_test PRIVATE src)
 target_link_libraries(gameplay_test m)
@@ -272,8 +291,8 @@ endif()
 # the client. None of these sources depend on raylib or a graphics context.
 foreach(_world_test world_test renderer_test network_test beta_region_test gameplay_test)
     if(TARGET ${_world_test})
-        target_sources(${_world_test} PRIVATE src/world/block_entity.c
-            src/world/entities.c
+        target_sources(${_world_test} PRIVATE src/world/block_entity.c src/world/environment.c src/world/climate.c src/world/redstone.c src/world/beta_session.c src/game/bed.c src/game/player.c
+            src/world/entities.c src/world/mobs.c
             src/world/physics.c src/world/ticks.c src/world/fluid.c src/game/mining.c
             src/game/crafting.c src/game/inventory.c src/nbt/nbt.c)
     endif()
@@ -286,6 +305,11 @@ add_executable(beta_recovery_test tests/beta_recovery_test.c src/world/beta_leve
 target_include_directories(beta_recovery_test PRIVATE src "${ZLIB_INCLUDE_DIRS}")
 target_link_libraries(beta_recovery_test ${ZLIB_LIBRARIES} m)
 add_test(NAME beta_recovery_test COMMAND beta_recovery_test)
+foreach(_level_test beta_level_test beta_recovery_test)
+    if(TARGET ${_level_test})
+        target_sources(${_level_test} PRIVATE src/world/beta_session.c)
+    endif()
+endforeach()
 
 get_property(_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(_target ${_targets})

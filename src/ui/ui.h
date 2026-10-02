@@ -56,6 +56,8 @@ typedef struct UiWorldEntry {
     int spawn_x, spawn_y, spawn_z;
     unsigned region_files;
     int64_t world_time;
+    int rain_time,thunder_time,raining,thundering;
+    int has_bed,bed_x,bed_y,bed_z;
     int save_version,dimension;
     int has_player;
     double player_x,player_y,player_z;
@@ -77,6 +79,8 @@ typedef struct UiServerEntry {
 /* A field changing in this struct is a request to the platform/game layer.
    Unsupported visual features remain visible but disabled. */
 typedef struct UiOptions {
+    int difficulty;           /* 0 peaceful, 1 easy, 2 normal, 3 hard. */
+    int sound_volume,music_volume; /* 0..100, independent. */
     int fancy_graphics;
     int render_distance;      /* 2..12 chunks */
     int smooth_lighting;      /* 0 off, 1 simple */
@@ -140,6 +144,7 @@ typedef struct Ui {
     int vbo_available;          /* Set by platform capability probe. */
     int monitor_hz;             /* Current display refresh, or 60 fallback. */
     int world_background;
+    int network_mode;
     int creative_scroll, creative_drag;
     char search[UI_NAME_MAX];
     char world_name[UI_NAME_MAX];
@@ -165,4 +170,5 @@ int ui_container_slot_at(const Ui *ui,const ContainerSession *session);
 void ui_creative_input(Ui *ui, InventorySlot *slots, int *hotbar, int can_give);
 void ui_draw_creative(const Ui *ui, const InventorySlot *slots, int hotbar);
 
+int ui_draw_sleep(Ui *ui,int ticks);
 #endif

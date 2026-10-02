@@ -15,7 +15,12 @@ static const char *const files[ASSET_COUNT] = {
     "assets/textures/terrain.png", "assets/fonts/ascii.png",
     "assets/gui/inventory.png", "assets/gui/items.png",
     "assets/gui/crafting.png", "assets/gui/furnace.png", "assets/gui/container.png",
-    "assets/textures/mob/char.png"
+    "assets/textures/mob/char.png",
+    "assets/textures/environment/rain.png","assets/textures/environment/snow.png",
+    "assets/textures/terrain/sun.png","assets/textures/terrain/moon.png",
+    "assets/textures/mob/pig.png","assets/textures/mob/sheep.png","assets/textures/mob/sheep_fur.png",
+    "assets/textures/mob/cow.png","assets/textures/mob/chicken.png","assets/textures/mob/zombie.png",
+    "assets/textures/mob/skeleton.png","assets/textures/mob/spider.png","assets/textures/mob/creeper.png"
 };
 static char root[512];
 static Texture2D textures[ASSET_COUNT];
@@ -23,7 +28,33 @@ static unsigned char attempted[ASSET_COUNT];
 static Texture2D fallback;
 static Sound sounds[ASSET_SOUND_COUNT];
 static unsigned char sound_attempted[ASSET_SOUND_COUNT];
-static const char *const sound_files[ASSET_SOUND_COUNT]={"assets/sounds/portal/portal.ogg"};
+static const char *const sound_files[ASSET_SOUND_COUNT]={
+#define SOUND(token,key,path) "assets/sounds/" path,
+#include "../audio/sound_assets.def"
+#undef SOUND
+};
+static const char *const sound_keys[ASSET_SOUND_COUNT]={
+#define SOUND(token,key,path) key,
+#include "../audio/sound_assets.def"
+#undef SOUND
+};
+static const char *const music_files[]={
+#define MUSIC(path) "assets/music/" path,
+#include "../audio/music_assets.def"
+#undef MUSIC
+};
+AssetSoundId assets_find_sound(const char *key,unsigned variant)
+{
+    unsigned i,count=0;
+    for(i=0;i<ASSET_SOUND_COUNT;++i) if(!strcmp(key,sound_keys[i])) ++count;
+    if(!count) return ASSET_SOUND_COUNT;
+    variant%=count;
+    for(i=0;i<ASSET_SOUND_COUNT;++i) if(!strcmp(key,sound_keys[i]) && variant--==0) return (AssetSoundId)i;
+    return ASSET_SOUND_COUNT;
+}
+unsigned assets_music_count(void) { return sizeof(music_files)/sizeof(music_files[0]); }
+const char *assets_music_path(unsigned index,char *buffer,size_t capacity)
+{ return index<assets_music_count() && game_path_join(buffer,capacity,root,music_files[index]) ? buffer : NULL; }
 
 void assets_init(const char *game_root)
 {
@@ -74,7 +105,7 @@ Texture2D assets_get_texture(AssetId id)
     if (!attempted[id]) {
         attempted[id] = 1;
         if (assets_path(id, path, sizeof(path))) textures[id] = LoadTexture(path);
-        if (textures[id].id) nearest(textures[id], id == ASSET_GUI_BACKGROUND);
+        if (textures[id].id) nearest(textures[id], id == ASSET_GUI_BACKGROUND || id==ASSET_RAIN || id==ASSET_SNOW);
         else fprintf(stderr, "Missing optional asset: %s\n", files[id]);
     }
     return textures[id].id ? textures[id] : checker();

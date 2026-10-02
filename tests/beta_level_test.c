@@ -62,6 +62,9 @@ int main(int argc,char **argv)
     state.x=17.25; state.y=70.5; state.z=-9.75;
     state.yaw=92.5f; state.pitch=-10.5f;
     state.world_time=1234567;
+    state.has_environment=1; state.rain_time=123; state.thunder_time=456;
+    state.raining=1; state.thundering=1;
+    state.has_bed=1; state.bed_x=-8; state.bed_y=64; state.bed_z=15;
     state.inventory[0].id=1;
     state.inventory[0].count=7;
     state.inventory[0].damage=0;
@@ -77,6 +80,8 @@ int main(int argc,char **argv)
     for (i=0;i<count;++i)
         if (!strcmp(worlds[i].directory,dir+6)) {
             assert(worlds[i].world_time==state.world_time);
+            assert(worlds[i].rain_time==123 && worlds[i].thunder_time==456 && worlds[i].raining && worlds[i].thundering);
+            assert(worlds[i].has_bed==7 && worlds[i].bed_x==-8 && worlds[i].bed_y==64 && worlds[i].bed_z==15);
             assert(worlds[i].has_player);
             assert(worlds[i].player_x==state.x && worlds[i].player_y==state.y &&
                    worlds[i].player_z==state.z);

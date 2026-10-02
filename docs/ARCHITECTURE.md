@@ -65,13 +65,23 @@ container creates item entities for its contents.
 `physics.c` uses a bounded, deduplicated due-time heap. Water schedules at
 five ticks, lava at 30, normal falling blocks at three and redstone torches at
 two. `fluid.c` handles decay levels, source joining for water, source removal,
-downward flow, outlet search and water/lava reactions. Local redstone covers
-torch inversion/burnout and a basic flat wire path; it does not implement a
-complete redstone engine. Cactus has support checks and random growth. Sand
+downward flow, outlet search and water/lava reactions. `redstone.c` supplies
+directional weak/strong power, support-block conductivity, wire steps,
+lever/button and repeater delays. It does not implement a complete redstone
+engine (pistons, plates, doors and other mechanisms remain pending).
+Cactus has support checks and random growth. Sand
 and gravel resolve their landing position without a falling-entity animation.
 `ticks.c` retains unsupported tick NBT and saves supported remaining delays.
 Queue references are detached before chunk eviction and restored after load.
 Simulation only touches loaded chunks; multiplayer block state is server owned.
+
+`environment.c` advances the 24,000-tick clock and Beta weather timers.
+`climate.c` implements Java Random and Beta 2D simplex octaves for precipitation
+classification; it is not a terrain generator. Roof height is cached per chunk
+revision. `weather.c` draws two bounded fixed-function texture batches.
+Daylight subtracts an integer from stored skylight when baking meshes; source
+NBT light values remain unchanged. `bed.c` owns two-half placement, sleep,
+dawn and saved respawn points. Singleplayer pause stops these simulation ticks.
 
 `entities.c` persists collectible item stacks, including count and damage,
 position, motion, age and health. Pickup preserves metadata and stack limits.
@@ -81,19 +91,34 @@ death/respawn are implemented. Food heals immediately and buckets operate on
 source blocks; there is no modern hunger system. Mining uses extracted hardness, tool strengths
 and harvest rules; its progress and durability run at 20 Hz.
 
+`mobs.c` reads eight Beta mob types and rewrites their known fields while
+preserving unknown NBT. Local melee, health/drops, simple movement and animal
+interactions are bounded. Natural spawning, original pathfinding, arrows,
+explosions and complete armor are pending. The renderer uses the normalized
+64 x 32 mob skins. See [the mechanics audit](BETA_MECHANICS_AUDIT.md).
+
+`sound_policy.c` uses extracted StepSound keys, volumes and pitches. Sound
+variants are cached by the asset manager and played through a 16-voice OpenAL
+pool. `music_stream.c` uses the existing stb_vorbis decoder with four small
+buffers and no looping. The idle music countdown advances at controller ticks,
+stops while music is playing/muted, and uses Beta's random initial/inter-track
+delays. `assets/runtime_assets.txt` is shared by both builds and packaging.
+
 ## Storage
 
 The native `RCC1` format is ReCraft's format, not Minecraft's. Version 2 stores
 Beta block IDs; version 1's 12 private IDs are validated and remapped on load.
 Native chunk records and entity/tick `.rct` sidecars use temporary-file writes.
+RCW1 world metadata v2 adds time/weather and reads v1; native player.txt v3
+adds bed spawn coordinates and reads v1/v2.
 
 The McRegion adapter reads existing `.mcr` chunks and updates block, metadata,
-light, chest/furnace `TileEntities`, item `Entities` and `TileTicks` lists while retaining
+light, chest/furnace `TileEntities`, item/mob `Entities` and `TileTicks` lists while retaining
 unrelated NBT. Missing Beta chunks are not generated. ReCraft's native
 generator is deterministic but is not the original Beta generator.
 
 `beta_level.c` updates position, rotation, motion, inventory, Health/Air/Fire,
-Time and LastPlayed in gzip `level.dat`. Missing player fields can be created
+Time, weather timers/flags, bed spawn and LastPlayed in gzip `level.dat`. Missing player fields can be created
 instead of preventing Save and Exit. Unknown tags and armor slots are retained;
 the first valid input is backed up and Beta's old/new file rotation is used.
 See [recovery and format limits](BETA_SAVE_RECOVERY.md).

@@ -13,6 +13,9 @@ typedef struct Player {
     int selected_slot;
     int health,air,fire,hurt_ticks,last_damage;
     float fall_distance;
+    unsigned age;
+    int sleeping,sleep_ticks,bed_x,bed_y,bed_z;
+    int has_bed_spawn,spawn_x,spawn_y,spawn_z;
 } Player;
 
 typedef struct PlayerInput {
@@ -30,11 +33,13 @@ typedef struct BlockHit {
     int x, y, z;
     int place_x, place_y, place_z;
     uint8_t block;
+    float distance;             /* Distance along the ray to the selected face. */
 } BlockHit;
 
 void player_spawn(Player *player, World *world, int creative);
 void player_tick(Player *player, World *world, const PlayerInput *input, float dt);
 void player_damage(Player *player,int amount);
+void player_mob_damage(Player *player,const World *world,int amount);
 BlockHit player_raycast(const Player *player, World *world, float reach);
 BlockHit player_raycast_sources(const Player *player,World *world,float reach);
 int player_use_item(Player *player,World *world,InventorySlot *item);

@@ -11,6 +11,9 @@ typedef struct BetaLevelState {
     int on_ground;
     int64_t world_time;
     int has_vitals,health,air,fire;
+    int has_environment,rain_time,thunder_time,raining,thundering;
+    int has_bed,bed_x,bed_y,bed_z;
+    int64_t session; /* Optional play-session token; zero for fixture rewrites. */
     InventorySlot inventory[RECRAFT_INVENTORY_SLOTS];
 } BetaLevelState;
 

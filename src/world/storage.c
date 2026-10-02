@@ -20,8 +20,8 @@
 #define RAW_CHUNK_BYTES (WORLD_CHUNK_VOLUME + 3 * WORLD_NIBBLE_BYTES)
 #define MAX_RLE_BYTES (RAW_CHUNK_BYTES + (RAW_CHUNK_BYTES + 127) / 128)
 #define CHUNK_HEADER_BYTES 26
-#define META_HEADER_BYTES 24
-#define META_VERSION 1
+#define META_HEADER_BYTES 48
+#define META_VERSION 2
 #define CHUNK_VERSION 2
 
 /* Native RCC1 version 1 used private IDs 0..11. Version 2 stores Beta IDs.
@@ -165,7 +165,7 @@ int world_valid_id(const char *id)
 static WorldError read_info_path(const char *path, const char *id, WorldInfo *info)
 {
     uint8_t bytes[META_HEADER_BYTES+WORLD_NAME_MAX+4];
-    size_t len,expected;
+    size_t len,expected,header;
     FILE *file=fopen(path,"rb");
     if (!file) return errno==ENOENT ? WORLD_ERROR_NOT_FOUND : WORLD_ERROR_IO;
     len=fread(bytes,1,sizeof(bytes),file);
@@ -178,21 +178,28 @@ static WorldError read_info_path(const char *path, const char *id, WorldInfo *in
         return WORLD_ERROR_CORRUPT;
     }
     fclose(file);
-    if (len<META_HEADER_BYTES+1+4 || memcmp(bytes,"RCW1",4)!=0 ||
-        read_u16(bytes+4)!=META_VERSION || (bytes[6]&~7u)!=0) return WORLD_ERROR_CORRUPT;
-    expected=META_HEADER_BYTES+(size_t)bytes[7]+4;
+    if (len<24+1+4 || memcmp(bytes,"RCW1",4)!=0 ||
+        (read_u16(bytes+4)!=1 && read_u16(bytes+4)!=META_VERSION) || (bytes[6]&~7u)!=0) return WORLD_ERROR_CORRUPT;
+    header=read_u16(bytes+4)==1 ? 24 : META_HEADER_BYTES;
+    expected=header+(size_t)bytes[7]+4;
     if (!bytes[7] || bytes[7]>WORLD_NAME_MAX || len!=expected ||
         checksum(bytes,len-4)!=read_u32(bytes+len-4) ||
-        memchr(bytes+META_HEADER_BYTES,0,bytes[7])!=NULL) return WORLD_ERROR_CORRUPT;
+        memchr(bytes+header,0,bytes[7])!=NULL) return WORLD_ERROR_CORRUPT;
     memset(info,0,sizeof(*info));
     strcpy(info->id,id);
-    memcpy(info->name,bytes+META_HEADER_BYTES,bytes[7]);
+    memcpy(info->name,bytes+header,bytes[7]);
     info->name[bytes[7]]=0;
     info->flat=(uint8_t)(bytes[6]&1u);
     info->creative=(uint8_t)((bytes[6]>>1)&1u);
     info->structures=(uint8_t)((bytes[6]&4u)==0);
     info->seed=read_u64(bytes+8);
     info->last_played=read_u64(bytes+16);
+    if(header==META_HEADER_BYTES) {
+        info->world_time=(int64_t)read_u64(bytes+24);
+        info->rain_time=(int32_t)read_u32(bytes+32); info->thunder_time=(int32_t)read_u32(bytes+36);
+        if((bytes[40]&~3u) || info->rain_time<0 || info->thunder_time<0) return WORLD_ERROR_CORRUPT;
+        info->raining=bytes[40]&1; info->thundering=(bytes[40]>>1)&1;
+    }
     return WORLD_OK;
 }
 
@@ -216,6 +223,9 @@ static WorldError write_info_path(const char *directory, const WorldInfo *info)
     write_u64(bytes+8,info->seed);
     now=time(NULL);
     write_u64(bytes+16,now<0 ? 0 : (uint64_t)now);
+    write_u64(bytes+24,(uint64_t)info->world_time);
+    write_u32(bytes+32,(uint32_t)info->rain_time); write_u32(bytes+36,(uint32_t)info->thunder_time);
+    bytes[40]=(uint8_t)((info->raining!=0)|((info->thundering!=0)<<1));
     memcpy(bytes+META_HEADER_BYTES,info->name,name_len);
     write_u32(bytes+size-4,checksum(bytes,size-4));
     file=fopen(temp,"wb");
@@ -246,6 +256,9 @@ WorldError world_storage_write_info(const World *world)
     info.flat=world->flat;
     info.creative=world->creative;
     info.structures=world->structures;
+    info.world_time=world->beta_world_time;
+    info.rain_time=world->rain_time; info.thunder_time=world->thunder_time;
+    info.raining=world->raining; info.thundering=world->thundering;
     return write_info_path(world->path,&info);
 }
 

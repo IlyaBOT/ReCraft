@@ -11,6 +11,8 @@ typedef struct BetaWorldInfo {
     int64_t seed;
     int spawn_x, spawn_y, spawn_z;
     int64_t world_time;
+    int rain_time,thunder_time,raining,thundering;
+    int has_bed,bed_x,bed_y,bed_z;
     uint64_t last_played;
     unsigned region_files;
     int save_version,dimension;

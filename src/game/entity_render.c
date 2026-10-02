@@ -71,8 +71,74 @@ static void player_model(const RenderEntity *e)
     glColor3ub(255,255,255);
     skin_box(-4,0,-2,8,12,4,16,16,0);
     glPushMatrix(); glRotatef(e->pitch,1,0,0); skin_box(-4,-8,-4,8,8,8,0,0,0); glPopMatrix();
-    limb(-5,2,angle,1,0); limb(5,2,-angle,1,1);
+    limb(-5,2,e->type==54 || e->type==51 ? -90 : angle,1,0);
+    limb(5,2,e->type==54 || e->type==51 ? -90 : -angle,1,1);
     limb(-2,12,-angle,0,0); limb(2,12,angle,0,1); glPopMatrix();
+}
+static void model_part(float x,float y,float z,float rotation,int bx,int by,int bz,int w,int h,int d,int u,int v)
+{
+    glPushMatrix(); glTranslatef(x,y,z); glRotatef(rotation,1,0,0);
+    skin_box((float)bx,(float)by,(float)bz,w,h,d,u,v,0); glPopMatrix();
+}
+static AssetId mob_skin(int type)
+{
+    switch(type) {
+    case 50: return ASSET_MOB_CREEPER; case 51: return ASSET_MOB_SKELETON;
+    case 52: return ASSET_MOB_SPIDER; case 54: return ASSET_MOB_ZOMBIE;
+    case 90: return ASSET_MOB_PIG; case 91: return ASSET_MOB_SHEEP;
+    case 92: return ASSET_MOB_COW; case 93: return ASSET_MOB_CHICKEN;
+    default: return ASSET_PLAYER_SKIN;
+    }
+}
+static void mob_model(const RenderEntity *e)
+{
+    float angle=sinf(e->walk)*32; int leg,i;
+    glColor3ub(255,255,255);
+    if(e->type==51 || e->type==54) { player_model(e); return; }
+    glPushMatrix(); glTranslatef(e->draw_x,e->draw_y+(e->type==50 ? 1.375f : 1.5f),e->draw_z);
+    glRotatef(180-e->yaw,0,1,0); glScalef(.0625f,-.0625f,.0625f);
+    if(e->type==90 || e->type==91 || e->type==92) {
+        leg=e->type==90 ? 6 : 12;
+        model_part(0,(float)(18-leg),-6,0,-4,-4,-8,8,8,8,0,0);
+        model_part(0,(float)(17-leg),2,90,e->type==92 ? -6 : -5,-10,-7,
+            e->type==92 ? 12 : 10,e->type==92 ? 18 : 16,e->type==92 ? 10 : 8,e->type==92 ? 18 : 28,e->type==92 ? 4 : 8);
+        for(i=0;i<4;++i) model_part(i&1 ? 3 : -3,(float)(24-leg),i<2 ? 7 : -5,
+            ((i==0 || i==3) ? angle : -angle),-2,0,-2,4,leg,4,0,16);
+        if(e->type==91 && !e->sheared) {
+            static const float colors[16][3]={{1,1,1},{.95f,.7f,.2f},{.9f,.5f,.85f},{.6f,.7f,.95f},
+                {.9f,.9f,.2f},{.5f,.8f,.1f},{.95f,.5f,.65f},{.3f,.3f,.3f},{.6f,.6f,.6f},{.3f,.5f,.6f},
+                {.5f,.25f,.7f},{.2f,.3f,.7f},{.4f,.3f,.2f},{.4f,.5f,.2f},{.6f,.2f,.2f},{.1f,.1f,.1f}};
+            glBindTexture(GL_TEXTURE_2D,assets_get_texture(ASSET_MOB_SHEEP_FUR).id);
+            glColor3fv(colors[e->color&15]);
+            model_part(0,6,-8,0,-3,-4,-6,6,6,6,0,0);
+            model_part(0,5,2,90,-4,-10,-7,8,16,6,28,8);
+        }
+    } else if(e->type==93) {
+        model_part(0,15,-4,0,-2,-6,-2,4,6,3,0,0);
+        model_part(0,15,-4,0,-2,-4,-4,4,2,2,14,0);
+        model_part(0,15,-4,0,-1,-2,-3,2,2,2,14,4);
+        model_part(0,16,0,90,-3,-4,-3,6,8,6,0,9);
+        model_part(-2,19,1,angle,-1,0,-3,3,5,3,26,0);
+        model_part(1,19,1,-angle,-1,0,-3,3,5,3,26,0);
+        model_part(-4,13,0,0,0,0,-3,1,4,6,24,13);
+        model_part(4,13,0,0,-1,0,-3,1,4,6,24,13);
+    } else if(e->type==50) {
+        model_part(0,4,0,0,-4,-8,-4,8,8,8,0,0);
+        model_part(0,4,0,0,-4,0,-2,8,12,4,16,16);
+        for(i=0;i<4;++i) model_part(i&1 ? 2 : -2,16,i<2 ? 4 : -4,
+            (i==0 || i==3) ? angle : -angle,-2,0,-2,4,6,4,0,16);
+    } else if(e->type==52) {
+        model_part(0,15,-3,0,-4,-4,-8,8,8,8,32,4);
+        model_part(0,15,0,0,-3,-3,-3,6,6,6,0,0);
+        model_part(0,15,9,0,-5,-4,-6,10,8,12,0,12);
+        for(i=0;i<8;++i) {
+            glPushMatrix(); glTranslatef(i&1 ? 4 : -4,15,(float)(2-i/2));
+            glRotatef((i&1 ? -1 : 1)*(30+sinf(e->walk+(float)i)*10),0,0,1);
+            glRotatef((float)(i/2-2)*20,0,1,0);
+            skin_box(i&1 ? -1 : -15,-1,-1,16,2,2,18,0,0); glPopMatrix();
+        }
+    }
+    glPopMatrix();
 }
 int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *camera,
                        int width,int height,int distance,float dt)
@@ -98,6 +164,9 @@ int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *ca
         dx=e->draw_x-camera->x; dy=e->draw_y-camera->y; dz=e->draw_z-camera->z;
         if(dx*dx+dy*dy+dz*dz>far2) continue;
         if(e->type==0) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,skin.id); player_model(e); }
+        else if(e->type==50 || e->type==51 || e->type==52 || e->type==54 || (e->type>=90 && e->type<=93)) {
+            glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,assets_get_texture(mob_skin(e->type)).id); mob_model(e);
+        }
         else {
             glDisable(GL_TEXTURE_2D); glColor3ub(84,133,72); glBegin(GL_QUADS);
             box(e->draw_x,e->draw_y,e->draw_z,.27f,1.25f); box(e->draw_x,e->draw_y+1.25f,e->draw_z,.22f,.48f);

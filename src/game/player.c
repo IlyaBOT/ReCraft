@@ -1,6 +1,7 @@
 #include "player.h"
 #include "../world/block_entity.h"
 #include "../world/fluid.h"
+#include "bed.h"
 
 #include <math.h>
 #include <string.h>
@@ -23,7 +24,7 @@ static int body_intersects_block(const Player *player, int bx, int by, int bz,
 static void collision_box(uint8_t id, BetaBlockBox *box)
 {
     BetaBlockState state = { id, 0 };
-    if ((id==BETA_BLOCK_SLAB || id==BETA_BLOCK_CACTUS) && beta_block_selection_box(state,box)) return;
+    if ((id==BETA_BLOCK_SLAB || id==BETA_BLOCK_CACTUS || id==26 || id==93 || id==94) && beta_block_selection_box(state,box)) return;
     box->min_x = box->min_y = box->min_z = 0.0f;
     box->max_x = box->max_y = box->max_z = 1.0f;
 }
@@ -84,7 +85,7 @@ static int move_axis(Player *player, World *world, int axis, float delta)
  * inset from its voxel; a ray starting inside uses the exit face. */
 static int bounded_ray_hit(const BetaBlockBox *box, int x, int y, int z,
                            const float origin[3], const float direction[3],
-                           float start, float end, int place[3])
+                           float start, float end, int place[3],float *hit_distance)
 {
     float lower[3] = { x + box->min_x, y + box->min_y, z + box->min_z };
     float upper[3] = { x + box->max_x, y + box->max_y, z + box->max_z };
@@ -116,6 +117,7 @@ static int bounded_ray_hit(const BetaBlockBox *box, int x, int y, int z,
     }
     if (axis < 0) return 0;
     place[axis] += near_t >= 0.0f ? near_side : far_side;
+    *hit_distance=near_t>=0 ? near_t : far_t;
     return 1;
 }
 
@@ -150,6 +152,13 @@ void player_damage(Player *p,int amount)
     p->last_damage=amount;
     if (p->health<0) p->health=0;
 }
+void player_mob_damage(Player *p,const World *w,int amount)
+{
+    if(w->network_mode || w->difficulty==0) return;
+    if(w->difficulty==1) amount=amount/3+1;
+    else if(w->difficulty==3) amount=amount*3/2;
+    player_damage(p,amount);
+}
 static void hazards(Player *p,World *w,float old_y)
 {
     int x0=(int)floorf(p->x-.3f),x1=(int)floorf(p->x+.3f),z0=(int)floorf(p->z-.3f),z1=(int)floorf(p->z+.3f);
@@ -165,8 +174,12 @@ static void hazards(Player *p,World *w,float old_y)
         if (id==81) cactus=1;
     }
     if (water) { p->fall_distance=0; p->fire=0; }
-    else if (p->on_ground) { player_damage(p,(int)ceilf(p->fall_distance-3)); p->fall_distance=0; }
-    else if (p->y<old_y) p->fall_distance+=old_y-p->y;
+    else {
+        /* Include the last movement down to the contact face. Omitting it
+         * made falls just over the three-block threshold deal no damage. */
+        if(p->y<old_y) p->fall_distance+=old_y-p->y;
+        if(p->on_ground) { player_damage(p,(int)ceilf(p->fall_distance-3)); p->fall_distance=0; }
+    }
     if (eye==8 || eye==9) {
         if (--p->air<=-20) { p->air=0; player_damage(p,2); }
     } else p->air=300;
@@ -174,10 +187,14 @@ static void hazards(Player *p,World *w,float old_y)
     else if (fire) { player_damage(p,1); if (p->fire<=0) p->fire=160; }
     else if (p->fire>0) { if (p->fire%20==0) player_damage(p,1); --p->fire; }
     if (cactus) player_damage(p,1);
+    if(world_block_def(eye)->opaque) player_damage(p,1);
     if (p->y< -64) player_damage(p,4);
 }
 void player_tick(Player *player, World *world, const PlayerInput *input, float dt)
 {
+    ++player->age;
+    if(!world->network_mode && world->difficulty==0 && player->health>0 && player->health<20 && player->age%20==0) ++player->health;
+    if(player->sleeping) { player_sleep_tick(player,world); return; }
     float old_y=player->y;
     float forward = input->forward;
     float strafe = input->strafe;
@@ -260,17 +277,19 @@ static BlockHit raycast(const Player *player, World *world, float reach,int sour
         if (id != BLOCK_AIR && (!fluid_kind(id) || (sources && world_get_metadata(world,x,y,z)==0))) {
             int place[3] = { px, py, pz };
             int intersects = 1;
+            float face_distance=distance;
             BetaBlockBox box;
             if (beta_block_cross_plant(id) || id == BETA_BLOCK_SLAB ||
                 id == BETA_BLOCK_TORCH ||
                 id == BETA_BLOCK_UNLIT_REDSTONE_TORCH ||
-                id == BETA_BLOCK_REDSTONE_TORCH || id==BETA_BLOCK_CACTUS || id==BETA_BLOCK_NETHER_PORTAL) {
+                id == BETA_BLOCK_REDSTONE_TORCH || id==BETA_BLOCK_CACTUS || id==BETA_BLOCK_NETHER_PORTAL ||
+                id==26 || id==93 || id==94 || id==69 || id==77 || id==78) {
                 BetaBlockState state = { id, world_get_metadata(world, x, y, z) };
                 float end = fminf(reach, fminf(tx, fminf(ty, tz)));
                 place[0] = x; place[1] = y; place[2] = z;
                 intersects = beta_block_selection_box(state, &box) &&
                     bounded_ray_hit(&box, x, y, z, origin, direction,
-                                    distance, end, place);
+                                    distance, end, place,&face_distance);
             }
             if (intersects) {
                 result.hit = 1;
@@ -278,6 +297,7 @@ static BlockHit raycast(const Player *player, World *world, float reach,int sour
                 result.place_x = place[0]; result.place_y = place[1];
                 result.place_z = place[2];
                 result.block = id;
+                result.distance=face_distance;
                 return result;
             }
         }
@@ -333,7 +353,14 @@ int player_use_item(Player *p,World *w,InventorySlot *item)
         }
         return 1;
     }
-    if(item->id==331 && player_place_block_state(p,w,(BetaBlockState){55,0})) {
+    if(item->id==355) {
+        BlockHit hit=player_raycast(p,w,5);
+        unsigned dir=(unsigned)(int)floorf(p->yaw*.63661977236f+2.5f)&3;
+        if(!hit.hit || hit.place_y!=hit.y+1 || !bed_place(w,hit.place_x,hit.place_y,hit.place_z,dir)) return 0;
+        if(!p->creative && --item->count<=0) inventory_clear_slot(item);
+        return 1;
+    }
+    if((item->id==331 || item->id==356) && player_place_block_state(p,w,(BetaBlockState){item->id==331 ? 55 : 93,0})) {
         if(!p->creative && --item->count<=0) inventory_clear_slot(item);
         return 1;
     }
@@ -369,7 +396,22 @@ int player_place_block_state(Player *player, World *world, BetaBlockState state)
         else return 0;
     }
     if (state.id==BETA_BLOCK_CHEST && !block_chest_can_place(world,hit.place_x,hit.place_y,hit.place_z)) return 0;
+    if(state.id==69 || state.id==77) {
+        if(!world_block_def(hit.block)->opaque) return 0;
+        if(hit.place_y>hit.y) {
+            if(state.id==77) return 0;
+            state.metadata=(sinf(player->yaw)*sinf(player->yaw)>.5f) ? 6 : 5;
+        } else if(hit.place_y<hit.y) return 0;
+        else if(hit.place_x>hit.x) state.metadata=1;
+        else if(hit.place_x<hit.x) state.metadata=2;
+        else if(hit.place_z>hit.z) state.metadata=3;
+        else state.metadata=4;
+    }
     if(state.id==BETA_BLOCK_REDSTONE_WIRE && !world_block_def(world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z))->opaque) return 0;
+    if(state.id==93 || state.id==94) {
+        if(!world_block_def(world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z))->opaque) return 0;
+        state.metadata=(uint8_t)((int)floorf(player->yaw*.63661977236f+2.5f)+2)&3;
+    }
     if (state.id==BETA_BLOCK_CACTUS) {
         static const int dx[4]={-1,1,0,0},dz[4]={0,0,-1,1};
         uint8_t below=world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z);

@@ -2,7 +2,8 @@
 
 The current adapter speaks the **Minecraft Beta 1.7.3 protocol, version 14**, to
 offline-mode servers. It never sends account credentials. A server that returns an
-online-authentication challenge is rejected. No protocol 47 adapter exists yet.
+online-authentication challenge is rejected. Protocol 47 has an experimental
+framing module and unit tests; it is not a usable multiplayer client yet.
 
 The transport resolves DNS on a worker thread, connects over nonblocking TCP,
 buffers partial packets, and processes at most 128 packets and two zlib chunk
@@ -19,6 +20,7 @@ Implemented traffic:
 | Both | `0x09`, `0x65`, `0x6A` | Same-dimension respawn, close window, transaction |
 | Client to server | `0x66` | Click Window with expected slot stack and action ID |
 | Server to client | `0x08`, `0x14`-`0x18`, `0x1D`, `0x1F`-`0x22` | Health and basic entity events |
+| Server to client | `0x04`, `0x46` | 64-bit world time and begin/end rain; local clock interpolates server time |
 | Server to client | `0x32`-`0x35`, `0x3C` | Chunk visibility, zlib block regions, block changes, explosions |
 | Server to client | `0x64`, `0x67`-`0x69`, `0xFF` | Open window, slot/inventory updates, furnace progress, disconnect |
 

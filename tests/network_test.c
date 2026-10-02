@@ -166,6 +166,9 @@ static int mock_session(TestSocket s)
        p[5]!=0 || p[6]!=6 || memcmp(p+7,"\0P\0l\0a\0y\0e\0r",12)!=0) return 0;
     memset(out,0,16); out[0]=1; put32(out+1,123); out[14]=42; /* Seed=42, overworld. */
     if(!send_all(s,out,16)) return 0;
+    memset(out,0,9); out[0]=0x04; put32(out+1,1); put32(out+5,18000);
+    if(!send_all(s,out,9)) return 0;
+    { const uint8_t weather[]={0x46,1}; if(!send_all(s,weather,sizeof(weather))) return 0; }
     memset(out,0,42); out[0]=0x0d;
     put64(out+1,8.5); put64(out+9,65.0); put64(out+17,66.62); put64(out+25,8.5);
     put_float(out+33,180.0f); put_float(out+37,0.0f); out[41]=1;
@@ -367,6 +370,7 @@ int main(void)
     assert(world_peek_block(&world,9,63,8)==BETA_BLOCK_WOOL);
     assert(world_peek_block(&world,8,64,8)==BLOCK_AIR);
     assert(world_peek_block(&world,9,64,8)==BLOCK_TORCH);
+    assert(world.beta_world_time==INT64_C(4294985296) && world.raining);
     { Chunk *chunk=world_peek_chunk(&world,0,0); assert(chunk!=NULL);
       assert(chunk_get_metadata(chunk,8,63,8)==3);
       assert(chunk_get_metadata(chunk,9,63,8)==14);

@@ -64,7 +64,10 @@ void fluid_tick(World *w,int x,int y,int z,unsigned id)
     if (kind==2) {
         int water=fluid_kind(world_peek_block(w,x,y+1,z))==1;
         for (i=0;i<4;++i) if (fluid_kind(world_peek_block(w,x+dx[i],y,z+dz[i]))==1) water=1;
-        if (water && level<=4) { world_set_block(w,x,y,z,level==0 ? 49 : 4); return; }
+        if (water && level<=4) {
+            world_set_block(w,x,y,z,level==0 ? 49 : 4);
+            world_sound(w,"random.fizz",x+.5f,y+.5f,z+.5f,.5f,2.6f); return;
+        }
     }
     if (level>0) {
         for (i=0;i<4;++i) {

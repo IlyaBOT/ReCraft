@@ -2,6 +2,7 @@
 #include "../src/world/entities.h"
 #include "../src/world/ticks.h"
 #include "../src/world/beta_region.h"
+#include "../src/world/beta_session.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -21,6 +22,12 @@
 #define test_pid() getpid()
 #endif
 
+static uint32_t disk_hash(const char *path)
+{
+    uint32_t hash=UINT32_C(2166136261); int byte; FILE *file=fopen(path,"rb"); assert(file);
+    while((byte=fgetc(file))!=EOF) { hash^=(unsigned)byte; hash*=UINT32_C(16777619); }
+    assert(!ferror(file) && fclose(file)==0); return hash;
+}
 static void open_beta(World *world,const char *path)
 {
     assert(world_init(world,123,0,8)==WORLD_OK);
@@ -109,6 +116,15 @@ int main(int argc,char **argv)
     before=world_get_block(&world,72,80,19);
     after=before==BLOCK_STONE ? BLOCK_GLASS : BLOCK_STONE;
     assert(world_set_block(&world,72,80,19,(uint8_t)after));
+    {
+        int64_t other; uint32_t hash=disk_hash(copy);
+        assert(beta_session_start(clone,&world.beta_session));
+        assert(beta_session_start(clone,&other));
+        assert(world_save(&world)==WORLD_ERROR_SESSION_LOCK);
+        assert(beta_region_write_chunk(&world,chunk)==WORLD_ERROR_SESSION_LOCK);
+        assert(disk_hash(copy)==hash);
+        assert(beta_session_start(clone,&world.beta_session));
+    }
     /* Light can reach a cached placeholder beyond the original region. No
      * fabricated region chunk should be written, and exit must still succeed. */
     {
@@ -153,6 +169,7 @@ int main(int argc,char **argv)
     }
     assert(world_close(&world)==WORLD_OK);
     assert(remove(copy)==0);
+    snprintf(copy,sizeof(copy),"%s/session.lock",clone); assert(remove(copy)==0);
     assert(test_rmdir(region)==0);
     assert(test_rmdir(clone)==0);
     puts("Beta 1.7.3 McRegion read and cloned write passed");

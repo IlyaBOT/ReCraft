@@ -37,6 +37,7 @@ static void lock_drop(NetLock *l) { (void)pthread_mutex_unlock(l); }
 static void lock_free(NetLock *l) { (void)pthread_mutex_destroy(l); }
 #endif
 #include "network.h"
+#include "../world/environment.h"
 #include "protocols/protocol_beta_14.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -400,6 +401,12 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
     }
     if(!c->logged_in) { fail(c,"Received gameplay packet before login response"); return; }
     switch(p[0]) {
+    case 0x04:
+        c->world->beta_world_time=(int64_t)(((uint64_t)beta14_u32(p+1)<<32)|beta14_u32(p+5));
+        world_environment_refresh(c->world); break;
+    case 0x46:
+        if(p[1]==1 || p[1]==2) c->world->raining=p[1]==1;
+        break;
     case 0x03: beta14_read_string(packet,1,text,sizeof(text)); e.type=NETWORK_EVENT_CHAT; e.text=text; emit(c,&e); break;
     case 0x08: e.type=NETWORK_EVENT_HEALTH; e.health=(int16_t)beta14_u16(p+1); emit(c,&e); break;
     case 0x09:

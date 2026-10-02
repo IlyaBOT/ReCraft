@@ -1,5 +1,6 @@
 #include "beta_level.h"
 #include "beta_level_io.h"
+#include "beta_session.h"
 #include "../nbt/nbt.h"
 #include "../util/game_paths.h"
 
@@ -33,6 +34,7 @@ typedef struct Capture {
     int has_player,has_position,has_rotation,has_inventory,has_time;
     int has_motion,has_health,has_air,has_fire;
     int has_ground,has_fall;
+    unsigned environment,bed;
     int failed;
 } Capture;
 
@@ -63,6 +65,17 @@ static int capture_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned d
     }
     if (event==NBT_VALUE && depth==2 && tag->type==NBT_LONG && named(tag,"Time"))
         capture->has_time=1;
+    if(event==NBT_VALUE && depth==2) {
+        if(tag->type==NBT_INT && named(tag,"rainTime")) capture->environment|=1;
+        if(tag->type==NBT_INT && named(tag,"thunderTime")) capture->environment|=2;
+        if(tag->type==NBT_BYTE && named(tag,"raining")) capture->environment|=4;
+        if(tag->type==NBT_BYTE && named(tag,"thundering")) capture->environment|=8;
+    }
+    if(capture->player && event==NBT_VALUE && depth==3 && tag->type==NBT_INT) {
+        if(named(tag,"SpawnX")) capture->bed|=1;
+        if(named(tag,"SpawnY")) capture->bed|=2;
+        if(named(tag,"SpawnZ")) capture->bed|=4;
+    }
     if (capture->player && event==NBT_BEGIN && depth==3 && tag->type==NBT_LIST) {
         if (named(tag,"Pos") && tag->list_type==NBT_DOUBLE && tag->count==3)
             capture->has_position=1;
@@ -186,6 +199,11 @@ static int emit_missing_player(Rewrite *r)
     if (!c->has_ground && !emit_scalar(w,NBT_BYTE,"OnGround",s->on_ground!=0)) return 0;
     if (!c->has_fall && !emit_scalar(w,NBT_FLOAT,"FallDistance",0)) return 0;
     if (!c->has_player && !emit_scalar(w,NBT_INT,"Dimension",0)) return 0;
+    if(s->has_bed) {
+        if(!(c->bed&1) && !emit_scalar(w,NBT_INT,"SpawnX",s->bed_x)) return 0;
+        if(!(c->bed&2) && !emit_scalar(w,NBT_INT,"SpawnY",s->bed_y)) return 0;
+        if(!(c->bed&4) && !emit_scalar(w,NBT_INT,"SpawnZ",s->bed_z)) return 0;
+    }
     return 1;
 }
 static int rewrite_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned depth)
@@ -233,6 +251,22 @@ static int rewrite_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned d
         }
     }
     if (event==NBT_VALUE) {
+        const BetaLevelState *s=rewrite->state;
+        if(s->has_environment && depth==2) {
+            if(tag->type==NBT_INT && named(tag,"rainTime")) changed.value.int_value=s->rain_time;
+            if(tag->type==NBT_INT && named(tag,"thunderTime")) changed.value.int_value=s->thunder_time;
+            if(tag->type==NBT_BYTE && named(tag,"raining")) changed.value.byte=(int8_t)(s->raining!=0);
+            if(tag->type==NBT_BYTE && named(tag,"thundering")) changed.value.byte=(int8_t)(s->thundering!=0);
+        }
+        if(rewrite->player && depth==3) {
+            if(tag->type==NBT_BYTE && named(tag,"Sleeping")) changed.value.byte=0;
+            if(tag->type==NBT_SHORT && named(tag,"SleepTimer")) changed.value.short_value=0;
+            if(s->has_bed && tag->type==NBT_INT) {
+                if(named(tag,"SpawnX")) changed.value.int_value=s->bed_x;
+                if(named(tag,"SpawnY")) changed.value.int_value=s->bed_y;
+                if(named(tag,"SpawnZ")) changed.value.int_value=s->bed_z;
+            }
+        }
         if (depth==2 && tag->type==NBT_LONG && named(tag,"Time"))
             changed.value.long_value=rewrite->state->world_time;
         else if (depth==2 && tag->type==NBT_LONG && named(tag,"LastPlayed"))
@@ -274,6 +308,13 @@ static int rewrite_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned d
             if (nbt_writer_tag(writer,&player)!=NBT_OK || !emit_missing_player(rewrite) || nbt_writer_end(writer)!=NBT_OK) return 0;
         }
         if (!rewrite->capture->has_time && !emit_scalar(writer,NBT_LONG,"Time",rewrite->state->world_time)) return 0;
+        if(rewrite->state->has_environment) {
+            const BetaLevelState *s=rewrite->state; unsigned e=rewrite->capture->environment;
+            if(!(e&1) && !emit_scalar(writer,NBT_INT,"rainTime",s->rain_time)) return 0;
+            if(!(e&2) && !emit_scalar(writer,NBT_INT,"thunderTime",s->thunder_time)) return 0;
+            if(!(e&4) && !emit_scalar(writer,NBT_BYTE,"raining",s->raining!=0)) return 0;
+            if(!(e&8) && !emit_scalar(writer,NBT_BYTE,"thundering",s->thundering!=0)) return 0;
+        }
         rewrite->data=0;
     }
     return (event==NBT_FINISH ? nbt_writer_end(writer) :
@@ -334,6 +375,7 @@ int beta_level_save(const char *world_path,const BetaLevelState *state)
         !game_path_join(backup,sizeof(backup),world_path,"level.dat.recraft.bak") ||
         !game_path_join(backup_temp,sizeof(backup_temp),world_path,
                         "level.dat.recraft.bak.tmp")) return 0;
+    if(state->session && !beta_session_check(world_path,state->session)) return 0;
     for (i=0;i<RECRAFT_INVENTORY_SLOTS;++i) {
         const InventorySlot *slot=&state->inventory[i];
         if (slot->id>32767 || slot->count<0 || slot->count>255 ||
@@ -363,7 +405,8 @@ int beta_level_save(const char *world_path,const BetaLevelState *state)
         gzwrite(file,output,(unsigned)written) : -1;
     close_status=gzclose(file);
     valid=n==(int)written && close_status==Z_OK;
-    if (!valid || !copy_once(used_old?old:path,backup,backup_temp)) { valid=0; goto done; }
+    if (!valid || (state->session && !beta_session_check(world_path,state->session)) ||
+        !copy_once(used_old?old:path,backup,backup_temp)) { valid=0; goto done; }
     /* Rotate the last valid primary like Beta SaveHandler. When recovering,
      * keep the valid old file instead of replacing it with a damaged primary. */
     if (!used_old && !replace_file(path,old)) { valid=0; goto done; }

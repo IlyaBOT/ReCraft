@@ -83,6 +83,11 @@ static int metadata_tag(void *context, NbtEvent event, const NbtTag *tag, unsign
     if (read->player && event==NBT_VALUE && depth==3 &&
         tag->type==NBT_INT && tag_is(tag,"Dimension"))
         world->dimension=tag->value.int_value;
+    if(read->player && event==NBT_VALUE && depth==3 && tag->type==NBT_INT) {
+        if(tag_is(tag,"SpawnX")) { world->bed_x=tag->value.int_value; world->has_bed|=1; }
+        if(tag_is(tag,"SpawnY")) { world->bed_y=tag->value.int_value; world->has_bed|=2; }
+        if(tag_is(tag,"SpawnZ")) { world->bed_z=tag->value.int_value; world->has_bed|=4; }
+    }
     if (read->player && event==NBT_VALUE && depth==3 && tag->type==NBT_SHORT) {
         if (read->health && tag_is(tag,"Health")) *read->health=tag->value.short_value;
         if (read->air && tag_is(tag,"Air")) *read->air=tag->value.short_value;
@@ -104,6 +109,10 @@ static int metadata_tag(void *context, NbtEvent event, const NbtTag *tag, unsign
         world->last_played = (uint64_t)(tag->value.long_value/1000);
     else if (tag->type == NBT_LONG && tag_is(tag,"Time"))
         world->world_time = tag->value.long_value;
+    else if (tag->type==NBT_INT && tag_is(tag,"rainTime")) world->rain_time=tag->value.int_value;
+    else if (tag->type==NBT_INT && tag_is(tag,"thunderTime")) world->thunder_time=tag->value.int_value;
+    else if (tag->type==NBT_BYTE && tag_is(tag,"raining")) world->raining=tag->value.byte!=0;
+    else if (tag->type==NBT_BYTE && tag_is(tag,"thundering")) world->thundering=tag->value.byte!=0;
     else if (tag->type == NBT_INT && tag_is(tag,"SpawnX"))
         world->spawn_x = tag->value.int_value;
     else if (tag->type == NBT_INT && tag_is(tag,"SpawnY"))

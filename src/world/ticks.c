@@ -10,7 +10,7 @@ static int named(const NbtTag *t,const char *name)
 static void changed(Chunk *c)
 { c->ticks_modified=1; c->dirty_flags|=CHUNK_DIRTY_SAVE|CHUNK_DIRTY_TICKS; }
 int world_ticks_supported(unsigned id)
-{ return id==8 || id==10 || id==12 || id==13 || id==50 || id==55 || id==75 || id==76 || id==81; }
+{ return id==8 || id==10 || id==12 || id==13 || id==26 || id==50 || id==55 || id==75 || id==76 || id==81 || id==77 || id==93 || id==94; }
 void world_ticks_free(Chunk *c)
 {
     SavedTick *t,*next;

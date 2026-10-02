@@ -9,6 +9,7 @@ typedef struct RenderEntity {
     float x, y, z;
     float yaw,pitch,draw_x,draw_y,draw_z,walk;
     int positioned;
+    int color,sheared;
 } RenderEntity;
 
 /* One depth-tested fixed-function batch of simple geometry for remote entities.

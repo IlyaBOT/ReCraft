@@ -19,8 +19,11 @@ build/
     fonts/ascii.png
     gui/background.png, icons.png, inventory.png, items.png, panorama.png, widgets.png
     gui/crafting.png, furnace.png, container.png
-    textures/terrain.png, mob/char.png
-    sounds/portal/portal.ogg
+    textures/terrain.png, terrain/sun.png, terrain/moon.png
+    textures/environment/rain.png, snow.png
+    textures/mob/char.png, pig.png, sheep.png, sheep_fur.png, cow.png, ...
+    sounds/step/, random/, liquid/, fire/, ambient/weather/, mob/, portal/
+    music/                     (12 selected original OGG tracks)
   saves/                     (persistent ReCraft and Beta worlds)
   texturepacks/              (legacy Beta pack interface)
   resourcepacks/             (reserved for later versions)
@@ -41,11 +44,11 @@ using `GetModuleFileNameA` on Windows, `_NSGetExecutablePath` and `realpath` on
 macOS, and `/proc/self/exe` on Linux. `--data-dir` overrides the entire root.
 `assets_path()` resolves resource IDs within it. Neither resource lookup nor
 save discovery relies on the process working directory. The build deploys only
-known asset files and never clears `saves/`.
+known asset files from `assets/runtime_assets.txt` and never clears `saves/`.
 
 World selection combines ReCraft `world.dat` saves with Beta `level.dat`
 metadata discovery. Beta saves can have spaces in directory names. The
-detector reads seed, name, spawn, time, player position and `.mcr` region count.
+detector reads seed, name, world/bed spawn, time/weather, player position and `.mcr` region count.
 Play opens existing Beta `.mcr` chunks. Loaded-chunk block edits are persisted
 to the region files, preserving other NBT tags. Player and inventory changes
 are saved in `level.dat`, with a gzip temporary file, `level.dat_old` rotation
@@ -54,8 +57,10 @@ the primary is missing or invalid. Old ReCraft sidecars are retained but no
 longer used. World deletion stays disabled for
 Beta entries. Missing Beta chunks are left empty rather than generated with
 ReCraft terrain. Read-only tests use the supplied worlds; write tests use a
-temporary clones or generated fixtures. Native `.rct` sidecars hold container,
-item-entity and pending-tick NBT beside the `.rcg` terrain record.
+temporary clone or generated fixtures. Native `.rct` sidecars hold container,
+item/mob-entity and pending-tick NBT beside the `.rcg` terrain record.
+Native `world.dat` RCW1/v2 adds time/weather and reads the previous v1 format;
+`player.txt` v3 adds the bed respawn point and reads v1/v2.
 
 `tools/package_runtime.cmake` creates CI artifacts from an explicit allowlist.
 It excludes saves, configs and development reference files. It also bundles

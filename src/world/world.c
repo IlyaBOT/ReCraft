@@ -2,6 +2,7 @@
 #include "block_entity.h"
 #include "entities.h"
 #include "ticks.h"
+#include "beta_session.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -61,7 +62,15 @@ static const BlockDef block_defs[BLOCK_COUNT] = {
     [BETA_BLOCK_NETHER_PORTAL] = {"Nether Portal",0,0,BLOCK_LAYER_TRANSPARENT,66,66,66,11},
     [BETA_BLOCK_FLOWING_LAVA] = {"Lava",0,0,BLOCK_LAYER_OPAQUE,64,65,64,15},
     [BETA_BLOCK_STILL_LAVA] = {"Lava",0,0,BLOCK_LAYER_OPAQUE,64,65,64,15},
-    [BETA_BLOCK_REDSTONE_WIRE] = {"Redstone",0,0,BLOCK_LAYER_CUTOUT,82,82,82,0}
+    [BETA_BLOCK_REDSTONE_WIRE] = {"Redstone",0,0,BLOCK_LAYER_CUTOUT,82,82,82,0},
+    [BETA_BLOCK_BED] = {"Bed",1,0,BLOCK_LAYER_OPAQUE,88,89,17,0},
+    [BETA_BLOCK_UNPOWERED_REPEATER] = {"Redstone Repeater",1,0,BLOCK_LAYER_OPAQUE,94,60,17,0},
+    [BETA_BLOCK_POWERED_REPEATER] = {"Redstone Repeater",1,0,BLOCK_LAYER_OPAQUE,95,60,17,0},
+    [BETA_BLOCK_LEVER] = {"Lever",0,0,BLOCK_LAYER_CUTOUT,7,7,7,0},
+    [BETA_BLOCK_STONE_BUTTON] = {"Stone Button",0,0,BLOCK_LAYER_CUTOUT,1,1,1,0},
+    [BETA_BLOCK_SNOW_LAYER] = {"Snow",0,0,BLOCK_LAYER_OPAQUE,96,96,96,0},
+    [BETA_BLOCK_SNOW_BLOCK] = {"Snow Block",1,1,BLOCK_LAYER_OPAQUE,96,96,96,0},
+    [BETA_BLOCK_ICE] = {"Ice",1,0,BLOCK_LAYER_TRANSPARENT,97,97,97,0}
 };
 
 static const BlockDef unknown_solid = {"Unimplemented solid",1,1,BLOCK_LAYER_OPAQUE,1,1,1,0};
@@ -521,6 +530,7 @@ WorldError world_init(World *world, uint64_t seed, int flat, size_t cache_capaci
     world->random_tick=(uint32_t)seed;
     world->flat=(uint8_t)(flat != 0);
     world->structures=1;
+    world->difficulty=2;
     return WORLD_OK;
 }
 
@@ -572,6 +582,11 @@ WorldError world_open(World *world, const char *saves_dir, const char *id,
     strcpy(world->name,info.name);
     world->creative=info.creative;
     world->structures=info.structures;
+    world->beta_world_time=info.world_time;
+    world->rain_time=info.rain_time; world->thunder_time=info.thunder_time;
+    world->raining=info.raining; world->thundering=info.thundering;
+    world->rain_strength=info.raining ? 1 : 0;
+    world->thunder_strength=info.thundering ? 1 : 0;
     world->persistent=1;
     return WORLD_OK;
 }
@@ -862,6 +877,14 @@ void world_drop_stack(World *world,int x,int y,int z,InventorySlot item)
     world->drops[index].damage=item.damage;
     ++world->drop_count;
 }
+void world_sound(World *w,const char *key,float x,float y,float z,float volume,float pitch)
+{
+    unsigned i;
+    if(!w || w->sound_count>=64) return;
+    i=w->sound_count++;
+    w->sounds[i].key=key; w->sounds[i].x=x; w->sounds[i].y=y; w->sounds[i].z=z;
+    w->sounds[i].volume=volume; w->sounds[i].pitch=pitch;
+}
 
 int world_take_drop(World *world,WorldDropEvent *drop)
 {
@@ -928,6 +951,8 @@ WorldError world_save(World *world)
     WorldError err;
     if (!world || !world->cache) return WORLD_ERROR_INVALID_ARGUMENT;
     if (!world->persistent) return world->error=WORLD_OK;
+    if(world->beta_format && world->beta_session && !beta_session_check(world->path,world->beta_session))
+        return world->error=WORLD_ERROR_SESSION_LOCK;
     world_ticks_dirty_countdowns(world);
     for (i=0; i<world->cache_count; ++i) {
         Chunk *chunk=world->cache[i];
@@ -968,6 +993,7 @@ WorldError world_close(World *world)
     free(world->staging);
     free(world->cache);
     free(world->lookup);
+    free(world->climate);
     memset(world,0,sizeof(*world));
     return WORLD_OK;
 }

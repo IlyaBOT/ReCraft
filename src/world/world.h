@@ -74,6 +74,8 @@ typedef struct Chunk {
     uint32_t dirty_flags;
     uint64_t last_used;
     uint32_t revision;
+    uint8_t precipitation[256],precipitation_height[256],climate_ready;
+    uint32_t precipitation_revision;
     void *render_data;
     uint8_t *beta_raw;
     size_t beta_raw_size;
@@ -95,7 +97,8 @@ typedef enum WorldError {
     WORLD_ERROR_CORRUPT,
     WORLD_ERROR_NOT_FOUND,
     WORLD_ERROR_EXISTS,
-    WORLD_ERROR_PATH_TOO_LONG
+    WORLD_ERROR_PATH_TOO_LONG,
+    WORLD_ERROR_SESSION_LOCK
 } WorldError;
 
 typedef struct WorldInfo {
@@ -106,6 +109,8 @@ typedef struct WorldInfo {
     uint8_t flat;
     uint8_t creative;
     uint8_t structures;
+    int64_t world_time;
+    int rain_time,thunder_time,raining,thundering;
 } WorldInfo;
 
 typedef struct WorldPhysicsCell {
@@ -133,10 +138,13 @@ typedef struct World {
     uint8_t network_mode; /* Allocate empty chunks until protocol data arrives. */
     uint8_t beta_format;   /* Original Beta 1.7.3 McRegion storage. */
     int64_t beta_world_time;
+    int difficulty,rain_time,thunder_time,raining,thundering,sky_subtracted;
+    float rain_strength,thunder_strength;
     int32_t spawn_x, spawn_y, spawn_z;
     int beta_has_player;
     double beta_player_x,beta_player_y,beta_player_z;
     float beta_player_yaw,beta_player_pitch;
+    int beta_has_bed,beta_bed_x,beta_bed_y,beta_bed_z;
     WorldError error;
     char path[WORLD_PATH_MAX];
     char id[WORLD_ID_MAX + 1];
@@ -150,6 +158,7 @@ typedef struct World {
     void (*destroy_render_data)(void *);
     WorldError (*read_beta_chunk)(const struct World *, Chunk *);
     WorldError (*write_beta_chunk)(const struct World *, const Chunk *);
+    int64_t beta_session; /* Zero for read-only/development adapters. */
     WorldPhysicsCell physics[WORLD_PHYSICS_QUEUE];
     uint16_t physics_hash[WORLD_PHYSICS_QUEUE*2];
     unsigned physics_count,physics_overflow;
@@ -160,6 +169,10 @@ typedef struct World {
     uint8_t physics_processing;
     WorldDropEvent drops[WORLD_DROP_QUEUE];
     unsigned drop_head,drop_count;
+    struct { const char *key; float x,y,z,volume,pitch; } sounds[64];
+    unsigned sound_count;
+    struct BetaClimate *climate;
+    int next_entity_id;
 } World;
 
 /* Cache capacity is in whole chunks; 64 chunks occupy about 5 MiB before meshes. */
@@ -203,6 +216,7 @@ uint8_t world_peek_metadata(const World *world,int x,int y,int z);
 void world_finish_light_updates(World *world);
 int world_take_drop(World *world, WorldDropEvent *drop);
 void world_drop_stack(World *world,int x,int y,int z,InventorySlot item);
+void world_sound(World *world,const char *key,float x,float y,float z,float volume,float pitch);
 /* Rebuild local sky and block light once after a batch of chunk edits. */
 void world_relight_chunk(World *world, Chunk *chunk);
 

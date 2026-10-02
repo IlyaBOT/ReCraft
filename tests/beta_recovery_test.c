@@ -1,4 +1,5 @@
 #include "world/beta_level.h"
+#include "world/beta_session.h"
 #include "world/beta_level_io.h"
 #include "world/beta_discovery.h"
 #include "nbt/nbt.h"
@@ -205,6 +206,17 @@ int main(void)
         int health,air,fire;
         assert(beta_world_read_vitals(dir,&health,&air,&fire));
         assert(health==13 && air==150 && fire==25);
+    }
+    /* A competing session must block level.dat before any file rotation. */
+    {
+        char lock[256]; int64_t other;
+        snprintf(lock,sizeof(lock),"%s/session.lock",dir);
+        assert(beta_session_start(dir,&state.session));
+        assert(beta_session_start(dir,&other) && other!=state.session);
+        primary_hash=hash_file(primary); old_hash=hash_file(old);
+        assert(!beta_level_save(dir,&state));
+        assert(hash_file(primary)==primary_hash && hash_file(old)==old_hash);
+        assert(remove(lock)==0); state.session=0;
     }
     /* Neither reader nor writer changes an unusable world. */
     corrupt(primary); corrupt(old);

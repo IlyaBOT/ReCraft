@@ -44,7 +44,7 @@ InventorySlot mining_drop(BetaBlockState b,int item,uint32_t random)
         else { d.id=-1; d.count=0; }
         break;
     case 21: d.id=351; d.damage=4; d.count=4+(int)(random%5); break;
-    case 26: d.id=355; break;
+    case 26: d.id=355; if(b.metadata&8) d.count=0; break;
     case 30: d.id=287; break;
     case 31: if (random%8==0) d.id=295; else { d.id=-1; d.count=0; } break;
     case 35: d.damage=b.metadata; break;
@@ -75,9 +75,10 @@ void mining_wear(InventorySlot *item,unsigned block)
     int max,wear=1;
     if (!item || item->count<=0) return;
     /* Tools take one point per block in Beta; swords take two. Shears only
-     * take damage on leaves, cobwebs and wool. Armor/bows are not mining tools. */
+     * take damage on leaves and cobwebs. Wool is faster but does not wear Beta
+     * shears. Armor/bows are not mining tools. */
     if (item->id==267 || item->id==268 || item->id==272 || item->id==276 || item->id==283) wear=2;
-    else if (item->id==359) { if (block!=18 && block!=30 && block!=35) return; }
+    else if (item->id==359) { if (block!=18 && block!=30) return; }
     else if (tool(item->id)==&tools[0]) return;
     max=inventory_max_damage(item->id);
     if (max<=0) return;
