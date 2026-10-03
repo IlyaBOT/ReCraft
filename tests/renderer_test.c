@@ -28,6 +28,9 @@ static void menu_render_test(const char *capture)
     int y,visible=0;
     assets_init(RECRAFT_TEST_ASSET_ROOT); ui_init(&ui);
     glViewport(0,0,320,240); glDisable(GL_SCISSOR_TEST); glDisable(GL_DEPTH_TEST);
+    glDisable(GL_LIGHTING); glDisable(GL_ALPHA_TEST);
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+    glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_MODULATE);
     glDepthMask(GL_TRUE); glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
     glMatrixMode(GL_PROJECTION); glLoadIdentity(); glOrtho(0,320,240,0,0,1);
     glMatrixMode(GL_MODELVIEW); glLoadIdentity();
@@ -574,7 +577,7 @@ int main(int argc, char **argv)
     klass.lpszClassName = "ReCraftRendererCheck";
     klass.style = CS_OWNDC;
     assert(RegisterClassA(&klass));
-    window = CreateWindowA(klass.lpszClassName, "Hidden renderer check", 0,
+    window = CreateWindowA(klass.lpszClassName, "Hidden renderer check", WS_POPUP,
                             0, 0, 320, 240, NULL, NULL, klass.hInstance, NULL);
     assert(window);
     dc = GetDC(window);
