@@ -106,7 +106,8 @@ ASCII-шрифта. Кэш — максимум 16 страниц 256x256 (4 MiB
 CRC, traversal rejection, partial fallback. GL: обновление/освобождение cache,
 nearest и сохранность custom water. Config: сохранение выбранного пака/языка.
 Windows resize/maximize/context check проходит; проверка resize включена также
-в Linux CI smoke. GUI/models/русские подписи сняты и просмотрены запуском из
+в Linux CI smoke. Проверяемые размеры ограничиваются доступным рабочим
+столом: Windows hosted runner использует 1024x768. GUI/models/русские подписи сняты и просмотрены запуском из
 другой cwd. Пользовательские снимки не входят в эти generated captures.
 После повторной сборки проверены SHA-256 всех 102 файлов `build/saves`:
 нет изменений, удаления или новых файлов в этих save directories.

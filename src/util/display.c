@@ -48,9 +48,19 @@ int recraft_display_check_resize(void)
 {
     GLFWwindow *window=glfwGetCurrentContext();
     GLuint probe; GLint binding; int original_width,original_height,i,ok=1;
-    static const int sizes[2][2]={{800,600},{1280,800}};
+    int sizes[2][2]={{800,600},{1280,800}};
+    GLFWmonitor *monitor=glfwGetPrimaryMonitor();
+    const GLFWvidmode *mode=monitor ? glfwGetVideoMode(monitor) : NULL;
     const unsigned char pixel[4]={64,128,192,255};
-    if(!window || !glfwGetWindowAttrib(window,GLFW_RESIZABLE)) return 0;
+    if(!window || !glfwGetWindowAttrib(window,GLFW_RESIZABLE)) {
+        fprintf(stderr,"Window check: missing window or resizable style\n"); return 0;
+    }
+    /* Native window managers can clamp windows larger than the desktop.
+     * Keep both test sizes within it, including decoration/taskbar space. */
+    if(mode) for(i=0;i<2;++i) {
+        if(sizes[i][0]>mode->width-96) sizes[i][0]=mode->width>192 ? mode->width-96 : 96;
+        if(sizes[i][1]>mode->height-96) sizes[i][1]=mode->height>192 ? mode->height-96 : 96;
+    }
     glfwGetWindowSize(window,&original_width,&original_height);
     glGetIntegerv(GL_TEXTURE_BINDING_2D,&binding); glGenTextures(1,&probe);
     glBindTexture(GL_TEXTURE_2D,probe); glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,1,1,0,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
@@ -59,6 +69,8 @@ int recraft_display_check_resize(void)
         glfwSetWindowSize(window,sizes[i][0],sizes[i][1]);
         do { glfwPollEvents(); glfwGetWindowSize(window,&width,&height); }
         while((width!=sizes[i][0] || height!=sizes[i][1]) && glfwGetTime()<deadline);
+        fprintf(stderr,"Window check: requested %dx%d, actual %dx%d, framebuffer %dx%d, texture %u\n",
+            sizes[i][0],sizes[i][1],width,height,recraft_screen_width(),recraft_screen_height(),(unsigned)glIsTexture(probe));
         if(width!=sizes[i][0] || height!=sizes[i][1] || recraft_screen_width()<1 || recraft_screen_height()<1 || !glIsTexture(probe)) ok=0;
     }
 #ifdef _WIN32
@@ -66,6 +78,7 @@ int recraft_display_check_resize(void)
         HWND hwnd=glfwGetWin32Window(window);
         if(!(GetWindowLongPtr(hwnd,GWL_STYLE)&WS_MAXIMIZEBOX)) ok=0;
         ShowWindow(hwnd,SW_MAXIMIZE); glfwPollEvents();
+        fprintf(stderr,"Window check: maximized %d, framebuffer %dx%d\n",IsZoomed(hwnd)!=0,recraft_screen_width(),recraft_screen_height());
         if(!IsZoomed(hwnd) || !glIsTexture(probe) || recraft_screen_width()<1) ok=0;
         ShowWindow(hwnd,SW_RESTORE);
     }
