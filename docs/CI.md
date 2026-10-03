@@ -49,7 +49,9 @@ path no longer asks GL 1.1 for an unsupported GLSL version enum. Cocoa startup
 uses synchronous `NSApplication.finishLaunching`, then sets activation policy;
 both are available in the 10.6 SDK. It does not enter the old unbounded nested
 `NSApplication run` loop. Dependency sources remain pinned and unchanged.
-NSGL first requests the original accelerated pixel format. If that fails for
+NSGL includes `NSOpenGLPFAAllowOfflineRenderers` (available in the 10.6 SDK): a
+headless Mac may report both its GPU and software renderer as offline even
+though usable contexts exist. It first requests an accelerated pixel format. If that fails for
 a legacy OpenGL 1.x/2.x context, it retries without the acceleration requirement,
 allowing Apple's system software renderer. Modern core requests are not relaxed.
 This applies to both the client and renderer test; context errors and the actual
@@ -69,7 +71,9 @@ fixtures, so their count is higher than CI's.
 The runner subsequently completed run 37080121986: both audio tests passed, but
 the renderer could not create its pixel format. Diagnostic run 37113861381
 confirmed GLFW error 0x10009, `NSGL: Failed to find a suitable pixel format`.
-The NSGL retry above addresses that separate context-selection failure.
+Native probe run 37114246885 found two renderers, both marked `online=0`.
+Default pixel formats failed; allowing offline renderers created a usable
+context. The offline attribute above addresses that context-selection failure.
 The macOS renderer test also checks the actual CGL vertex-processing result.
 CTest on Vesper has a 60-second per-test timeout and captures a bounded stack
 sample after a startup failure. The dependency

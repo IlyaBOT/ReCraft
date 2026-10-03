@@ -32,9 +32,11 @@ function(recraft_compat_source source output)
         recraft_replace("    [NSApp run];"
             "    // ReCraft: do not enter an unbounded nested event loop.\n    [NSApp finishLaunching];\n    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];")
     elseif(name STREQUAL "nsgl_context.m")
-        # A runner can expose only Apple's software renderer. Prefer the
-        # original accelerated format, then relax that requirement for the
-        # fixed-function legacy profile. Do not relax modern core requests.
+        # Headless Macs report renderers as offline even when GPU contexts
+        # work. This attribute exists in the 10.6 SDK. Preserve GPU preference,
+        # then permit software only if the legacy accelerated request fails.
+        recraft_replace("    ADD_ATTR(NSOpenGLPFAAccelerated);"
+            "    ADD_ATTR(NSOpenGLPFAAccelerated);\n    /* ReCraft: permit renderers with no active attached display. */\n    ADD_ATTR(NSOpenGLPFAAllowOfflineRenderers);")
         recraft_replace("    if (window->nsgl.pixelFormat == nil)\n    {"
             "    /* ReCraft: NSOpenGLPFAAccelerated is the first attribute. */\n    if (window->nsgl.pixelFormat == nil && ctxconfig->major <= 2)\n    {\n        window->nsgl.pixelFormat =\n            [[NSOpenGLPixelFormat alloc] initWithAttributes:attributes + 1];\n        if (window->nsgl.pixelFormat != nil)\n            fprintf(stderr, \"ReCraft NSGL: using a legacy pixel format without the acceleration requirement.\\n\");\n    }\n    if (window->nsgl.pixelFormat == nil)\n    {")
         recraft_replace("#include \"internal.h\"" "#include \"internal.h\"\n#include <stdio.h>")

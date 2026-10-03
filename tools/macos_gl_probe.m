@@ -1,5 +1,6 @@
 /* Read-only context diagnostics for the self-hosted macOS runner.
  * Uses APIs available in the Snow Leopard SDK; no window or framebuffer effects. */
+#define GL_SILENCE_DEPRECATION
 #import <Cocoa/Cocoa.h>
 #include <OpenGL/OpenGL.h>
 #include <OpenGL/CGLRenderers.h>
