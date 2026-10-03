@@ -26,6 +26,8 @@
 #include "game/sign.h"
 #include "game/modal_input.h"
 #include "world/mobs.h"
+#include "world/fire.h"
+#include "world/explosion.h"
 #include "ui/ui.h"
 #include "audio/audio.h"
 #include "network/network.h"
@@ -33,6 +35,8 @@
 #include "util/clock.h"
 #include "util/server_list.h"
 #include "util/game_paths.h"
+#include "util/file_dialog.h"
+#include "account/account.h"
 #include "util/display.h"
 #include "assets/assets.h"
 #include "ui/pixel_font.h"
@@ -81,6 +85,8 @@ typedef struct App {
     int camera_sleeping;
     NetworkClient *network;
     ServerStatusBrowser *status_browser;
+    Account *account;
+    unsigned account_revision;
     unsigned status_revisions[RECRAFT_MAX_SERVERS];
     int status_visible;
     int has_world, network_position, quit, chat_open, debug, skip_ui_frame;
@@ -208,6 +214,7 @@ static void refresh_lists(App *app)
             entry->save_version = beta[j].save_version;
             entry->dimension = beta[j].dimension;
             entry->has_player=beta[j].has_player;
+            entry->player_sleeping=beta[j].player_sleeping;
             entry->player_x=beta[j].player_x;
             entry->player_y=beta[j].player_y;
             entry->player_z=beta[j].player_z;
@@ -230,6 +237,52 @@ static void refresh_lists(App *app)
         entry->connect_ms=-1; entry->players=entry->max_players=-1;
         entry->compatible = entry->protocol==14;
         entry->hide_address = app->servers.entries[i].hide_address;
+    }
+}
+static int apply_player_skin(App *app,const char *selection)
+{
+    char path[WORLD_PATH_MAX];void *bytes;size_t size;int ok;
+    const char *relative=!strcmp(selection,"classic")?"assets/textures/skins/beta_steve.png":
+        !strcmp(selection,"custom")?"config/player_skin.png":!strcmp(selection,"microsoft")?"config/microsoft_skin.png":NULL;
+    if(!relative) return assets_set_player_skin(NULL,0);
+    if(!path_join(path,sizeof(path),app->root,relative)) return 0;
+    bytes=game_read_small_file(path,1024*1024,&size);if(!bytes) return 0;
+    ok=assets_set_player_skin(bytes,size);free(bytes);return ok;
+}
+static int store_skin(App *app,const char *relative,const unsigned char *bytes,size_t size)
+{
+    char path[WORLD_PATH_MAX],temp[WORLD_PATH_MAX];FILE *file;int ok;
+    if(!assets_skin_png_valid(bytes,size)||!path_join(path,sizeof(path),app->root,relative)||strlen(path)+5>=sizeof(temp)) return 0;
+    snprintf(temp,sizeof(temp),"%s.tmp",path);file=fopen(temp,"wb");if(!file)return 0;
+    ok=fwrite(bytes,1,size,file)==size;if(fclose(file))ok=0;
+    if(!ok){remove(temp);return 0;}
+#ifdef _WIN32
+    if(!MoveFileExA(temp,path,MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) {remove(temp);return 0;}
+#else
+    if(rename(temp,path)){remove(temp);return 0;}
+#endif
+    return 1;
+}
+static void poll_account(App *app)
+{
+    AccountView view;unsigned char *skin;size_t size;
+    account_view(app->account,&view);
+    if(view.revision!=app->account_revision) {
+        app->account_revision=view.revision;
+        copy_text(app->ui.profile_status,sizeof(app->ui.profile_status),view.status);
+        copy_text(app->ui.auth_code,sizeof(app->ui.auth_code),view.code);app->ui.auth_busy=view.busy;app->ui.auth_signed_in=view.signed_in;
+        if(view.code[0]&&view.verification_uri[0]) game_open_external(view.verification_uri);
+        if(!view.busy&&view.signed_in&&view.name[0]) {
+            copy_text(app->ui.options.player_name,sizeof(app->ui.options.player_name),view.name);
+            copy_text(app->ui.player_name_input,sizeof(app->ui.player_name_input),view.name);
+        }
+    }
+    skin=account_take_skin(app->account,&size);
+    if(skin) {
+        if(store_skin(app,"config/microsoft_skin.png",skin,size)) {
+            copy_text(app->ui.options.skin,sizeof(app->ui.options.skin),"microsoft");apply_player_skin(app,"microsoft");
+        }
+        free(skin);
     }
 }
 
@@ -270,6 +323,10 @@ static void apply_options(App *app)
         }
     }
     if(strcmp(o->language,app->applied.language)) language_select(o->language);
+    if(strcmp(o->skin,app->applied.skin) && !apply_player_skin(app,o->skin)) {
+        copy_text(o->skin,sizeof(o->skin),app->applied.skin);
+        copy_text(app->ui.profile_status,sizeof(app->ui.profile_status),"Unable to load skin; previous skin was kept.");
+    }
     menu_background_clear(&app->menu_background);
     r.vbo_mode = o->use_vbo;
     r.vbo_budget_mb = o->vbo_budget_mb;
@@ -403,7 +460,7 @@ static int leave_world(App *app)
         if (app->world.beta_format) {
             memset(&beta_state,0,sizeof(beta_state));
             beta_state.x=app->player.x;
-            beta_state.y=app->player.y;
+            beta_state.y=app->player.y+PLAYER_BETA_ENTITY_Y_OFFSET;
             beta_state.z=app->player.z;
             beta_state.yaw=app->player.yaw*180.0f/PI_F+180.0f;
             beta_state.pitch=-app->player.pitch*180.0f/PI_F;
@@ -459,11 +516,11 @@ static void enter_world(App *app)
     world_environment_refresh(&app->world);
     player_spawn(&app->player, &app->world, app->world.creative);
     if (app->world.beta_format && app->world.beta_has_player) {
-        app->player.x=(float)app->world.beta_player_x;
-        app->player.y=(float)app->world.beta_player_y;
-        app->player.z=(float)app->world.beta_player_z;
-        app->player.yaw=(app->world.beta_player_yaw-180.0f)*PI_F/180.0f;
-        app->player.pitch=-app->world.beta_player_pitch*PI_F/180.0f;
+        char backup[WORLD_PATH_MAX];FILE *old=NULL;
+        if(path_join(backup,sizeof(backup),app->world.path,"level.dat.recraft.bak"))old=fopen(backup,"rb");
+        if(player_restore_beta(&app->player,&app->world,old!=NULL))
+            fprintf(stderr,"Recovered feet-coordinate player position from an older ReCraft save.\n");
+        if(old)fclose(old);
     }
     if(app->world.beta_has_bed) {
         app->player.has_bed_spawn=1;
@@ -769,6 +826,7 @@ static WorldError open_beta_world(App *app,const UiWorldEntry *entry)
     app->world.spawn_y=entry->spawn_y;
     app->world.spawn_z=entry->spawn_z;
     app->world.beta_has_player=entry->has_player;
+    app->world.beta_player_sleeping=entry->player_sleeping;
     app->world.beta_player_x=entry->player_x;
     app->world.beta_player_y=entry->player_y;
     app->world.beta_player_z=entry->player_z;
@@ -786,6 +844,23 @@ static void handle_action(App *app, UiAction action)
     switch (action.type) {
         case UI_ACTION_QUIT: if (leave_world(app)) app->quit = 1; break;
         case UI_ACTION_OPEN_GITHUB: game_open_external("https://github.com/IlyaBOT/ReCraft"); break;
+        case UI_ACTION_MICROSOFT_LOGIN:
+            if(!account_sign_in(app->account)) copy_text(app->ui.profile_status,sizeof(app->ui.profile_status),"Unable to start sign-in.");
+            break;
+        case UI_ACTION_MICROSOFT_CANCEL: account_cancel(app->account);break;
+        case UI_ACTION_MICROSOFT_LOGOUT:
+            if(!account_sign_out(app->account)) copy_text(app->ui.profile_status,sizeof(app->ui.profile_status),"Unable to remove the saved account.");
+            break;
+        case UI_ACTION_CHOOSE_SKIN: {
+            char path[1024];void *bytes;size_t size;
+            if(!game_choose_skin_file(path,sizeof(path))) break;
+            bytes=game_read_small_file(path,1024*1024,&size);
+            if(bytes && store_skin(app,"config/player_skin.png",bytes,size)) {
+                copy_text(app->ui.options.skin,sizeof(app->ui.options.skin),"custom");
+                apply_player_skin(app,"custom");copy_text(app->ui.profile_status,sizeof(app->ui.profile_status),"Skin imported (64x32 / 64x64 PNG).");
+            } else copy_text(app->ui.profile_status,sizeof(app->ui.profile_status),"Choose a valid 64x32 or 64x64 PNG skin.");
+            free(bytes);break;
+        }
         case UI_ACTION_OPEN_PACK_FOLDER: {
             char path[WORLD_PATH_MAX];
             if(path_join(path,sizeof(path),app->root,!strncmp(app->ui.options.texture_pack,"resourcepacks/",14) ? "resourcepacks" : "texturepacks"))
@@ -1096,6 +1171,10 @@ static void game_input(App *app)
         app->chat_open = 1; app->chat[0] = 0; cancel_mining(app); capture_cursor(app,0); return;
     }
     if(app->player.riding && IsKeyPressed(KEY_LEFT_SHIFT)) world_minecart_dismount(&app->world,&app->player);
+    if(IsKeyPressed(KEY_Q)) {
+        if(app->network) network_mine_block(app->network,4,0,0,0,0);
+        else world_item_throw(&app->world,&app->player,&app->inventory[app->player.selected_slot]);
+    }
     if(app->mouse_settle) --app->mouse_settle;
     else {
         float sensitivity=app->ui.options.sensitivity*.003f+.2f;
@@ -1197,6 +1276,13 @@ static void game_input(App *app)
                 if(door_activate(&app->world,hit.x,hit.y,hit.z) || world_redstone_activate(&app->world,hit.x,hit.y,hit.z)) return;
             }
             if(player_use_item(&app->player,&app->world,item)) { app->health=app->player.health; app->swing_ticks=6; return; }
+            if(item->id==259 && item->count>0 && hit.hit) {
+                if(world_ignite(&app->world,hit.place_x,hit.place_y,hit.place_z)) {
+                    world_sound(&app->world,"fire.ignite",hit.place_x+.5f,hit.place_y+.5f,hit.place_z+.5f,1,1);
+                    if(!app->player.creative) inventory_damage(item,1);
+                }
+                app->swing_ticks=6; return;
+            }
             if(item->id==333 && item->count>0) { if(world_boat_use(&app->world,&app->player,item)) app->swing_ticks=6; return; }
             if(item->id==261 && item->count>0) { if(world_bow_use(&app->world,&app->player,app->inventory)) app->swing_ticks=6; return; }
             if((item->id==328 || item->id==342 || item->id==343) && item->count>0 && hit.hit) {
@@ -1246,6 +1332,7 @@ static void tick_mining(App *app)
     if (app->mining_wait>0) { --app->mining_wait; return; }
     hit=player_raycast(&app->player,&app->world,app->player.creative ? 5 : 4);
     if (!hit.hit) { cancel_mining(app); return; }
+    if(!app->network && world_extinguish_fire(&app->world,hit.place_x,hit.place_y,hit.place_z)) {cancel_mining(app);return;}
     new_target=!app->mining_active || app->mining_hit.x!=hit.x ||
         app->mining_hit.y!=hit.y || app->mining_hit.z!=hit.z ||
         app->mining_hit.block!=hit.block || app->mining_item!=item->id;
@@ -1267,7 +1354,14 @@ static void tick_mining(App *app)
     if (app->network) network_mine_block(app->network,2,hit.x,hit.y,hit.z,hit_face(hit));
     else {
         BetaBlockState state={hit.block,world_get_metadata(&app->world,hit.x,hit.y,hit.z)};
-        InventorySlot drop=mining_drop(state,item->id,(uint32_t)app->world.clock);
+        InventorySlot drop=mining_drop(state,item->id,world_random(&app->world,UINT32_MAX>>1));
+        if(state.id==46 && item->id==259 && !app->player.creative) {
+            if(world_tnt_prime(&app->world,hit.x+.5f,hit.y+.5f,hit.z+.5f,80)) {
+                world_set_block(&app->world,hit.x,hit.y,hit.z,0);
+                inventory_damage(item,1);app->mining_active=0;app->mining_progress=0;app->mining_wait=5;
+            }
+            return;
+        }
         if (world_set_block(&app->world,hit.x,hit.y,hit.z,0)) {
             if (!app->player.creative) {
                 world_drop_stack(&app->world,hit.x,hit.y,hit.z,drop);
@@ -1315,6 +1409,7 @@ static void tick_game(App *app)
         world_environment_tick(&app->world);
         world_step_physics(&app->world,64);
         block_entities_tick(&app->world);
+        world_mobs_spawn_tick(&app->world,&app->player);
         world_mobs_tick(&app->world,&app->player);
         world_transport_tick(&app->world,&app->player,app->inventory);
         world_entities_collide(&app->world,&app->player);
@@ -1523,6 +1618,21 @@ static int gameplay_preview(App *app,const char *name)
             if(b) b->slots[i]=(InventorySlot){i%2 ? 278 : 1,i%2 ? 1 : 64,i%2 ? 321 : 0};
         }
         open_inventory(app,CONTAINER_CHEST,hit,large ? 54 : 27);
+    } else if(!strcmp(name,"events")) {
+        static const int types[4]={54,51,52,50};int x,y,z;
+        for(x=1;x<16;++x)for(z=3;z<15;++z) {
+            world_set_block(&app->world,x,63,z,1);
+            for(y=64;y<70;++y)world_set_block(&app->world,x,y,z,0);
+        }
+        world_set_block(&app->world,4,63,10,87);world_ignite(&app->world,4,64,10);
+        world_set_block(&app->world,12,63,10,87);world_ignite(&app->world,12,64,10);
+        world_tnt_prime(&app->world,8.5f,64.5f,10.5f,6);
+        for(i=0;i<4;++i)world_mob_spawn(&app->world,types[i],3.5f+i*3,64,6.5f);
+        app->world.beta_world_time=6000;world_environment_refresh(&app->world);
+        app->player.x=8.5f;app->player.y=64;app->player.z=17;app->player.yaw=0;app->player.pitch=-.12f;
+        app->previous_player=app->player;
+        app->entity_count=world_mobs_visible(&app->world,app->entities,ENTITY_LIMIT);
+        app->entity_count+=world_transport_visible(&app->world,app->entities+app->entity_count,ENTITY_LIMIT-app->entity_count);
     } else if(!strcmp(name,"health")) {
         app->player.creative=0; app->player.health=13; app->health=13;
     } else if(!strcmp(name,"day") || !strcmp(name,"night") || !strcmp(name,"rain") ||
@@ -1694,8 +1804,8 @@ int main(int argc, char **argv)
             "  [--frames N] [--window 960x720] [--capture file.png] [--csv file.csv]\n"
             "  [--client-arrays] [--basic-mesh] [--distance 2..12] [--mipmaps 0..4]\n"
             "  [--smooth-lighting 0|1] [--menu-blur 0|1] [--fancy-leaves 0|1] [--reduced-transparency 0|1] [--chunk-budget 1..8] [--vbo-budget 4|8|16|32]\n"
-            "  [--screen main|worlds|create|multiplayer|add|direct|video|inventory|pause]\n"
-            "  [--smoke-test --screen player|crafting|furnace|chest|large-chest|health|blocks|day|night|rain|snow|bed|mobs]\n"
+            "  [--screen main|profile|worlds|create|multiplayer|add|direct|video|inventory|pause]\n"
+            "  [--smoke-test --screen player|crafting|furnace|chest|large-chest|health|blocks|day|night|rain|snow|bed|mobs|events]\n"
             "  [--smoke-test --screen materials|sign-edit|multiplayer-demo|chat|players]\n"
             "  [--smoke-test --screen chests-north|chests-south|chests-west|chests-east]\n"
             "  [--language en_US] [--texture-pack texturepacks/pack.zip]\n"
@@ -1708,6 +1818,8 @@ int main(int argc, char **argv)
     if (!setup_paths(&app, run.data_dir)) { fprintf(stderr, "Unable to create data directory.\n"); return 1; }
     assets_init(app.root);
     if (!app.transient) settings_load(&app.ui.options, app.settings_path);
+    if(!apply_player_skin(&app,app.ui.options.skin)) copy_text(app.ui.options.skin,sizeof(app.ui.options.skin),"default");
+    if(!app.transient) app.account=account_create(app.root);
     if(run.language) copy_text(app.ui.options.language,sizeof(app.ui.options.language),run.language);
     if(run.texture_pack) copy_text(app.ui.options.texture_pack,sizeof(app.ui.options.texture_pack),run.texture_pack);
     language_init();
@@ -1804,6 +1916,7 @@ int main(int argc, char **argv)
         else if (!strcmp(run.screen,"add")) ui_set_screen(&app.ui,UI_SCREEN_SERVER_EDIT);
         else if (!strcmp(run.screen,"direct")) ui_set_screen(&app.ui,UI_SCREEN_DIRECT_CONNECT);
         else if (!strcmp(run.screen,"options")) ui_set_screen(&app.ui,UI_SCREEN_OPTIONS);
+        else if (!strcmp(run.screen,"profile")) ui_set_screen(&app.ui,UI_SCREEN_PROFILE);
         else if (!strcmp(run.screen,"languages")) ui_set_screen(&app.ui,UI_SCREEN_LANGUAGES);
         else if (!strcmp(run.screen,"packs")) ui_set_screen(&app.ui,UI_SCREEN_PACKS);
         else if (!strcmp(run.screen,"video")) ui_set_screen(&app.ui,UI_SCREEN_VIDEO);
@@ -1823,6 +1936,7 @@ int main(int argc, char **argv)
         int draw_scene=1;
         char debug_text[2048];
         app.skip_ui_frame=0;
+        poll_account(&app);
         stream_ms=terrain_ms=hud_ms=swap_ms=gpu_wait_ms=0;
         if (WindowShouldClose()) {
             if (leave_world(&app)) break;
@@ -2130,6 +2244,7 @@ int main(int argc, char **argv)
     if (!app.transient && !settings_save(&app.ui.options,app.settings_path)) status=1;
     audio_shutdown(&app.audio);
     server_status_destroy(app.status_browser);
+    account_destroy(app.account);
     ui_shutdown();
     renderer_shutdown(app.renderer);
     language_shutdown(); assets_shutdown();

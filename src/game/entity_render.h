@@ -10,6 +10,7 @@ typedef struct RenderEntity {
     float yaw,pitch,draw_x,draw_y,draw_z,walk;
     int positioned;
     int color,sheared;
+    int fuse,powered;
     int local_interpolation;
     float previous_x,previous_y,previous_z,phase;
 } RenderEntity;

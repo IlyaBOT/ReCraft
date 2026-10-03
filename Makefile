@@ -20,7 +20,7 @@ GAME_SOURCES = $(wildcard src/*.c src/*/*.c src/*/*/*.c)
 GAME_OBJECTS = $(patsubst src/%.c,$(BUILD_DIR)/game/%.o,$(GAME_SOURCES))
 
 LEGACY_FLAGS = -O2 -Wall -std=gnu99 -fgnu89-inline -arch i386 -mmacosx-version-min=10.6 \
-               -DPLATFORM_DESKTOP -DGRAPHICS_API_OPENGL_11 \
+               -DPLATFORM_DESKTOP -DGRAPHICS_API_OPENGL_11 -DRECRAFT_ACCOUNT_USE_BUILD_DEFAULT \
                -DRECRAFT_TITLE='"$(APP_NAME)"'
 RAYLIB_INCLUDES = -I$(RAYLIB_ROOT)/src -I$(GLFW_ROOT)/include \
                   -I$(RAYLIB_ROOT)/external/openal_soft/include \
@@ -51,8 +51,8 @@ $(RAYLIB_LIB): $(RAYLIB_OBJECTS)
 	@mkdir -p $(@D)
 	$(AR) rcs $@ $(RAYLIB_OBJECTS)
 
-$(VERSION_HEADER): VERSION tools/write_version_header.sh
-	@sh tools/write_version_header.sh VERSION $@
+$(VERSION_HEADER): VERSION MICROSOFT_CLIENT_ID tools/write_version_header.sh
+	@sh tools/write_version_header.sh VERSION $@ MICROSOFT_CLIENT_ID
 
 $(GAME_OBJECTS): $(VERSION_HEADER)
 

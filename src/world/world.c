@@ -3,6 +3,7 @@
 #include "entities.h"
 #include "ticks.h"
 #include "beta_session.h"
+#include "foliage.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -70,6 +71,8 @@ static const BlockDef block_defs[BLOCK_COUNT] = {
     [BETA_BLOCK_UNPOWERED_REPEATER] = {"Redstone Repeater",1,0,BLOCK_LAYER_OPAQUE,95,60,17,0},
     [BETA_BLOCK_POWERED_REPEATER] = {"Redstone Repeater",1,0,BLOCK_LAYER_OPAQUE,96,60,17,0},
     [BETA_BLOCK_LEVER] = {"Lever",0,0,BLOCK_LAYER_CUTOUT,7,7,7,0},
+    [BETA_BLOCK_TNT] = {"TNT",1,1,BLOCK_LAYER_OPAQUE,118,119,120,0},
+    [BETA_BLOCK_FIRE] = {"Fire",0,0,BLOCK_LAYER_CUTOUT,121,121,121,15},
     [BETA_BLOCK_STONE_BUTTON] = {"Stone Button",0,0,BLOCK_LAYER_CUTOUT,1,1,1,0},
     [BETA_BLOCK_SNOW_LAYER] = {"Snow",0,0,BLOCK_LAYER_OPAQUE,97,97,97,0},
     [BETA_BLOCK_SNOW_BLOCK] = {"Snow Block",1,1,BLOCK_LAYER_OPAQUE,97,97,97,0},
@@ -864,6 +867,7 @@ int world_set_state(World *world,int wx,int y,int wz,BetaBlockState state)
     if (!world->physics_processing) flush_block_light(world);
     chunk->dirty_flags|=CHUNK_DIRTY_MESH|CHUNK_DIRTY_SAVE;
     mark_mesh_neighbors(world,cx,cz);
+    world_foliage_removed(world,wx,y,wz,old);
     /* Power providers notify through their adjoining solid block as well. */
     if(id==55 || id==69 || id==75 || id==76 || id==77 || id==93 || id==94 || id==28 ||
        old==55 || old==69 || old==75 || old==76 || old==77 || old==93 || old==94 || old==28)

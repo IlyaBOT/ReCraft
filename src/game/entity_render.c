@@ -3,6 +3,7 @@
 #include "../world/beta_blocks.h"
 #include "creative.h"
 #include "player.h"
+#include "skin_geometry.h"
 
 #ifdef __APPLE__
 #include <OpenGL/gl.h>
@@ -74,45 +75,56 @@ int entity_pick(const RenderEntity *entities,int count,const RendererCamera *cam
     return result;
 }
 
-static void skin_box(float x,float y,float z,int w,int h,int d,int u,int v,int mirror)
+static int skin_height=32;
+static int player_modern;
+static void held_cube(const InventorySlot *item);
+static void skin_box_inflated(float x,float y,float z,int w,int h,int d,int u,int v,int mirror,float inflate)
 {
-    const float p[8][3]={{x,y,z},{x+w,y,z},{x+w,y+h,z},{x,y+h,z},
-        {x,y,z+d},{x+w,y,z+d},{x+w,y+h,z+d},{x,y+h,z+d}};
-    static const int face[6][4]={{5,1,2,6},{0,4,7,3},{5,4,0,1},{2,3,7,6},{1,0,3,2},{4,5,6,7}};
     static const float normal[6][3]={{1,0,0},{-1,0,0},{0,-1,0},{0,1,0},{0,0,-1},{0,0,1}};
-    const int uv[6][4]={{u+d+w,v+d,u+d+w+d,v+d+h},{u,v+d,u+d,v+d+h},
-        {u+d,v,u+d+w,v+d},{u+d+w,v,u+d+w+w,v+d},{u+d,v+d,u+d+w,v+d+h},
-        {u+d+w+d,v+d,u+d+w+d+w,v+d+h}};
     int f,i; glBegin(GL_QUADS);
     for(f=0;f<6;++f) {
-        glNormal3fv(normal[f]);
+        glNormal3f(normal[f][0]*(mirror?-1:1),normal[f][1],normal[f][2]);
         for(i=0;i<4;++i) {
-            int c=mirror ? 3-i : i;
-            float a=(float)uv[f][(c==0 || c==3) ? 2 : 0]/64;
-            float b=(float)uv[f][c<2 ? 1 : 3]/32;
-            glTexCoord2f(a,b); glVertex3fv(p[face[f][i]]);
+            float p[3],uv[2];
+            skin_vertex(x,y,z,w,h,d,u,v,mirror,skin_height,inflate,f,i,p,uv);
+            glTexCoord2fv(uv); glVertex3fv(p);
         }
     }
     glEnd();
 }
-static void limb(float x,float y,float angle,int arm,int mirror)
+static void skin_box(float x,float y,float z,int w,int h,int d,int u,int v,int mirror)
+{ skin_box_inflated(x,y,z,w,h,d,u,v,mirror,0); }
+static void limb(float x,float y,float angle,int arm,int mirror,int thin)
 {
+    int modern=player_modern&&mirror,u=arm?40:0,v=16;
+    if(modern) {u=arm?32:16;v=48;}
     glPushMatrix(); glTranslatef(x,y,0); glRotatef(angle,1,0,0);
-    skin_box(arm ? (mirror ? -1 : -3) : -2,arm ? -2 : 0,-2,4,12,4,arm ? 40 : 0,16,mirror);
+    skin_box(thin?-1:arm?(mirror?-1:-3):-2,arm?-2:0,thin?-1:-2,thin?2:4,12,thin?2:4,u,v,modern?0:mirror);
+    if(player_modern) {
+        int outer_u=mirror?(arm?48:0):(arm?40:0),outer_v=mirror?48:32;
+        skin_box_inflated(arm?(mirror?-1:-3):-2,arm?-2:0,-2,4,12,4,outer_u,outer_v,0,.25f);
+    }
     glPopMatrix();
 }
 static void player_model_pose(const RenderEntity *e,float head_yaw)
 {
     float angle=sinf(e->walk)*32;
+    int previous_height=skin_height,previous_modern=player_modern;
+    if(e->type==0) skin_height=assets_get_texture(ASSET_PLAYER_SKIN).height;
+    player_modern=e->type==0&&skin_height==64;
     glPushMatrix(); glTranslatef(e->draw_x,e->draw_y+1.40625f,e->draw_z);
     glRotatef(180-e->yaw,0,1,0); glScalef(.05859375f,-.05859375f,.05859375f);
     glColor3ub(255,255,255);
     skin_box(-4,0,-2,8,12,4,16,16,0);
+    if(player_modern) skin_box_inflated(-4,0,-2,8,12,4,16,32,0,.25f);
     glPushMatrix(); glRotatef(head_yaw,0,1,0); glRotatef(e->pitch,1,0,0);
-    skin_box(-4,-8,-4,8,8,8,0,0,0); glPopMatrix();
-    limb(-5,2,e->type==54 || e->type==51 ? -90 : angle,1,0);
-    limb(5,2,e->type==54 || e->type==51 ? -90 : -angle,1,1);
-    limb(-2,12,-angle,0,0); limb(2,12,angle,0,1); glPopMatrix();
+    skin_box(-4,-8,-4,8,8,8,0,0,0);
+    if(e->type==0) skin_box_inflated(-4,-8,-4,8,8,8,32,0,0,.5f);
+    glPopMatrix();
+    limb(-5,2,e->type==54 || e->type==51 ? -90+e->pitch : angle,1,0,e->type==51);
+    limb(5,2,e->type==54 || e->type==51 ? -90+e->pitch : -angle,1,1,e->type==51);
+    limb(-2,12,-angle,0,0,e->type==51); limb(2,12,angle,0,1,e->type==51); glPopMatrix();
+    skin_height=previous_height;player_modern=previous_modern;
 }
 static void player_model(const RenderEntity *e) { player_model_pose(e,0); }
 
@@ -178,6 +190,10 @@ static void mob_model(const RenderEntity *e)
     glColor3ub(255,255,255);
     if(e->type==51 || e->type==54) { player_model(e); return; }
     glPushMatrix(); glTranslatef(e->draw_x,e->draw_y+(e->type==50 ? 1.375f : 1.5f),e->draw_z);
+    if(e->type==50 && e->fuse>0) {
+        float phase=fminf(1,(e->fuse+e->phase)/30),pulse=1+sinf(phase*100)*phase*.01f;
+        phase*=phase;phase*=phase;glScalef((1+phase*.4f)*pulse,(1+phase*.1f)/pulse,(1+phase*.4f)*pulse);
+    }
     glRotatef(180-e->yaw,0,1,0); glScalef(.0625f,-.0625f,.0625f);
     if(e->type==90 || e->type==91 || e->type==92) {
         leg=e->type==90 ? 6 : 12;
@@ -298,7 +314,20 @@ int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *ca
         }
         dx=e->draw_x-camera->x; dy=e->draw_y-camera->y; dz=e->draw_z-camera->z;
         if(dx*dx+dy*dy+dz*dz>far2) continue;
-        if(e->type==1000 || e->type==1001 || e->type==1002) transport_model(e);
+        if(e->type==1003) {
+            float swell=1;
+            InventorySlot tnt={46,1,0};glPushMatrix();glTranslatef(e->draw_x,e->draw_y,e->draw_z);
+            if(e->fuse<10){float phase=1-(e->fuse-e->phase+1)/10;if(phase<0)phase=0;phase*=phase;phase*=phase;swell+=phase*.3f;}
+            glScalef(.98f*swell,.98f*swell,.98f*swell);held_cube(&tnt);
+            if((e->fuse/5)%2==0) {
+                glDisable(GL_TEXTURE_2D);glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+                glDepthFunc(GL_LEQUAL);glDepthMask(GL_FALSE);glColor4f(1,1,1,(1-(e->fuse-e->phase+1)/100)*.8f);
+                glBegin(GL_QUADS);box(0,-.5f,0,.5f,1);glEnd();
+                glDepthFunc(GL_LEQUAL);glDepthMask(GL_TRUE);glDisable(GL_BLEND);glEnable(GL_TEXTURE_2D);
+            }
+            glPopMatrix();
+        }
+        else if(e->type==1000 || e->type==1001 || e->type==1002) transport_model(e);
         else if(e->type==0) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,skin.id); player_model(e); }
         else if(e->type==50 || e->type==51 || e->type==52 || e->type==54 || (e->type>=90 && e->type<=93)) {
             glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,assets_get_texture(mob_skin(e->type)).id); mob_model(e);
@@ -457,8 +486,11 @@ void first_person_draw_pose(const InventorySlot *item,int width,int height,float
         glRotatef(arc*70,0,1,0); glRotatef(-sinf(swing*swing*3.14159265f)*20,0,0,1);
         glTranslatef(-1,3.6f,3.5f); glRotatef(120,0,0,1); glRotatef(200,1,0,0); glRotatef(-135,0,1,0);
         glTranslatef(5.6f,0,0); glScalef(.0625f,.0625f,.0625f);
-        glBindTexture(GL_TEXTURE_2D,assets_get_texture(ASSET_PLAYER_SKIN).id);
+        Texture2D skin=assets_get_texture(ASSET_PLAYER_SKIN);int previous_height=skin_height;
+        glBindTexture(GL_TEXTURE_2D,skin.id);skin_height=skin.height;
         glColor3ub(255,255,255); skin_box(-8,0,-2,4,12,4,40,16,0);
+        if(skin.height==64) skin_box_inflated(-8,0,-2,4,12,4,40,32,0,.25f);
+        skin_height=previous_height;
     }
     scene_end(mode);
 }

@@ -30,6 +30,21 @@ void texture_animation_init(TextureAnimation *fx)
 void texture_animation_step(TextureAnimation *fx)
 {
     int x,y,i,a,b;
+    for(x=0;x<16;++x) for(y=0;y<20;++y) {
+        float value=fx->fire[0][x+((y+1)%20)*16]*18;int samples=18;
+        for(a=x-1;a<=x+1;++a) for(b=y;b<=y+1;++b) {
+            if(a>=0 && a<16 && b<20) value+=fx->fire[0][a+b*16];
+            ++samples;
+        }
+        fx->fire[1][x+y*16]=value/(samples*1.06f);
+        if(y==19) fx->fire[1][x+y*16]=random_float(fx)*random_float(fx)*random_float(fx)*4+random_float(fx)*.1f+.2f;
+    }
+    memcpy(fx->fire[0],fx->fire[1],sizeof(fx->fire[0]));
+    for(i=0;i<256;++i) {
+        float value=fmaxf(0,fminf(1,fx->fire[0][i]*1.8f)),square=value*value;
+        uint8_t *p=fx->fire_pixels+i*4;
+        p[0]=(uint8_t)(value*155+100);p[1]=(uint8_t)(square*255);p[2]=(uint8_t)(square*square*square*square*square*255);p[3]=value<.5f?0:255;
+    }
     for(x=0;x<16;++x) for(y=0;y<16;++y) {
         float water=0,lava=0,soup=0;
         int ox=(int)(sinf(y*6.2831853f/16)*1.2f),oy=(int)(sinf(x*6.2831853f/16)*1.2f);

@@ -1,6 +1,8 @@
 #include "../src/renderer/renderer.c"
 #include "../src/renderer/menu_background.c"
 #include "../src/game/entity_render.h"
+#include "../src/game/skin_geometry.h"
+#include "../src/ui/gui_button.h"
 #include "../src/ui/ui.h"
 #include "ui/language.h"
 #include "assets/resource_pack.h"
@@ -92,6 +94,70 @@ static void entity_pick_test(void)
     assert(entity_pick(entities,0,&camera,6,6)==-1);
 }
 
+static void skin_geometry_test(void)
+{
+    float right[3],left[3],a[2],b[2];int face,corner,axis;
+    for(face=0;face<6;++face)for(corner=0;corner<4;++corner) {
+        skin_vertex(-3,-2,-2,4,12,4,40,16,0,32,0,face,corner,right,a);
+        skin_vertex(-3,-2,-2,4,12,4,40,16,1,32,0,face,3-corner,left,b);
+        assert(fabsf(left[0]-(-2-right[0]))<1e-6f);
+        for(axis=1;axis<3;++axis)assert(right[axis]==left[axis]);
+        assert(a[0]==b[0]&&a[1]==b[1]); /* Geometry and quad order mirror together. */
+    }
+    skin_vertex(-3,-2,-2,4,12,4,40,16,0,32,0,4,0,right,a);
+    assert(right[0]==1&&right[1]==-2&&right[2]==-2);
+    assert(fabsf(a[0]-47.9f/64)<1e-6f&&fabsf(a[1]-20.1f/32)<1e-6f);
+    skin_vertex(-2,0,-2,4,12,4,0,16,0,32,0,4,0,right,a);
+    assert(fabsf(a[0]-7.9f/64)<1e-6f); /* Leg uses its own atlas region. */
+    skin_vertex(-1,-2,-2,4,12,4,32,48,0,64,0,4,0,right,a);
+    assert(fabsf(a[0]-39.9f/64)<1e-6f&&fabsf(a[1]-52.1f/64)<1e-6f);
+}
+
+static void skin_upload_test(void)
+{
+    unsigned char png[512];size_t size=test_png_fixture(png);
+    Texture2D before,after;GLint filter;Image image;
+    assets_init(RECRAFT_TEST_ASSET_ROOT);
+    before=assets_get_texture(ASSET_PLAYER_SKIN);assert(before.id&&before.height==32);
+    assert(assets_skin_png_valid(png,size)&&assets_set_player_skin(png,size));
+    assert(!glIsTexture(before.id));
+    after=assets_get_texture(ASSET_PLAYER_SKIN);assert(after.id&&after.width==64&&after.height==64);
+    image=assets_load_image(ASSET_PLAYER_SKIN);assert(image.data&&image.height==64);
+    ImageFormat(&image,UNCOMPRESSED_R8G8B8A8);
+    assert(((Color *)image.data)[52*64+36].b==192);UnloadImage(image);
+    glBindTexture(GL_TEXTURE_2D,after.id);glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,&filter);assert(filter==GL_NEAREST);
+    assert(!assets_set_player_skin(png,7)&&glIsTexture(after.id));
+    assert(assets_select_pack("")&&assets_get_texture(ASSET_PLAYER_SKIN).height==64);
+    assert(assets_set_player_skin(NULL,0)&&assets_get_texture(ASSET_PLAYER_SKIN).height==32);
+    assets_shutdown();puts("Skin 64x64 import, cache invalidation, pack switch and nearest filtering passed");
+}
+
+static void button_texture_test(void)
+{
+    Image atlas;GLubyte pixel[3];int state,x,scale;GLint filter;
+    assets_init(RECRAFT_TEST_ASSET_ROOT);atlas=assets_load_image(ASSET_GUI_WIDGETS);
+    assert(atlas.data&&atlas.width==256&&atlas.height==256);
+    ImageFormat(&atlas,UNCOMPRESSED_R8G8B8A8);
+    glViewport(0,0,320,240);glDisable(GL_SCISSOR_TEST);glDisable(GL_DEPTH_TEST);
+    glDisable(GL_LIGHTING);glDisable(GL_ALPHA_TEST);glDisable(GL_BLEND);
+    glColor4ub(255,255,255,255);glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_MODULATE);
+    glMatrixMode(GL_PROJECTION);glLoadIdentity();glOrtho(0,320,240,0,-1,1);
+    glMatrixMode(GL_MODELVIEW);glLoadIdentity();glMatrixMode(GL_TEXTURE);glLoadIdentity();glMatrixMode(GL_MODELVIEW);
+    for(state=0;state<4;++state)for(scale=1;scale<=2;++scale) {
+        int row=state==GUI_BUTTON_DISABLED?46:state==GUI_BUTTON_NORMAL?66:86;
+        gui_button_draw(0,0,100*scale,20*scale,NULL,(GuiButtonState)state);
+        for(x=3;x<=93;x+=10) {
+            int sx=x<50?x:100+x;
+            Color expected=((Color *)atlas.data)[(row+5)*256+sx];
+            glReadPixels(x*scale,239-5*scale,1,1,GL_RGB,GL_UNSIGNED_BYTE,pixel);
+            assert(pixel[0]==expected.r&&pixel[1]==expected.g&&pixel[2]==expected.b);
+        }
+    }
+    glBindTexture(GL_TEXTURE_2D,assets_get_texture(ASSET_GUI_WIDGETS).id);
+    glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,&filter);assert(filter==GL_NEAREST);
+    UnloadImage(atlas);assets_shutdown();puts("Button atlas halves/states at 1x/2x and nearest filtering passed");
+}
+
 static void pixel_text_test(void)
 {
     const char *text="A\xd0\xaf\xf0\x9f\x98\x80";
@@ -133,7 +199,7 @@ static void pack_upload_test(void)
     assert(assets_select_pack("resourcepacks/fixture") && !glIsTexture(before.id));
     image=assets_load_image(ASSET_TERRAIN); assert(image.data && image.width==256 && image.height==256);
     assert(((Color *)image.data)[16].r==48 && ((Color *)image.data)[16].b==192);
-    UnloadImage(image); assert(assets_animation_mask()==6);
+    UnloadImage(image); assert(assets_animation_mask()==14);
     after=assets_get_texture(ASSET_TERRAIN); assert(after.id && after.id==assets_get_texture(ASSET_TERRAIN).id);
     glBindTexture(GL_TEXTURE_2D,after.id); glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,&filter); assert(filter==GL_NEAREST);
     assert(assets_get_texture(ASSET_FONT_ASCII).width==128); /* Partial pack fallback. */
@@ -144,7 +210,7 @@ static void pack_upload_test(void)
     renderer_animate(&r,1); glBindTexture(GL_TEXTURE_2D,r.atlas); glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,unchanged);
     assert(!memcmp(pixels,unchanged,atlas_bytes)); /* Procedural animation must preserve custom water. */
     free(pixels); free(unchanged); glDeleteTextures(1,&r.atlas);
-    assert(assets_select_pack("") && !glIsTexture(after.id) && assets_animation_mask()==7);
+    assert(assets_select_pack("") && !glIsTexture(after.id) && assets_animation_mask()==15);
     assets_shutdown(); assert(glGetError()==GL_NO_ERROR);
     for(i=0;i<2;++i) { snprintf(path,sizeof(path),"%s/resourcepacks/fixture/textures/blocks/%s.png",root,i ? "water_still" : "stone"); assert(remove(path)==0); }
     for(i=3;i>=0;--i) { snprintf(path,sizeof(path),"%s/%s",root,dirs[i]); assert(fixture_rmdir(path)==0); }
@@ -404,6 +470,7 @@ int main(int argc, char **argv)
     ChunkMesh *greedy, *plain;
     uint32_t g, p;
     int x, y, z, i;
+    skin_geometry_test();
 #ifdef _WIN32
     WNDCLASSA klass = {0};
     HWND window;
@@ -944,6 +1011,8 @@ int main(int argc, char **argv)
     }
     pixel_text_test();
     pack_upload_test();
+    button_texture_test();
+    skin_upload_test();
     inventory_preview_test();
     first_person_test();
     sign_render_test();

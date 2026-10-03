@@ -7,6 +7,13 @@ if(NOT RECRAFT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+([.+-][A-Za-z0-9.+-]+)?
     message(FATAL_ERROR "VERSION must contain a version such as 0.1.0-dev")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/VERSION")
+file(READ "${CMAKE_SOURCE_DIR}/MICROSOFT_CLIENT_ID" RECRAFT_MICROSOFT_CLIENT_ID_DEFAULT)
+string(STRIP "${RECRAFT_MICROSOFT_CLIENT_ID_DEFAULT}" RECRAFT_MICROSOFT_CLIENT_ID_DEFAULT)
+string(LENGTH "${RECRAFT_MICROSOFT_CLIENT_ID_DEFAULT}" _client_id_length)
+if(NOT _client_id_length EQUAL 36 OR NOT RECRAFT_MICROSOFT_CLIENT_ID_DEFAULT MATCHES "^[A-Fa-f0-9]+-[A-Fa-f0-9]+-[A-Fa-f0-9]+-[A-Fa-f0-9]+-[A-Fa-f0-9]+$")
+    message(FATAL_ERROR "MICROSOFT_CLIENT_ID must contain the public application GUID")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/MICROSOFT_CLIENT_ID")
 string(TIMESTAMP RECRAFT_BUILD_DATE "%Y-%m-%d %H:%M UTC" UTC)
 execute_process(COMMAND git rev-parse --short=9 HEAD WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE RECRAFT_BUILD_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
@@ -50,7 +57,7 @@ if(WIN32)
     list(APPEND GLFW_SOURCES win32_init.c win32_monitor.c win32_time.c win32_tls.c
         win32_window.c winmm_joystick.c wgl_context.c)
     set(GLFW_DEFINITIONS _GLFW_WIN32 _GLFW_WGL _GLFW_USE_OPENGL)
-    set(PLATFORM_LIBRARIES opengl32 gdi32 user32 winmm ws2_32 shell32)
+    set(PLATFORM_LIBRARIES opengl32 gdi32 user32 winmm ws2_32 shell32 comdlg32 advapi32)
 elseif(APPLE)
     add_definitions(-DGL_SILENCE_DEPRECATION)
     list(APPEND GLFW_SOURCES cocoa_init.m cocoa_monitor.m cocoa_window.m
@@ -147,7 +154,7 @@ if(APPLE)
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_BINARY_DIR}/generated/Info.plist")
 endif()
 target_include_directories(ReCraft PRIVATE "${CMAKE_SOURCE_DIR}/src" "${RAYLIB_ROOT}/src" "${GLFW_ROOT}/include" "${OPENAL_INCLUDE_DIR}" "${ZLIB_INCLUDE_DIRS}")
-target_compile_definitions(ReCraft PRIVATE PLATFORM_DESKTOP GRAPHICS_API_OPENGL_11)
+target_compile_definitions(ReCraft PRIVATE PLATFORM_DESKTOP GRAPHICS_API_OPENGL_11 RECRAFT_ACCOUNT_USE_BUILD_DEFAULT)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(ReCraft PRIVATE -O2 -include "${CMAKE_SOURCE_DIR}/src/win_gl_compat.h")
 endif()
@@ -351,16 +358,30 @@ endif()
 
 # Headless world tests share the client's persistence and simulation modules.
 # These sources do not depend on raylib or a graphics context.
-foreach(_world_test world_test renderer_test network_test beta_region_test gameplay_test sign_test transport_test audio_record_test)
+add_executable(beta_events_test tests/beta_events_test.c src/world/world.c src/world/storage.c src/world/beta_blocks.c)
+target_include_directories(beta_events_test PRIVATE src)
+target_link_libraries(beta_events_test m)
+add_test(NAME beta_events_test COMMAND beta_events_test)
+foreach(_world_test world_test renderer_test network_test beta_region_test gameplay_test sign_test transport_test audio_record_test beta_events_test)
     if(TARGET ${_world_test})
         target_sources(${_world_test} PRIVATE src/world/block_entity.c src/world/environment.c src/world/climate.c src/world/redstone.c src/world/beta_session.c src/game/bed.c src/game/sign.c src/game/player.c
             src/world/entities.c src/world/mobs.c src/world/transport.c src/world/rail.c src/world/door.c
             src/world/physics.c src/world/ticks.c src/world/fluid.c src/game/mining.c
+            src/world/foliage.c src/world/fire.c src/world/explosion.c src/world/mob_path.c
             src/game/crafting.c src/game/inventory.c src/nbt/nbt.c)
     endif()
 endforeach()
 
 # Tests use assert(), including calls with side effects. Keep them active in CI Release.
+add_executable(account_test tests/account_test.c src/account/account.c src/account/account_flow.c
+    src/account/account_store.c src/util/json.c src/util/https.c src/util/file_dialog.c
+    src/util/game_paths.c src/util/clock.c src/game/settings.c)
+target_include_directories(account_test PRIVATE src)
+target_link_libraries(account_test Threads::Threads ${PLATFORM_LIBRARIES})
+if(WIN32)
+    target_link_libraries(account_test comdlg32 advapi32)
+endif()
+add_test(NAME account_test COMMAND account_test)
 add_executable(beta_recovery_test tests/beta_recovery_test.c src/world/beta_level.c
     src/world/beta_level_io.c src/world/beta_discovery.c src/game/inventory.c
     src/nbt/nbt.c src/util/game_paths.c)

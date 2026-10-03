@@ -1,4 +1,5 @@
 #include "player.h"
+#include "../world/fire.h"
 #include "../world/door.h"
 #include "../world/entities.h"
 #include "../world/rail.h"
@@ -98,6 +99,30 @@ static int move_axis(Player *player, World *world, int axis, float delta)
         return 1;
     }
     return 0;
+}
+
+int player_restore_beta(Player *player,World *world,int allow_legacy_feet)
+{
+    Player raw;
+    int recovered=0;
+    if(!world->beta_has_player)return 0;
+    player->x=(float)world->beta_player_x;
+    player->y=(float)world->beta_player_y-PLAYER_BETA_ENTITY_Y_OFFSET;
+    player->z=(float)world->beta_player_z;
+    player->yaw=(world->beta_player_yaw-180.0f)*.01745329252f;
+    player->pitch=player_clamp_pitch(-world->beta_player_pitch*.01745329252f);
+    if(world->beta_player_sleeping) {
+        player->y=(float)world->beta_player_y-.2f;
+        player->bed_x=(int)floorf(player->x);
+        player->bed_y=(int)floor(world->beta_player_y);
+        player->bed_z=(int)floorf(player->z);
+        player->sleeping=1;
+        player_wake(player,world,0);
+    } else if(allow_legacy_feet && body_collides(player,world)) {
+        raw=*player;raw.y=(float)world->beta_player_y;
+        if(!body_collides(&raw,world)) { player->y=raw.y;recovered=1; }
+    }
+    return recovered;
 }
 
 /* Intersect a ray with an audited non-cube selection box. The
@@ -303,7 +328,7 @@ static BlockHit raycast(const Player *player, World *world, float reach,int sour
     memset(&result, 0, sizeof(result));
     while (distance <= reach) {
         uint8_t id = world_get_block(world, x, y, z);
-        if (id != BLOCK_AIR && (!fluid_kind(id) || (sources && world_get_metadata(world,x,y,z)==0))) {
+        if (id != BLOCK_AIR && id!=51 && (!fluid_kind(id) || (sources && world_get_metadata(world,x,y,z)==0))) {
             int place[3] = { px, py, pz };
             int intersects = 1;
             float face_distance=distance;
@@ -406,6 +431,7 @@ int player_use_item(Player *p,World *w,InventorySlot *item)
 int player_break_block(Player *player, World *world)
 {
     BlockHit hit = player_raycast(player, world, 5.0f);
+    if(hit.hit && world_extinguish_fire(world,hit.place_x,hit.place_y,hit.place_z))return 1;
     return hit.hit && world_set_block(world, hit.x, hit.y, hit.z, BLOCK_AIR);
 }
 

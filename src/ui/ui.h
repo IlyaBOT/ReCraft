@@ -26,6 +26,7 @@ typedef enum UiScreen {
     UI_SCREEN_PACKS,
     UI_SCREEN_CONTROLS,
     UI_SCREEN_MULTIPLAYER_OPTIONS,
+    UI_SCREEN_PROFILE,
     UI_SCREEN_PAUSE,
     UI_SCREEN_CONFIRM,
     UI_SCREEN_DEATH,
@@ -37,6 +38,10 @@ typedef enum UiActionType {
     UI_ACTION_QUIT,
     UI_ACTION_OPEN_GITHUB,
     UI_ACTION_OPEN_PACK_FOLDER,
+    UI_ACTION_CHOOSE_SKIN,
+    UI_ACTION_MICROSOFT_LOGIN,
+    UI_ACTION_MICROSOFT_CANCEL,
+    UI_ACTION_MICROSOFT_LOGOUT,
     UI_ACTION_PLAY_WORLD,
     UI_ACTION_CREATE_WORLD,
     UI_ACTION_DELETE_WORLD,
@@ -65,7 +70,7 @@ typedef struct UiWorldEntry {
     int rain_time,thunder_time,raining,thundering;
     int has_bed,bed_x,bed_y,bed_z;
     int save_version,dimension;
-    int has_player;
+    int has_player,player_sleeping;
     double player_x,player_y,player_z;
     float player_yaw,player_pitch;
 } UiWorldEntry;
@@ -92,6 +97,7 @@ typedef struct UiPlayerEntry { char name[64]; int ping_ms; } UiPlayerEntry;
 typedef struct UiOptions {
     char player_name[17];    /* Offline Beta username; shared with Protocol 14. */
     char language[16],texture_pack[300];
+    char skin[16];            /* default, classic, custom, microsoft. */
     int invert_mouse,sensitivity,fov,chat_visible;
     int difficulty;           /* 0 peaceful, 1 easy, 2 normal, 3 hard. */
     int sound_volume,music_volume; /* 0..100, independent. */
@@ -173,6 +179,8 @@ typedef struct Ui {
     char server_name[UI_NAME_MAX];
     char server_address[UI_ADDRESS_MAX];
     char status[160];
+    char profile_status[160],auth_code[32];
+    int auth_busy,auth_signed_in;
 } Ui;
 
 void ui_init(Ui *ui);

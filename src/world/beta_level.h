@@ -5,7 +5,7 @@
 #include "../game/inventory.h"
 
 typedef struct BetaLevelState {
-    double x,y,z;
+    double x,y,z; /* Vanilla Entity Pos; awake SP Y = feet + 1.62. */
     double motion_x,motion_y,motion_z;
     float yaw,pitch; /* Minecraft degrees, not ReCraft camera radians. */
     int on_ground;

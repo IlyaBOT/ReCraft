@@ -3,6 +3,7 @@
 
 #include "../world/world.h"
 #define PLAYER_LOOK_SPEED .00261799388f /* Beta Entity.setAngles: .15 degrees. */
+#define PLAYER_BETA_ENTITY_Y_OFFSET 1.62f /* SP Entity.posY is feet + yOffset. */
 
 typedef struct Player {
     const char *name;           /* Borrowed from persistent UiOptions.player_name. */
@@ -42,6 +43,10 @@ typedef struct BlockHit {
 } BlockHit;
 
 void player_spawn(Player *player, World *world, int creative);
+/* Import vanilla SP coordinates. Old ReCraft saves may have written feet Y;
+ * recover that value only when the normal import overlaps terrain and the
+ * unconverted position is clear. Sleeping players wake as in Beta's reader. */
+int player_restore_beta(Player *player,World *world,int allow_legacy_feet);
 float player_clamp_pitch(float pitch);
 void player_tick(Player *player, World *world, const PlayerInput *input, float dt);
 void player_damage(Player *player,int amount);

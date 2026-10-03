@@ -27,7 +27,7 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
         if(++r->records>4096) return 0;
         r->current=(SavedEntity *)calloc(1,sizeof(*r->current)); if(!r->current) return 0;
         r->current->item.id=-1; r->current->item.health=5;
-        r->health_seen=r->pos_seen=0; r->current->mob.health=10;
+        r->health_seen=r->pos_seen=0; r->current->mob.health=10;r->current->mob.air=300;
         r->current->transport.x_tile=r->current->transport.y_tile=r->current->transport.z_tile=-1;
         nbt_writer_init(&r->writer,r->scratch,r->size,NULL);
     }
@@ -39,15 +39,18 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
             if(t->value.bytes.size==5 && !memcmp(t->value.bytes.data,"Arrow",5)) r->current->transport.kind=1;
             if(t->value.bytes.size==8 && !memcmp(t->value.bytes.data,"Minecart",8)) r->current->transport.kind=2;
             if(t->value.bytes.size==4 && !memcmp(t->value.bytes.data,"Boat",4)) r->current->transport.kind=3;
+            if(t->value.bytes.size==9 && !memcmp(t->value.bytes.data,"PrimedTnt",9)) r->current->transport.kind=4;
             r->current->mob.type=mob_type(t->value.bytes.data,t->value.bytes.size);
             if(!r->health_seen) r->current->mob.health=mob_default_health(r->current->mob.type);
         }
         if(t->type==NBT_SHORT && named(t,"Age")) r->current->item.age=t->value.short_value/20.0f;
         if(t->type==NBT_SHORT && named(t,"Health")) { r->health_seen=1; r->current->item.health=t->value.short_value; r->current->mob.health=t->value.short_value; }
         if(t->type==NBT_SHORT && named(t,"Fire")) r->current->mob.fire=t->value.short_value;
+        if(t->type==NBT_SHORT && named(t,"Air")) r->current->mob.air=t->value.short_value;
         if(t->type==NBT_BYTE && named(t,"OnGround")) r->current->mob.on_ground=t->value.byte!=0;
         if(t->type==NBT_BYTE && named(t,"Color")) r->current->mob.color=t->value.byte&15;
         if(t->type==NBT_BYTE && named(t,"Sheared")) r->current->mob.sheared=t->value.byte!=0;
+        if(t->type==NBT_BYTE && named(t,"powered")) r->current->mob.powered=t->value.byte!=0;
         {
             TransportState *s=&r->current->transport;
             if(t->type==NBT_SHORT) {
@@ -57,6 +60,7 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
                 if(named(t,"Fuel")) s->fuel=t->value.short_value;
             }
             if(t->type==NBT_BYTE) {
+                if(named(t,"Fuse")) s->fuse=(uint8_t)t->value.byte;
                 if(named(t,"inTile")) s->in_tile=(uint8_t)t->value.byte;
                 if(named(t,"inData")) s->in_data=(uint8_t)t->value.byte;
                 if(named(t,"shake")) s->shake=(uint8_t)t->value.byte;
@@ -257,6 +261,23 @@ int world_item_spawn_at(World *w,float x,float y,float z,InventorySlot item)
 }
 int world_item_spawn(World *w,int x,int y,int z,InventorySlot item)
 { return world_item_spawn_at(w,x+.5f,y+.35f,z+.5f,item); }
+int world_item_throw(World *w,const Player *p,InventorySlot *held)
+{
+    Chunk *c;ItemDrop *drop;InventorySlot one;float angle,spread;
+    if(w->network_mode || !held || held->id<=0 || held->count<=0) return 0;
+    one=*held;one.count=1;
+    /* EntityPlayer SP: posY + eyeHeight(.12) - .3, with yOffset 1.62. */
+    if(!world_item_spawn_at(w,p->x,p->y+PLAYER_BETA_ENTITY_Y_OFFSET+.12f-.3f,p->z,one)) return 0;
+    c=owner(w,(int)floorf(p->x),(int)floorf(p->z));drop=&c->saved_entities->item;
+    angle=(float)world_random(w,16777216)/16777216*6.283185307f;
+    spread=.4f*(float)world_random(w,16777216)/16777216;
+    drop->vx=sinf(p->yaw)*cosf(p->pitch)*6+cosf(angle)*spread;
+    drop->vz=-cosf(p->yaw)*cosf(p->pitch)*6+sinf(angle)*spread;
+    drop->vy=sinf(p->pitch)*6+2+((float)world_random(w,16777216)-(float)world_random(w,16777216))/16777216*2;
+    drop->pickup_delay=40;
+    if(--held->count==0) inventory_clear_slot(held);
+    return 1;
+}
 void world_items_tick(World *w,const Player *player,InventorySlot *inventory)
 {
     size_t i;

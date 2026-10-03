@@ -7,6 +7,9 @@
 #include "rail.h"
 #include "ticks.h"
 #include "environment.h"
+#include "fire.h"
+#include "foliage.h"
+#include "explosion.h"
 #include "../game/mining.h"
 #include <stdio.h>
 #include <string.h>
@@ -106,6 +109,13 @@ static void notify_cell(World *w,int x,int y,int z)
         chunk_set_block(c,x-c->x*16,y,z-c->z*16,(uint8_t)(id-1)); --id;
     }
     if (id==8 || id==10) world_schedule_tick(w,x,y,z,(uint8_t)id,id==8 ? 5 : 30);
+    else if(id==51) {
+        if(world_fire_can_stay(w,x,y,z)) world_schedule_tick(w,x,y,z,51,40);
+        else world_set_block(w,x,y,z,0);
+    }
+    else if(id==46 && world_redstone_power(w,x,y,z,x,y,z,1)>0) {
+        if(world_tnt_prime(w,x+.5f,y+.5f,z+.5f,80)) world_set_block(w,x,y,z,0);
+    }
     else if (id==12 || id==13) world_schedule_tick(w,x,y,z,(uint8_t)id,3);
     else if (id==75 || id==76) world_schedule_tick(w,x,y,z,(uint8_t)id,2);
     else if (id==50 || id==81 || id==55 || id==26 || id==64 || id==71 || sign_is_block(id) || rail_is(id)) world_schedule_tick(w,x,y,z,(uint8_t)id,id==55 || rail_is(id) ? 0 : 1);
@@ -146,9 +156,9 @@ void world_physics_loaded(World *w,Chunk *c)
         /* Supported falling blocks do not require a permanent scheduled tick. */
         if ((id==12 || id==13) && !fluid_kind(world_peek_block(w,x,y-1,z)) &&
             world_peek_block(w,x,y-1,z)!=0 && world_peek_block(w,x,y-1,z)!=51) continue;
-        if (id==8 || id==10 || id==75 || id==76 || id==81 || id==50 || id==12 || id==13 || id==55)
+        if (id==8 || id==10 || id==75 || id==76 || id==81 || id==50 || id==12 || id==13 || id==55 || id==51)
             world_schedule_tick(w,x,y,z,(uint8_t)id,
-                id==8 ? 5 : id==10 ? 30 : id==12 || id==13 ? 3 : id==75 || id==76 ? 2 : 1);
+                id==8 ? 5 : id==10 ? 30 : id==51 ? 40 : id==12 || id==13 ? 3 : id==75 || id==76 ? 2 : 1);
     }
 }
 static void support(int x,int y,int z,int meta,int *sx,int *sy,int *sz)
@@ -169,6 +179,7 @@ void world_redstone_notify(World *w,int x,int y,int z)
         unsigned id=world_peek_block(w,nx,ny,nz);
         if (id==75 || id==76 || id==55 || id==93 || id==94 || rail_is(id)) notify_cell(w,nx,ny,nz);
         if(id==64 || id==71) door_power_changed(w,nx,ny,nz);
+        if(id==46) notify_cell(w,nx,ny,nz);
     }
 }
 static int burned_out(const World *w,int x,int y,int z)
@@ -190,6 +201,7 @@ static void step(World *w,WorldPhysicsCell c)
     int x=c.x,y=c.y,z=c.z,sx,sy,sz;
     unsigned id=world_peek_block(w,x,y,z),meta=world_peek_metadata(w,x,y,z);
     if (id!=c.id || !loaded(w,x,y,z)) return;
+    if(id==51) { world_fire_tick(w,x,y,z); return; }
     if(sign_is_block(id)) { sign_neighbor_tick(w,x,y,z); return; }
     if(rail_is(id)) { rail_update(w,x,y,z); return; }
     if(id==26) { bed_neighbor_tick(w,x,y,z); return; }
@@ -281,6 +293,8 @@ static void random_cactus(World *w)
             w->random_tick=w->random_tick*3u+UINT32_C(1013904223); bits=w->random_tick>>2;
             x=bits&15; z=(bits>>8)&15; y=(bits>>16)&127; index=(unsigned)(x+z*16+y*256);
             x+=chunk->x*16; z+=chunk->z*16;
+            if(chunk->blocks[index]==18) { world_leaf_tick(w,x,y,z); continue; }
+            if(chunk->blocks[index]==11) { world_lava_ignite_tick(w,x,y,z); continue; }
             if(chunk->blocks[index]==75 || chunk->blocks[index]==76) {
                 step(w,(WorldPhysicsCell){x,z,(uint8_t)y,chunk->blocks[index],0,0,0,NULL}); continue;
             }

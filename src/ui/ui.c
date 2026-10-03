@@ -12,6 +12,7 @@
 #include "../game/creative.h"
 #include "../game/entity_render.h"
 #include "../util/display.h"
+#include "../util/build_platform.h"
 #include "../network/server_status.h"
 
 #if defined(__APPLE__)
@@ -224,12 +225,12 @@ static void draw_background(int dirt)
     Texture2D texture = assets_get_texture(dirt ? ASSET_GUI_BACKGROUND : ASSET_GUI_PANORAMA);
     Rectangle src = dirt ? (Rectangle){0,0,640,480} :
                   (Rectangle){0,64,(float)texture.width,384};
-    Rectangle dst = {(float)layout.x,(float)layout.y,(float)ps(VW),(float)ps(VH)};
+    Rectangle dst = {0,0,(float)recraft_screen_width(),(float)recraft_screen_height()};
     Vector2 origin = {0,0};
     Color veil = dirt ? col(39,30,23,125) : col(17,22,24,115);
     ClearBackground(col(24,27,28,255));
     DrawTexturePro(texture,src,dst,origin,0,col(255,255,255,255));
-    rect(0,0,VW,VH,veil);
+    DrawRectangle(0,0,recraft_screen_width(),recraft_screen_height(),veil);
 }
 
 static void panel(int x, int y, int w, int h)
@@ -340,7 +341,7 @@ void ui_set_screen(Ui *ui, UiScreen screen)
     if (!ui) return;
     ui->previous_screen = ui->screen;
     ui->screen = screen;
-    if(screen==UI_SCREEN_OPTIONS) copy_text(ui->player_name_input,sizeof(ui->player_name_input),ui->options.player_name);
+    if(screen==UI_SCREEN_OPTIONS || screen==UI_SCREEN_PROFILE) copy_text(ui->player_name_input,sizeof(ui->player_name_input),ui->options.player_name);
     if(screen==UI_SCREEN_PACKS) pack_count=resource_pack_list(pack_entries,128);
     ui->slider_drag=0;
     ui->focus = 0;
@@ -351,30 +352,45 @@ static UiAction main_menu(Ui *ui)
 {
     UiAction action = empty_action();
     int i; Texture2D globe=assets_get_texture(ASSET_GUI_LANGUAGE);
+    int width=recraft_screen_width(),height=recraft_screen_height(),small=ps(7),normal=ps(9),margin=ps(4);
+    const char *github="GitHub: https://github.com/IlyaBOT/ReCraft";
+    int link_width=MeasureMinecraftText(github,normal),link_y=height-margin-normal*3-small-ps(6);
     draw_background(0);
     /* Original ReCraft wordmark: pixel geometry with an extruded dark edge. */
     for(i=8;i>=0;--i) centered(RECRAFT_TITLE,320-i/2,54+i,58,col(20,20,20,255));
     centered(RECRAFT_TITLE,320,51,58,col(192,190,187,255));
-    if (button(ui, 170, 198, 300, 30, "Singleplayer", 1)) ui_set_screen(ui, UI_SCREEN_WORLDS);
-    if (button(ui, 170, 234, 300, 30, "Multiplayer", 1)) ui_set_screen(ui, UI_SCREEN_MULTIPLAYER);
-    if (button(ui, 170, 320, 145, 30, "Options...", 1)) {
+    player_inventory_draw(px(100),py(329),ps(73),px(layout.mouse_x),py(layout.mouse_y),width,height);
+    if(button(ui,40,342,120,24,ui->options.player_name,1)) ui_set_screen(ui,UI_SCREEN_PROFILE);
+    if (button(ui, 225, 198, 300, 30, "Singleplayer", 1)) ui_set_screen(ui, UI_SCREEN_WORLDS);
+    if (button(ui, 225, 234, 300, 30, "Multiplayer", 1)) ui_set_screen(ui, UI_SCREEN_MULTIPLAYER);
+    if (button(ui, 225, 320, 145, 30, "Options...", 1)) {
         ui->options_parent = UI_SCREEN_MAIN; ui_set_screen(ui, UI_SCREEN_OPTIONS);
     }
-    if (button(ui, 325, 320, 145, 30, "Quit Game", 1)) {
+    if (button(ui, 380, 320, 145, 30, "Quit Game", 1)) {
         ui->pending_confirm = 3; ui_set_screen(ui, UI_SCREEN_CONFIRM);
     }
     {
-        Rectangle src={0,inside(133,320,30,30) ? 126 : 106,20,20};
-        Rectangle dst={(float)px(133),(float)py(320),(float)ps(30),(float)ps(30)}; Vector2 origin={0,0};
+        Rectangle src={0,inside(188,320,30,30) ? 126 : 106,20,20};
+        Rectangle dst={(float)px(188),(float)py(320),(float)ps(30),(float)ps(30)}; Vector2 origin={0,0};
         DrawTexturePro(globe,src,dst,origin,0,WHITE);
-        if(inside(133,320,30,30) && layout.clicked) { ui->click_sound=1; ui->language_parent=UI_SCREEN_MAIN; ui_set_screen(ui,UI_SCREEN_LANGUAGES); }
+        if(inside(188,320,30,30) && layout.clicked) { ui->click_sound=1; ui->language_parent=UI_SCREEN_MAIN; ui_set_screen(ui,UI_SCREEN_LANGUAGES); }
     }
-    label(RECRAFT_TITLE " " RECRAFT_VERSION,8,411,10,WHITE);
-    label("Build " RECRAFT_BUILD_REVISION " / " RECRAFT_BUILD_DATE,8,426,8,col(220,220,220,255));
-    centered("Free fan parody. Original Minecraft assets belong to Mojang.",320,445,9,col(230,230,230,255));
-    centered("Not affiliated with Mojang or Microsoft.",320,459,8,col(205,205,205,255));
-    label("github.com/IlyaBOT/ReCraft",422,428,8,inside(417,424,215,17) ? YELLOW : WHITE);
-    if(inside(417,424,215,17) && layout.clicked) { ui->click_sound=1; action.type=UI_ACTION_OPEN_GITHUB; }
+    DrawMinecraftText(RECRAFT_TITLE " " RECRAFT_VERSION,margin,height-margin-small-normal-ps(3),normal,WHITE,1);
+    DrawMinecraftText("Build " RECRAFT_BUILD_REVISION " / " RECRAFT_BUILD_DATE " / " RECRAFT_BUILD_PLATFORM,
+        margin,height-margin-small,small,col(220,220,220,255),1);
+    DrawMinecraftText(github,width-margin-link_width,link_y,normal,WHITE,1);
+    {
+        const char *fan="Free fan parody. Original Minecraft assets belong to Mojang.";
+        const char *aff="Not affiliated with Mojang or Microsoft.";
+        DrawMinecraftText(fan,width-margin-MeasureMinecraftText(fan,small),height-margin-normal-small-ps(3),small,col(230,230,230,255),1);
+        DrawMinecraftText(aff,width-margin-MeasureMinecraftText(aff,normal),height-margin-normal,normal,col(205,205,205,255),1);
+    }
+    if(IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        Vector2 mouse=GetMousePosition();
+        if(mouse.x>=width-margin-link_width && mouse.y>=link_y && mouse.y<link_y+normal) {
+            ui->click_sound=1; action.type=UI_ACTION_OPEN_GITHUB;
+        }
+    }
     return action;
 }
 
@@ -788,6 +804,25 @@ static UiAction options_menu(Ui *ui)
     if (button(ui, 170, 420, 300, 30, "Done", settings_player_name_valid(ui->player_name_input))) ui_set_screen(ui, ui->options_parent);
     return action;
 }
+static UiAction profile_menu(Ui *ui)
+{
+    UiAction action=empty_action();draw_background(1);title("Player Profile");
+    player_inventory_draw(px(155),py(330),ps(95),px(layout.mouse_x),py(layout.mouse_y),recraft_screen_width(),recraft_screen_height());
+    label("Player Name",270,95,12,WHITE);
+    text_field(ui,1,270,120,290,30,ui->player_name_input,sizeof(ui->player_name_input),"Player");
+    edit_text(ui,1,ui->player_name_input,sizeof(ui->player_name_input));
+    if(settings_player_name_valid(ui->player_name_input)) copy_text(ui->options.player_name,sizeof(ui->options.player_name),ui->player_name_input);
+    if(button(ui,270,172,290,30,ui->auth_busy?"Cancel Microsoft sign-in":"Sign in with Microsoft",1))
+        action.type=ui->auth_busy?UI_ACTION_MICROSOFT_CANCEL:UI_ACTION_MICROSOFT_LOGIN;
+    if(button(ui,270,214,140,30,"Pack skin",1)) copy_text(ui->options.skin,sizeof(ui->options.skin),"default");
+    if(button(ui,420,214,140,30,"Classic Steve",1)) copy_text(ui->options.skin,sizeof(ui->options.skin),"classic");
+    if(button(ui,270,256,290,30,"Choose skin file...",1)) action.type=UI_ACTION_CHOOSE_SKIN;
+    if(ui->auth_signed_in && button(ui,270,298,290,30,"Sign out",1)) action.type=UI_ACTION_MICROSOFT_LOGOUT;
+    if(ui->auth_code[0]) {centered(ui->auth_code,415,345,16,YELLOW);centered("Enter this code at microsoft.com/link",415,370,9,WHITE);}
+    if(ui->profile_status[0]) label_fit(ui->profile_status,50,393,9,540,col(255,206,162,255));
+    if(button(ui,220,420,200,30,"Done",settings_player_name_valid(ui->player_name_input))) ui_set_screen(ui,UI_SCREEN_MAIN);
+    return action;
+}
 
 static void list_scrollbar(Ui *ui,int count,int visible,int row_height,int top,int *scroll,int *drag)
 {
@@ -1058,6 +1093,7 @@ UiAction ui_frame(Ui *ui, const UiWorldEntry *worlds, int world_count,
             case UI_SCREEN_CONTROLS:
             case UI_SCREEN_MULTIPLAYER_OPTIONS: ui_set_screen(ui,UI_SCREEN_OPTIONS); break;
             case UI_SCREEN_OPTIONS: ui_set_screen(ui, ui->options_parent); break;
+            case UI_SCREEN_PROFILE: ui_set_screen(ui,UI_SCREEN_MAIN);break;
             case UI_SCREEN_CREATE_WORLD:
             case UI_SCREEN_WORLD_EDIT: ui_set_screen(ui, UI_SCREEN_WORLDS); break;
             case UI_SCREEN_SERVER_EDIT:
@@ -1076,6 +1112,7 @@ UiAction ui_frame(Ui *ui, const UiWorldEntry *worlds, int world_count,
         case UI_SCREEN_SERVER_EDIT: return server_form(ui, 0);
         case UI_SCREEN_DIRECT_CONNECT: return server_form(ui, 1);
         case UI_SCREEN_OPTIONS: return options_menu(ui);
+        case UI_SCREEN_PROFILE: return profile_menu(ui);
         case UI_SCREEN_VIDEO: return video_menu(ui);
         case UI_SCREEN_LANGUAGES: return languages_menu(ui);
         case UI_SCREEN_PACKS: return packs_menu(ui);

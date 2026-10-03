@@ -141,7 +141,7 @@ typedef struct World {
     int difficulty,rain_time,thunder_time,raining,thundering,sky_subtracted;
     float rain_strength,thunder_strength;
     int32_t spawn_x, spawn_y, spawn_z;
-    int beta_has_player;
+    int beta_has_player,beta_player_sleeping;
     double beta_player_x,beta_player_y,beta_player_z;
     float beta_player_yaw,beta_player_pitch;
     int beta_has_bed,beta_bed_x,beta_bed_y,beta_bed_z;

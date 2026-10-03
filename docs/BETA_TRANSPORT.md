@@ -101,7 +101,8 @@ inTile/inData/shake/inGround/player: Byte, общие vanilla entity fields.
 Motion на диске — блоки/тик, внутри движка — блоки/секунда. Pitch стрелы
 сохраняет знак EntityArrow; yaw учитывает соглашение камеры. Ground/air
 counters оригинал не сохраняет. Bubble particles/полное knockback остаются
-в очереди effects/combat; Skeleton AI пока не создаёт стрелы самостоятельно.
+в очереди effects/combat. Skeleton AI теперь создаёт настоящие стрелы с Beta
+скоростью 0.6/tick, inaccuracy 12 и cooldown 30; см. [дополнение](BETA_EVENTS_AND_PROFILE.md).
 
 ## Rails и Minecart
 

@@ -83,6 +83,9 @@ static int metadata_tag(void *context, NbtEvent event, const NbtTag *tag, unsign
     if (read->player && event==NBT_VALUE && depth==3 &&
         tag->type==NBT_INT && tag_is(tag,"Dimension"))
         world->dimension=tag->value.int_value;
+    if (read->player && event==NBT_VALUE && depth==3 &&
+        tag->type==NBT_BYTE && tag_is(tag,"Sleeping"))
+        world->player_sleeping=tag->value.byte!=0;
     if(read->player && event==NBT_VALUE && depth==3 && tag->type==NBT_INT) {
         if(tag_is(tag,"SpawnX")) { world->bed_x=tag->value.int_value; world->has_bed|=1; }
         if(tag_is(tag,"SpawnY")) { world->bed_y=tag->value.int_value; world->has_bed|=2; }

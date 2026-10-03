@@ -168,6 +168,8 @@ int beta_block_terrain_tile(BetaBlockState state, unsigned face)
     case BETA_BLOCK_POWERED_REPEATER: return face==0 ? 99 : face==1 ? 147 : 5;
     case BETA_BLOCK_LEVER: return 96;
     case BETA_BLOCK_JUKEBOX: return face==1 ? 75 : 74;
+    case BETA_BLOCK_TNT: return face==1 ? 9 : face==0 ? 10 : 8;
+    case BETA_BLOCK_FIRE: return 31;
     case BETA_BLOCK_RAIL: return state.metadata>=6 ? 112 : 128;
     case BETA_BLOCK_POWERED_RAIL: return (state.metadata&8) ? 179 : 163;
     case BETA_BLOCK_DETECTOR_RAIL: return 195;
@@ -254,7 +256,7 @@ int beta_render_source_tile(unsigned slot)
         15,63,79,39,55,56,13,12,29,28,73,5,208,176,192,
         237,238,14,69,70,71,43,59,60,25,26,27,62,45,44,61,99,115,164,
         205,206,41,42,57,58,134,135,149,150,151,152,131,147,66,67,
-        53,133,11,81,97,82,98,81,97,82,98,96,74,75,112,128,179,163,195};
+        53,133,11,81,97,82,98,81,97,82,98,96,74,75,112,128,179,163,195,9,8,10,31,47};
     return slot<sizeof(tiles)/sizeof(tiles[0]) ? tiles[slot] : -1;
 }
 unsigned beta_render_tile(int terrain_tile)

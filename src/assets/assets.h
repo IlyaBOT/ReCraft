@@ -45,6 +45,9 @@ Texture2D assets_get_texture(AssetId id);
 int assets_set_server_icon(unsigned index,const unsigned char *png,size_t size);
 Texture2D assets_get_server_icon(unsigned index);
 void assets_clear_server_icons(void);
+/* Render-thread skin override. Accept only bounded 64x32/64x64 PNGs. */
+int assets_set_player_skin(const unsigned char *png,size_t size);
+int assets_skin_png_valid(const unsigned char *png,size_t size);
 Image assets_load_image(AssetId id);
 Sound assets_get_sound(AssetSoundId id);
 AssetSoundId assets_find_sound(const char *key,unsigned variant);

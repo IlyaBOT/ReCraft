@@ -15,11 +15,14 @@ The interface uses selected user-provided CoterieCraft Beta textures and an orig
 
 The current [mechanics audit](docs/BETA_MECHANICS_AUDIT.md) distinguishes working,
 partial and missing features. Day/night, weather, beds and saved mobs have a
-local implementation; full Beta terrain generation, mob spawning/pathfinding,
-pistons, armor and explosions remain unfinished. Instant Beta bows/projectile
+local implementation; full Beta terrain generation, pistons, armor and lightning
+remain unfinished. Hostile spawning/pathfinding, skeleton arrows, creeper/TNT
+explosions, leaf decay, fire and Q item dropping now have local simulation.
+Instant Beta bows/projectile
 arrows, jukebox discs 13/cat, legacy rails and three minecart variants now have
 local simulation and vanilla NBT persistence. See [transport, fixes and remaining
 differences](docs/BETA_TRANSPORT.md).
+See [the events/profile update and remaining differences](docs/BETA_EVENTS_AND_PROFILE.md).
 
 ## Manual build and launch
 
@@ -129,6 +132,11 @@ working directory. See [runtime layout](docs/RUNTIME_LAYOUT.md) and
   TileEntity data. Multiplayer waits for the server to confirm placement.
 - Options: edit Player Name (1-16 letters, digits or `_`); it is saved in
   `config/options.txt` and used by the offline protocol 14 connection.
+- Q: throw one selected item, preserving its metadata and durability.
+- Main menu: the nickname button under the player opens Profile. Choose the
+  pack skin, Classic Steve, or a local 64x32/64x64 PNG. Optional Microsoft
+  device-code login uses the public application ID in `MICROSOFT_CLIENT_ID`;
+  [setup and AADSTS50020 instructions](docs/MICROSOFT_ACCOUNT.md).
 - Right click with a bow and arrows in inventory to fire instantly (Beta has
   no charging). Right click a jukebox with disc 13/cat to insert, again to eject.
 - Place cart items on rails. Right click a normal cart to ride; Shift exits.
@@ -151,7 +159,11 @@ remain incomplete. Beds advance the night after 100 sleep ticks and save a
 respawn point. Day/night and rain/snow use the Beta world clock and climate.
 Peaceful/Easy/Normal/Hard are selectable in Options. Saved animals and monsters
 have bounded local simulation; cows provide milk, sheep can be sheared and
-chickens lay eggs. Natural spawning and full mob AI are still missing.
+chickens lay eggs. Zombies, skeletons, spiders and creepers spawn in darkness,
+pursue the player, use their Beta attacks and despawn at distance. Search and
+simulation work are bounded; full Java AI/collision parity remains unverified.
+Fire spreads on scheduled ticks, stationary lava ignites flammable neighbors,
+leaves decay after losing their log connection, and primed TNT chains explosions.
 See [the gameplay milestone and checks](docs/GAMEPLAY_PARITY.md).
 Minecraft Beta worlds load their
 player position and inventory from `level.dat` and now save those fields back
@@ -255,11 +267,13 @@ receive sample inventory or fixture blocks:
 .\build\ReCraft.exe --smoke-test --screen materials --fancy-leaves 1 --reduced-transparency 1 --no-audio --frames 40 --capture build/materials-reduced.png
 .\build\ReCraft.exe --smoke-test --screen sign-edit --no-audio --frames 40 --capture build/sign-editor.png
 .\build\ReCraft.exe --smoke-test --screen multiplayer-demo --no-audio --frames 40 --capture build/multiplayer-status.png
+.\build\ReCraft.exe --smoke-test --screen events --no-audio --frames 3 --capture build/beta-events.png
 ```
 
 The `player` view shows the Survival panel, textured biped and 2 x 2 crafting.
 Other views are `inventory` (Creative catalogue),
 `chest`, `health`, `day`, `night`, `rain`, `snow`, `bed`, `mobs`, `chat` and `players`.
+`events` shows animated fire, primed TNT and the four hostile mob models.
 The multiplayer demo uses synthetic in-memory entries without remote queries;
 `server_status_test` tests the actual exchange against a loopback server.
 The `snow` view forces snow classification in its transient fixture.

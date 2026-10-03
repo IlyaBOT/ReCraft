@@ -60,7 +60,7 @@ variants now have a local implementation; see [transport audit](BETA_TRANSPORT.m
 | 15 | oreIron | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 16 | oreCoal | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 17 | log | tree species | ID + metadata + texture variants | metadata texture | box approximation | no | generic break/place | no | no | no | no | local approximation | no | texture variants |
-| 18 | leaves | tree species and decay flags | ID + metadata + texture variants | Fast exterior / Fancy internal cutouts; optional opaque tiles | full box | harvest rules/shears | generic break/place | no | no | no | no | local approximation | no | leaf decay unfinished |
+| 18 | leaves | tree species and decay flag bit 8 | ID + metadata + texture variants | Fast exterior / Fancy internal cutouts; optional opaque tiles | full box | harvest rules/shears + sapling 1/20 | generic break/place | no | no | no | no | four-step log support on random ticks | no | unloaded neighbors defer decay |
 | 19 | sponge | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 20 | glass | none | ID + metadata stored | approximate | box approximation | no | generic break/place | no | no | no | no | local approximation | no | visual proxy |
 | 21 | oreLapis | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
@@ -88,12 +88,12 @@ variants now have a local implementation; see [transport audit](BETA_TRANSPORT.m
 | 43 | stoneSlab | slab material | ID + metadata + slab material | double slab cube | full box | no | generic break/place | no | no | no | no | local approximation | no | double slab |
 | 44 | stoneSlab | slab material | ID + metadata + slab material | half-height opaque mesh | half-height box | no | selection-box raycast; matching local merge | no | no | no | no | local approximation | no | half slab |
 | 45 | brick | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
-| 46 | tnt | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 46 | tnt | none | ID + PrimedTnt Entity/Fuse Byte | Beta top/side/bottom; primed entity | full box | break/drop or prime | fuse/explosion | no | no | redstone primes | fire primes | 80-tick fuse; chain 10-29; blast power 4 | no | blast/particles parity still incomplete |
 | 47 | bookshelf | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 48 | stoneMoss | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 49 | obsidian | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 50 | torch | attachment face | ID + metadata + attachment mesh | metadata-oriented torch prism | none | torch when broken/unsupported | selection-box raycast; local attachment | support check | no | no | no | emission 14; local approximation | no | normal torch |
-| 51 | fire | age | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 51 | fire | age 0-15 | ID + metadata + pending ticks | animated CPU cutout planes | non-solid | extinguish; no drop | original fire keys | no | no | no | spread/burn; netherrack/rain/lava | scheduled 40 ticks | no | wall geometry/smoke pending |
 | 52 | mobSpawner | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 53 | stairsWood | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 54 | chest | facing | 27/54 slots + NBT | Beta single/double chest cube | full cube | chest + contents | open; obstruction/triple checks | no | no | Chest | no | local approximation | no | container |

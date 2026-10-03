@@ -39,6 +39,11 @@ void settings_load(UiOptions *options, const char *path)
     size_t i;
     if (!file) return;
     while (fgets(line,sizeof(line),file)) {
+        if(!strncmp(line,"skin=",5)) {
+            char *skin=line+5;skin[strcspn(skin,"\r\n")]=0;
+            if(!strcmp(skin,"classic")||!strcmp(skin,"custom")||!strcmp(skin,"microsoft")||!strcmp(skin,"default")) strcpy(options->skin,skin);
+            continue;
+        }
         if(!strncmp(line,"language=",9) || !strncmp(line,"texture_pack=",13)) {
             int language=line[0]=='l'; char *s=strchr(line,'=')+1;
             size_t n; s[strcspn(s,"\r\n")]=0; n=strlen(s);
@@ -84,6 +89,7 @@ int settings_save(const UiOptions *options, const char *path)
         fclose(file); remove(temp); return 0;
     }
     if(fprintf(file,"language=%s\ntexture_pack=%s\n",options->language,options->texture_pack)<0) { fclose(file); remove(temp); return 0; }
+    if(fprintf(file,"skin=%s\n",options->skin)<0) {fclose(file);remove(temp);return 0;}
     for (i=0;i<sizeof(fields)/sizeof(fields[0]);++i) {
         int value=*(const int *)((const char *)options+fields[i].offset);
         if (fprintf(file,"%s=%d\n",fields[i].name,value)<0) {

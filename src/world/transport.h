@@ -4,9 +4,10 @@
 #include "../nbt/nbt.h"
 struct Player; struct SavedEntity; struct RenderEntity;
 typedef struct TransportState {
-    int kind,dead; /* 1 Arrow, 2 Minecart, 3 Boat; position/motion in SavedEntity.mob. */
+    int kind,dead; /* 1 Arrow, 2 Minecart, 3 Boat, 4 PrimedTnt. */
     int x_tile,y_tile,z_tile,in_tile,in_data,in_ground,shake,player,ground_ticks,air_ticks;
     int type,fuel,ridden,damage,hit_ticks;
+    int fuse,owner_id;
     float push_x,push_z;
     float previous_x,previous_y,previous_z,slope_pitch;
     InventorySlot cargo[27];
@@ -21,4 +22,6 @@ int world_transport_write(NbtWriter *writer,const struct SavedEntity *entity);
 void world_minecart_dismount(World *world,struct Player *player);
 struct SavedEntity *world_minecart_find(World *world,int runtime_id);
 void world_transport_changed(World *world,struct SavedEntity *entity);
+void world_transport_damage(World *w,struct SavedEntity *e,struct Player *p,int amount);
+int world_skeleton_arrow(World *w,struct SavedEntity *skeleton,const struct Player *target);
 #endif

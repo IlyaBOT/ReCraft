@@ -8,7 +8,9 @@ offline-mode servers. It never sends account credentials. A server that returns 
 online-authentication challenge is rejected. Protocol 47 supports modern
 **server-list status queries**, including MOTD, player counts, ping and favicon.
 It is not a usable modern gameplay client; selecting modern status does not
-enable modern login or account authentication.
+enable modern gameplay login. Optional Microsoft profile authentication is a
+separate feature, described in [account setup](MICROSOFT_ACCOUNT.md); it does not
+enable online-mode Beta joining or modern gameplay.
 
 The transport resolves DNS on a worker thread, connects over nonblocking TCP,
 buffers partial packets, and processes at most 128 packets and two zlib chunk

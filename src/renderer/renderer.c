@@ -163,6 +163,7 @@ void renderer_animate(Renderer *r,uint64_t tick)
         upload_animated_slot(65,r->animations.lava_pixels,(int)(tick/3));
     }
     if(visible&4) upload_animated_slot(66,r->animations.portal[tick&31],0);
+    if(visible&8) { upload_animated_slot(121,r->animations.fire_pixels,0);upload_animated_slot(122,r->animations.fire_pixels,0); }
     glPixelStorei(GL_UNPACK_ALIGNMENT,unpack); glBindTexture(GL_TEXTURE_2D,(GLuint)old);
 }
 static GenericProc gl_proc(const char *name)
@@ -707,7 +708,7 @@ static int visible_face(const Renderer *renderer, uint8_t self, uint8_t neighbor
     if (self == BLOCK_AIR || self == BLOCK_TORCH || self == BETA_BLOCK_SLAB ||
         self==BETA_BLOCK_REDSTONE_TORCH || self==BETA_BLOCK_UNLIT_REDSTONE_TORCH ||
         self==BETA_BLOCK_CACTUS || self==BETA_BLOCK_NETHER_PORTAL || self==BETA_BLOCK_REDSTONE_WIRE ||
-        self==26 || self==93 || self==94 || self==69 || self==77 || self==78 ||
+        self==26 || self==93 || self==94 || self==69 || self==77 || self==78 || self==51 ||
         self==BETA_BLOCK_WOOD_DOOR || self==BETA_BLOCK_IRON_DOOR ||
         self==BETA_BLOCK_STANDING_SIGN || self==BETA_BLOCK_WALL_SIGN || self==BETA_BLOCK_WEB ||
         beta_block_cross_plant(self) || rail_is(self))
@@ -998,6 +999,7 @@ static unsigned cross_slot(uint8_t id, uint8_t metadata)
     case BETA_BLOCK_RED_MUSHROOM: return 58u;
     case BETA_BLOCK_REEDS: return 59u;
     case BETA_BLOCK_WEB: return (unsigned)beta_render_tile(11);
+    case BETA_BLOCK_FIRE: return beta_render_tile(31);
     default: return 0u;
     }
 }
@@ -1016,7 +1018,8 @@ static void emit_cross_plant(const Renderer *renderer, const World *world,
     BetaBlockBox box;
     float endpoints[2][2][2];
     int plane, side, corner;
-    if (!slot || !beta_block_selection_box(state, &box)) return;
+    if(id==51) { box=(BetaBlockBox){0,0,0,1,1,1}; color=255; }
+    else if (!slot || !beta_block_selection_box(state, &box)) return;
     if (!layer_reserve(layer, layer->vertex_count + 16u)) {
         layer->overflow = 1;
         return;
@@ -1459,6 +1462,7 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
             if(fluid_kind(id)==1) mesh->animations|=1;
             if(fluid_kind(id)==2) mesh->animations|=2;
             if(id==90) mesh->animations|=4;
+            if(id==51) mesh->animations|=8;
         }
     }
     for (axis = 0; axis < 3; ++axis) {
@@ -1584,6 +1588,8 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                         emit_door(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
                     else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_WEB)
                         emit_cross_plant(renderer,world,mesh,chunk,x,y,z,BETA_BLOCK_WEB,0);
+                    else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_FIRE)
+                        emit_cross_plant(renderer,world,mesh,chunk,x,y,z,BETA_BLOCK_FIRE,0);
                     else if (sign_is_block(chunk_get_block(chunk,x,y,z))) {
                         SignInstance *grown=(SignInstance *)realloc(mesh->signs,(mesh->sign_count+1)*sizeof(*grown));
                         if(grown) {

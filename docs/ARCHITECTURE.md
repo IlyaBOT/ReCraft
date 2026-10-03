@@ -13,6 +13,7 @@ no shaders, FBOs, per-block draw calls or per-face OpenGL lights. Snow Leopard
 | Terrain | `src/renderer/` | Hidden-face and greedy meshing, atlas, baked lighting, culling, draw layers and CPU texture animation |
 | Menus | `src/ui/` | Bitmap text, textured controls, container panels, Creative catalogue and HUD |
 | Network | `src/network/` | Nonblocking offline protocol 14 client, bounded packet decoding and server container transactions |
+| Profile and account | `src/account/` | Optional background device/refresh sign-in, Xbox/MC exchange and private atomic account JSON; local skin stays in the asset manager |
 | NBT | `src/nbt/` | Bounded NBT reader/writer used by Beta storage and native entity sidecars |
 | Assets and paths | `src/assets/`, `src/util/game_paths.c` | Executable-relative game root, logical texture/sound IDs, caches and nearest filtering |
 
@@ -93,9 +94,10 @@ and harvest rules; its progress and durability run at 20 Hz.
 
 `mobs.c` reads eight Beta mob types and rewrites their known fields while
 preserving unknown NBT. Local melee, health/drops, simple movement and animal
-interactions are bounded. Natural spawning, original pathfinding, arrows,
-explosions and complete armor are pending. The renderer uses the normalized
-64 x 32 mob skins. See [the mechanics audit](BETA_MECHANICS_AUDIT.md).
+interactions are bounded. Hostile natural spawning, cardinal A*, skeleton arrows,
+creeper/TNT explosions, foliage and scheduled fire now use the existing world
+and persistence APIs. Complete armor and exact Java simulation parity remain
+pending. See [events and profile](BETA_EVENTS_AND_PROFILE.md).
 
 `sound_policy.c` uses extracted StepSound keys, volumes and pitches. Sound
 variants are cached by the asset manager and played through a 16-voice OpenAL
@@ -144,7 +146,9 @@ respawn, but do not establish full server compatibility.
 Remote players use the 64 x 32 skin atlas, six body parts, head rotation and a
 walking pose. First person draws the skin arm and selected item/block with
 fixed-function geometry. Other mob types still have simplified geometry and
-lack a complete local AI/combat system.
+retain some differences from original entity models and AI. Player previews
+also support classic-sized 64 x 64 skins and outer layers; geometric mirroring
+and atlas UV calculations are shared in `skin_geometry.h`.
 
 ## Creative, light boundaries and pause backgrounds
 

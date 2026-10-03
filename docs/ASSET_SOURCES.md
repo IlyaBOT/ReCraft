@@ -24,6 +24,7 @@ Only the files required by current code are deployed:
 | `assets/textures/item/sign.png` | Normalized Coterie `item/sign.png` | Preferred 64x32 standing/wall sign model texture |
 | `assets/textures/entity/sign.png` | Original Beta 1.7.3 JAR `item/sign.png` | Sign model fallback when the preferred Coterie image is missing |
 | `assets/textures/mob/char.png` | `mob/char.png` | Remote player model and first-person arm |
+| `assets/textures/skins/beta_steve.png` | Original Beta 1.7.3 client JAR `mob/char.png`, read only; SHA-256 `1a683a41813ff8b6f4633053b38412a506f2e6e666b0351941d0bb48f49534f0` | Optional Classic Steve profile preset |
 | `assets/textures/mob/{pig,sheep,sheep_fur,cow,chicken,zombie,skeleton,spider,creeper}.png` | Normalized Coterie `mob/` files | Local and remote mob models |
 | `assets/textures/terrain/{sun,moon}.png` | Normalized Coterie `terrain/` files | Fixed-function celestial quads |
 | `assets/textures/environment/{rain,snow}.png` | Normalized Coterie `environment/` files | Bounded rain/snow batches |
@@ -34,7 +35,7 @@ Only the files required by current code are deployed:
 
 The renderer repacks selected 16 px terrain tiles into a 1024 px POT
 atlas at startup, repeating each tile in a 64 px cell. Visible water/lava/portal
-slots are animated on the CPU; no shaders or FBOs are used. Missing terrain imagery falls back to the procedural
+and fire slots are animated on the CPU; no shaders or FBOs are used. Missing terrain imagery falls back to the procedural
 atlas; missing optional GUI textures produce a checker and a log entry. No
 runtime path refers to `third_party/`. Other normalized Coterie files remain
 in the source tree for future features and are not copied to `build/assets/`.

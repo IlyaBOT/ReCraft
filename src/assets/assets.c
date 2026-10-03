@@ -37,11 +37,12 @@ static char root[512];
 static Texture2D textures[ASSET_COUNT];
 static unsigned char attempted[ASSET_COUNT];
 static Texture2D fallback;
+static Image player_skin;
 static struct { Texture2D texture; unsigned page,age; } unicode_pages[16];
 static unsigned unicode_age;
 static struct { char id[300]; Texture2D texture; unsigned age; } pack_icons[16];
 static unsigned pack_age;
-static unsigned animation_mask=7;
+static unsigned animation_mask=15;
 unsigned assets_animation_mask(void) { return animation_mask; }
 static const char *const legacy[ASSET_COUNT]={
     "gui/gui.png","dirt.png","gui/icons.png",NULL,"terrain.png","font/default.png",
@@ -138,7 +139,8 @@ static void terrain_overrides(Image *image)
         {66,"snow"},{67,"ice"},{72,"clay"},{74,"jukebox_side"},{75,"jukebox_top"},
         {103,"netherrack"},{104,"soul_sand"},{105,"glowstone"},{134,"bed_feet_top"},{135,"bed_head_top"},
         {149,"bed_feet_end"},{150,"bed_feet_side"},{151,"bed_head_side"},{152,"bed_head_end"},
-        {205,"water_still"},{206,"water_flow"},{237,"lava_still"},{238,"lava_flow"},{14,"portal"}
+        {205,"water_still"},{206,"water_flow"},{237,"lava_still"},{238,"lava_flow"},{14,"portal"},
+        {8,"tnt_side"},{9,"tnt_top"},{10,"tnt_bottom"},{31,"fire_layer_0"},{47,"fire_layer_1"}
     };
     unsigned i; int x,y;
     if(!image->data || !resource_pack_current()[0]) return;
@@ -150,6 +152,7 @@ static void terrain_overrides(Image *image)
         if(tiles[i].tile==205 || tiles[i].tile==206) animation_mask&=~1u;
         if(tiles[i].tile==237 || tiles[i].tile==238) animation_mask&=~2u;
         if(tiles[i].tile==14) animation_mask&=~4u;
+        if(tiles[i].tile==31 || tiles[i].tile==47) animation_mask&=~8u;
         /* Animated strips use their first square frame. Fixed-function packs
          * need no shader or runtime dependency on blockstates/models. */
         for(y=0;y<16;++y) for(x=0;x<16;++x)
@@ -198,7 +201,7 @@ void assets_init(const char *game_root)
 {
     snprintf(root, sizeof(root), "%s", game_root ? game_root : "");
     resource_pack_init(root);
-    animation_mask=7;
+    animation_mask=15;
     memset(textures, 0, sizeof(textures));
     memset(attempted, 0, sizeof(attempted));
     memset(&fallback, 0, sizeof(fallback));
@@ -277,6 +280,39 @@ Texture2D assets_get_server_icon(unsigned index)
 {return index<64&&server_icons[index].id?server_icons[index]:assets_get_texture(ASSET_SERVER_DEFAULT_ICON);}
 void assets_clear_server_icons(void)
 {unsigned i;for(i=0;i<64;++i)if(server_icons[i].id)UnloadTexture(server_icons[i]);memset(server_icons,0,sizeof(server_icons));}
+int assets_skin_png_valid(const unsigned char *png,size_t size)
+{
+    int width,height,channels;
+    static const unsigned char signature[8]={137,80,78,71,13,10,26,10};
+    return png && size>=33 && size<=1024*1024 && !memcmp(png,signature,8) &&
+        stbi_info_from_memory(png,(int)size,&width,&height,&channels) && width==64 && (height==32||height==64);
+}
+static void skin_alpha(Image *image)
+{
+    int x,y,transparent=0;unsigned char *pixels;
+    if(image->format!=UNCOMPRESSED_R8G8B8A8) ImageFormat(image,UNCOMPRESSED_R8G8B8A8);
+    pixels=(unsigned char *)image->data;
+    /* ImageBufferDownload forces the base skin opaque; old skin exporters
+     * left the unused right upper quarter opaque until a hat was painted. */
+    for(y=0;y<16;++y) for(x=32;x<64;++x) if(pixels[(y*64+x)*4+3]<128) transparent=1;
+    for(y=0;y<32;++y) for(x=0;x<64;++x) {
+        if((y<16&&x<32)||y>=16) pixels[(y*64+x)*4+3]=255;
+        else if(image->height==32 && !transparent) pixels[(y*64+x)*4+3]=0;
+    }
+    if(image->height==64) for(y=48;y<64;++y) for(x=16;x<48;++x) pixels[(y*64+x)*4+3]=255;
+}
+int assets_set_player_skin(const unsigned char *png,size_t size)
+{
+    Image image={0};
+    if(size) {
+        if(!assets_skin_png_valid(png,size)) return 0;
+        image=image_memory(png,size);if(!image.data) return 0;skin_alpha(&image);
+    }
+    if(player_skin.data) UnloadImage(player_skin);
+    player_skin=image;
+    if(textures[ASSET_PLAYER_SKIN].id) UnloadTexture(textures[ASSET_PLAYER_SKIN]);
+    textures[ASSET_PLAYER_SKIN]=(Texture2D){0};attempted[ASSET_PLAYER_SKIN]=0;return 1;
+}
 
 Image assets_load_image(AssetId id)
 {
@@ -284,15 +320,17 @@ Image assets_load_image(AssetId id)
     char path[768];
     memset(&image, 0, sizeof(image));
     if(id<0 || id>=ASSET_COUNT) return image;
-    if(id==ASSET_TERRAIN) animation_mask=7;
-    image=pack_image(id);
+    if(id==ASSET_TERRAIN) animation_mask=15;
+    if(id==ASSET_PLAYER_SKIN && player_skin.data) {
+        image=player_skin;image.data=malloc((size_t)image.width*image.height*4);
+        if(image.data) memcpy(image.data,player_skin.data,(size_t)image.width*image.height*4);
+    } else image=pack_image(id);
     if (!image.data && assets_path(id, path, sizeof(path))) image = LoadImage(path);
     if(image.data) {
         if(id==ASSET_FONT_ASCII) point_resize(&image,128,128);
         else if(id==ASSET_PLAYER_SKIN) {
-            /* Newer skins keep the legacy biped layout in their upper half. */
-            if(image.width==image.height) image.height/=2;
-            point_resize(&image,64,32);
+            point_resize(&image,64,image.width==image.height?64:32);
+            skin_alpha(&image);
         } else if(id==ASSET_BOAT || id==ASSET_MINECART || id==ASSET_SIGN) point_resize(&image,64,32);
         else if(id==ASSET_TERRAIN || id==ASSET_GUI_WIDGETS || id==ASSET_GUI_ICONS || id==ASSET_GUI_ITEMS ||
             id==ASSET_GUI_INVENTORY || id==ASSET_GUI_CRAFTING || id==ASSET_GUI_FURNACE || id==ASSET_GUI_CONTAINER || id==ASSET_GUI_LANGUAGE)
@@ -325,6 +363,8 @@ void assets_release_sounds(void)
 void assets_shutdown(void)
 {
     int i;
+    if(player_skin.data) UnloadImage(player_skin);
+    memset(&player_skin,0,sizeof(player_skin));
     assets_clear_server_icons();
     for (i = 0; i < ASSET_COUNT; ++i) if (textures[i].id) UnloadTexture(textures[i]);
     if (fallback.id) UnloadTexture(fallback);
@@ -341,7 +381,7 @@ int assets_select_pack(const char *id)
 {
     int i;
     if(!resource_pack_select(id)) return 0;
-    animation_mask=7;
+    animation_mask=15;
     for(i=0;i<ASSET_COUNT;++i) if(textures[i].id) UnloadTexture(textures[i]);
     memset(textures,0,sizeof(textures)); memset(attempted,0,sizeof(attempted));
     for(i=0;i<16;++i) if(unicode_pages[i].texture.id) UnloadTexture(unicode_pages[i].texture);

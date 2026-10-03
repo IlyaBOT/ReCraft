@@ -16,7 +16,7 @@ typedef struct BetaWorldInfo {
     uint64_t last_played;
     unsigned region_files;
     int save_version,dimension;
-    int has_player;
+    int has_player,player_sleeping;
     double player_x,player_y,player_z;
     float player_yaw,player_pitch;
 } BetaWorldInfo;
