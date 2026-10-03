@@ -303,6 +303,99 @@ static void server_icon_test(void)
     puts("Server favicon: decoded RGBA pixels, nearest filters, cache, fallback and GL disposal passed");
 }
 
+static void assert_chest_face(const ChunkMesh *mesh,const Chunk *chunk,
+                              int x,int y,int z,unsigned face,int source_tile,int clipped)
+{
+    const MeshLayer *layer=&mesh->layers[0];
+    int axis=face<4 ? 2 : 0,tangent=axis==2 ? 0 : 2;
+    int position[3]={x-chunk->x*16,y,z-chunk->z*16};
+    int plane=(position[axis]+(face==3 || face==5))*128;
+    unsigned tile=beta_render_tile(source_tile),i;
+    int found=0,j;
+    for(i=0;i<layer->vertex_count;i+=4) {
+        const VoxelVertex *quad=layer->vertices+i;
+        int matches=1;
+        for(j=0;j<4;++j) {
+            int coords[3]={quad[j].x,quad[j].y,quad[j].z};
+            if(coords[axis]!=plane || coords[tangent]<position[tangent]*128 ||
+               coords[tangent]>(position[tangent]+1)*128 ||
+               coords[1]<(y*128+(clipped ? 64 : 0)) || coords[1]>(y+1)*128)
+                matches=0;
+        }
+        if(!matches) continue;
+        ++found;
+        for(j=0;j<4;++j) {
+            int coordinate=tangent==0 ? quad[j].x : quad[j].z;
+            int upper=coordinate==(position[tangent]+1)*128;
+            /* Independent Beta face convention: -Z/+X reverse horizontal U. */
+            if(face==2 || face==5) upper=!upper;
+            assert(quad[j].u==texcoord(tile,upper,0,1));
+            assert(quad[j].v==partial_texcoord(tile,1.0f-(quad[j].y-y*128)/128.0f,0,1));
+        }
+    }
+    assert(found==1);
+}
+
+static void chest_mesh_test(void)
+{
+    World w; Renderer policy={0}; Chunk *chunks[3];
+    int axis,reversed,boundary,greedy,clipped,i,half;
+    /* Both joining axes, four front directions, chunk seams and slabs. */
+    assert(world_init(&w,1,1,8)==WORLD_OK);
+    chunks[0]=world_get_chunk(&w,0,0); chunks[1]=world_get_chunk(&w,1,0);
+    chunks[2]=world_get_chunk(&w,0,1);
+    for(i=0;i<3;++i) assert(chunks[i]);
+    for(axis=0;axis<=2;axis+=2) for(reversed=0;reversed<2;++reversed)
+        for(boundary=0;boundary<2;++boundary) for(greedy=0;greedy<2;++greedy)
+            for(clipped=0;clipped<2;++clipped) {
+                int x=axis==0 && boundary ? 15 : 8,z=axis==2 && boundary ? 15 : 8;
+                unsigned front=axis==0 ? (reversed ? 2u : 3u) : (reversed ? 4u : 5u);
+                unsigned back=front^1u;
+                for(i=0;i<3;++i) {
+                    memset(chunks[i]->blocks,0,sizeof(chunks[i]->blocks));
+                    memset(chunks[i]->sky_light,255,sizeof(chunks[i]->sky_light));
+                }
+                for(half=0;half<2;++half) {
+                    int cx=x+(axis==0 ? half : 0),cz=z+(axis==2 ? half : 0);
+                    Chunk *c=world_get_chunk(&w,cx/16,cz/16);
+                    chunk_set_block(c,cx&15,110,cz&15,BETA_BLOCK_CHEST);
+                }
+                if(reversed) {
+                    /* Block behind only the second half; both fronts turn. */
+                    int bx=x+(axis==0 ? 1 : 0)+(axis==2 ? 1 : 0);
+                    int bz=z+(axis==2 ? 1 : 0)+(axis==0 ? 1 : 0);
+                    Chunk *c=world_get_chunk(&w,bx/16,bz/16);
+                    chunk_set_block(c,bx&15,110,bz&15,BLOCK_STONE);
+                }
+                if(clipped) {
+                    int sx=x+(axis==2 ? (front==5 ? 1 : -1) : 0);
+                    int sz=z+(axis==0 ? (front==3 ? 1 : -1) : 0);
+                    Chunk *c=world_get_chunk(&w,sx/16,sz/16);
+                    chunk_set_block(c,sx&15,110,sz&15,BETA_BLOCK_SLAB);
+                }
+                policy.options.greedy=greedy;
+                for(half=0;half<2;++half) {
+                    int cx=x+(axis==0 ? half : 0),cz=z+(axis==2 ? half : 0);
+                    /* Texture 41 is the left front, 42 the right front;
+                     * back halves use 57/58 with the same face convention. */
+                    int first_right=front==2 || front==5;
+                    int front_tile=41+(first_right ? !half : half);
+                    int back_tile=57+(first_right ? half : !half);
+                    Chunk *c=world_get_chunk(&w,cx/16,cz/16);
+                    ChunkMesh *mesh=build_chunk_mesh(&policy,&w,c);
+                    assert(mesh);
+                    assert(block_chest_texture(&w,cx,110,cz,front)==front_tile);
+                    assert(block_chest_texture(&w,cx,110,cz,back)==back_tile);
+                    assert_chest_face(mesh,c,cx,110,cz,front,front_tile,clipped && half==0);
+                    if(!reversed || half==0)
+                        assert_chest_face(mesh,c,cx,110,cz,back,back_tile,0);
+                    chunk_mesh_destroy(mesh);
+                }
+            }
+    assert(world_close(&w)==WORLD_OK);
+    puts("Double chest: four facings, front/back UV, chunk seams, greedy/plain and slab clipping passed");
+}
+
 int main(int argc, char **argv)
 {
     World world;
@@ -334,6 +427,7 @@ int main(int argc, char **argv)
     ViewFrustum frustum;
     Chunk probe_chunk;
     entity_pick_test();
+    chest_mesh_test();
     {
         World light_world;
         Chunk *a,*b;

@@ -1640,6 +1640,24 @@ static int gameplay_preview(App *app,const char *name)
         app->chat_open=!strcmp(name,"chat");
         app->roster_preview=!strcmp(name,"players");
         copy_text(app->chat,sizeof(app->chat),"Hello from the client");
+    } else if(!strcmp(name,"chests-south") || !strcmp(name,"chests-north") ||
+              !strcmp(name,"chests-west") || !strcmp(name,"chests-east")) {
+        int along_z=!strcmp(name,"chests-west") || !strcmp(name,"chests-east");
+        int reversed=!strcmp(name,"chests-north") || !strcmp(name,"chests-west");
+        int x,y,z;
+        for(x=3;x<14;++x) for(z=3;z<14;++z) {
+            world_set_block(&app->world,x,63,z,2);
+            for(y=64;y<68;++y) world_set_block(&app->world,x,y,z,0);
+        }
+        world_set_block(&app->world,8,64,8,54);
+        world_set_block(&app->world,along_z ? 8 : 9,64,along_z ? 9 : 8,54);
+        if(reversed) world_set_block(&app->world,9,64,9,1);
+        app->player.x=along_z ? (reversed ? 4 : 13) : 9;
+        app->player.z=along_z ? 9 : (reversed ? 4 : 13);
+        app->player.y=64; app->player.pitch=-.2f; app->player.flying=1;
+        app->player.yaw=along_z ? (reversed ? 1.57079633f : -1.57079633f) :
+            (reversed ? 3.14159265f : 0);
+        app->previous_player=app->player;
     } else if(!strcmp(name,"blocks")) {
         static const uint8_t ids[6]={58,61,62,54,54,76};
         for(i=0;i<6;++i) { world_set_block(&app->world,i*2,64,4,ids[i]); world_set_metadata(&app->world,i*2,64,4,ids[i]==76 ? 5 : 3); }
@@ -1679,6 +1697,7 @@ int main(int argc, char **argv)
             "  [--screen main|worlds|create|multiplayer|add|direct|video|inventory|pause]\n"
             "  [--smoke-test --screen player|crafting|furnace|chest|large-chest|health|blocks|day|night|rain|snow|bed|mobs]\n"
             "  [--smoke-test --screen materials|sign-edit|multiplayer-demo|chat|players]\n"
+            "  [--smoke-test --screen chests-north|chests-south|chests-west|chests-east]\n"
             "  [--language en_US] [--texture-pack texturepacks/pack.zip]\n"
             "  [--no-audio] [--debug] [--fullscreen] [--window-check]\n"
             "  [--connect host:port] [--world save-directory] [--data-dir directory] [--profile-gpu]\n");

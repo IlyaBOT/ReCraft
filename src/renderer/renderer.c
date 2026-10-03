@@ -750,6 +750,15 @@ static uint8_t render_layer(const Renderer *renderer,uint8_t block)
     return world_block_def(block)->render_layer;
 }
 
+static int chest_face_flips_u(uint8_t block,int axis,int direction)
+{
+    /* Beta RenderBlocks reverses U on north (-Z) and east (+X) faces.
+     * BlockChest's half selection relies on that orientation: the latch
+     * belongs at the join, and the outer borders belong at the ends. */
+    return block==BETA_BLOCK_CHEST &&
+        ((axis==2 && direction<0) || (axis==0 && direction>0));
+}
+
 static uint32_t face_key(const Renderer *renderer, uint8_t block, uint8_t metadata,
                          int axis, int direction, uint8_t light)
 {
@@ -847,6 +856,11 @@ static void emit_quad(const Renderer *renderer, const World *world,
         int16_t a=texcoord(tile,0,1,axis==0 ? u_size : v_size);
         int16_t b=texcoord(tile,1,1,axis==0 ? u_size : v_size);
         for (i=0;i<4;++i) vs[i]=(int16_t)(a+b-vs[i]);
+    }
+    if (chest_face_flips_u((uint8_t)key,axis,direction)) {
+        int span=axis==0 ? v_size : u_size;
+        int a=texcoord(tile,0,0,span),b=texcoord(tile,1,0,span);
+        for (i=0;i<4;++i) us[i]=(int16_t)(a+b-us[i]);
     }
     shade = axis == 1 ? (direction > 0 ? 1.0f : 0.54f) :
             (axis == 0 ? 0.79f : 0.69f);
@@ -1060,6 +1074,11 @@ static void emit_partial_face(const Renderer *renderer, const World *world,
     uint8_t light, color;
     float ambient, illumination, shade;
     int16_t us[4], vs[4];
+    if(id==BETA_BLOCK_CHEST) {
+        unsigned face=axis==1 ? (direction>0 ? 1u : 0u) :
+            axis==2 ? (direction>0 ? 3u : 2u) : (direction>0 ? 5u : 4u);
+        tile=beta_render_tile(block_chest_texture(world,chunk->x*16+x,y,chunk->z*16+z,face));
+    }
     if(renderer->options.reduced_transparency &&
        (id==BETA_BLOCK_WOOD_DOOR || id==BETA_BLOCK_IRON_DOOR)) tile+=4;
     if (!layer_reserve(layer,layer->vertex_count+4u)) { layer->overflow=1; return; }
@@ -1091,6 +1110,10 @@ static void emit_partial_face(const Renderer *renderer, const World *world,
             float h=axis==0 ? corners[i][u] : corners[i][v];
             vs[i]=partial_texcoord(tile,1.0f-h,h<0.5f,1);
         }
+    }
+    if(chest_face_flips_u(id,axis,direction)) for(i=0;i<4;++i) {
+        float fraction=axis==0 ? corners[i][2] : corners[i][0];
+        us[i]=partial_texcoord(tile,1.0f-fraction,0,0);
     }
     for (i=0;i<4;++i) {
         int order = direction>0 ? i : (i==0 ? 0 : 4-i);
