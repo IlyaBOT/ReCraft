@@ -31,6 +31,13 @@ function(recraft_compat_source source output)
             "    // ReCraft: wake the temporary startup loop before stopping it.\n    _glfwPlatformPostEmptyEvent();\n    [NSApp stop:nil];")
         recraft_replace("    [NSApp run];"
             "    // ReCraft: do not enter an unbounded nested event loop.\n    [NSApp finishLaunching];\n    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];")
+    elseif(name STREQUAL "nsgl_context.m")
+        # A runner can expose only Apple's software renderer. Prefer the
+        # original accelerated format, then relax that requirement for the
+        # fixed-function legacy profile. Do not relax modern core requests.
+        recraft_replace("    if (window->nsgl.pixelFormat == nil)\n    {"
+            "    /* ReCraft: NSOpenGLPFAAccelerated is the first attribute. */\n    if (window->nsgl.pixelFormat == nil && ctxconfig->major <= 2)\n    {\n        window->nsgl.pixelFormat =\n            [[NSOpenGLPixelFormat alloc] initWithAttributes:attributes + 1];\n        if (window->nsgl.pixelFormat != nil)\n            fprintf(stderr, \"ReCraft NSGL: using a legacy pixel format without the acceleration requirement.\\n\");\n    }\n    if (window->nsgl.pixelFormat == nil)\n    {")
+        recraft_replace("#include \"internal.h\"" "#include \"internal.h\"\n#include <stdio.h>")
     elseif(name STREQUAL "core.c")
         recraft_replace("window = glfwCreateWindow(" "window = recraft_glfw_create_window(")
         set(_compat_text "/* ReCraft: checked window creation for raylib 1.4. */\n#include \"util/legacy_window_guard.h\"\n${_compat_text}")

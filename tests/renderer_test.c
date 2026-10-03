@@ -572,6 +572,8 @@ int main(int argc, char **argv)
     }
     glfwMakeContextCurrent(window);
     fprintf(stderr,"renderer_test: OpenGL context ready\n");
+    fprintf(stderr,"renderer_test: vendor=%s renderer=%s version=%s\n",
+        glGetString(GL_VENDOR),glGetString(GL_RENDERER),glGetString(GL_VERSION));
 #endif
     renderer = renderer_init();
     assert(renderer);

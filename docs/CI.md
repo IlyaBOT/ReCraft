@@ -41,7 +41,7 @@ gameplay and account authentication are not implemented. CI does not contact
 public Minecraft servers and these tests do not prove real-server interoperability.
 Received server icons, server lists and user data are not bundled in artifacts.
 
-`cmake/legacy_source_compat.cmake` prepares checked build-only copies of four
+`cmake/legacy_source_compat.cmake` prepares checked build-only copies of five
 upstream translation units. GLFW/WGL tries accelerated pixel formats first,
 then permits GDI OpenGL 1.1 when none exists (including Windows CI machines).
 raylib's window creation is checked before centering, and its fixed-function
@@ -49,6 +49,12 @@ path no longer asks GL 1.1 for an unsupported GLSL version enum. Cocoa startup
 uses synchronous `NSApplication.finishLaunching`, then sets activation policy;
 both are available in the 10.6 SDK. It does not enter the old unbounded nested
 `NSApplication run` loop. Dependency sources remain pinned and unchanged.
+NSGL first requests the original accelerated pixel format. If that fails for
+a legacy OpenGL 1.x/2.x context, it retries without the acceleration requirement,
+allowing Apple's system software renderer. Modern core requests are not relaxed.
+This applies to both the client and renderer test; context errors and the actual
+GL vendor/renderer/version are printed in the renderer test log. Tests still
+fail if no usable context exists.
 The music EOF test stops/drains/refills the OpenAL queue deterministically;
 Apple OpenAL ignores the OpenAL Soft null-driver environment and CI output
 devices need not advance at wall-clock speed. No tests are disabled by this fix.
@@ -60,6 +66,10 @@ communication, this time during the build before CTest. No job log was uploaded.
 This leaves the native macOS fix unverified; restoring runner connectivity is
 required before further test diagnosis. Local-only world tests use private save
 fixtures, so their count is higher than CI's.
+The runner subsequently completed run 37080121986: both audio tests passed, but
+the renderer could not create its pixel format. Diagnostic run 37113861381
+confirmed GLFW error 0x10009, `NSGL: Failed to find a suitable pixel format`.
+The NSGL retry above addresses that separate context-selection failure.
 The macOS renderer test also checks the actual CGL vertex-processing result.
 CTest on Vesper has a 60-second per-test timeout and captures a bounded stack
 sample after a startup failure. The dependency

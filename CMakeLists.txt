@@ -71,7 +71,7 @@ endif()
 foreach(_source ${GLFW_SOURCES})
     set(_compiled_source "${GLFW_ROOT}/src/${_source}")
     if((WIN32 AND _source STREQUAL "wgl_context.c") OR
-       (APPLE AND _source STREQUAL "cocoa_window.m"))
+       (APPLE AND (_source STREQUAL "cocoa_window.m" OR _source STREQUAL "nsgl_context.m")))
         recraft_compat_source("${_compiled_source}" _compiled_source)
     endif()
     list(APPEND _glfw_files "${_compiled_source}")
