@@ -18,6 +18,11 @@ only. Checkout there uses `clean: false`; rebuilding does not clean persistent
 runtime worlds. The runner must be online, with Xcode command line tools and a
 logged-in graphical session for the window/renderer smoke checks. If CMake is
 missing the workflow installs it using the runner's existing Homebrew.
+`tools/run_macos_gui.sh` launches CTest and the menu check through
+`launchctl asuser` in that account's `gui/UID` bootstrap session. It fails with
+an explicit setup message if no such session exists; it does not skip tests.
+Running the runner from a system/background session can otherwise make
+WindowServer reject the OpenGL drawable (`CGSNewWindow failed with 1000`).
 
 The workflow fetches raylib 1.4.0 and GLFW 3.1.2 at verified commits, builds
 Release, runs CTest with assertions enabled, checks `--version`, renders the

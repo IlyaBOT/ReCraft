@@ -122,13 +122,13 @@ jobs:
           cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64
           cmake --build build/ci --parallel 2
       - name: Tests
-        run: ctest --test-dir build/ci --timeout 60 --output-on-failure
+        run: sh tools/run_macos_gui.sh ctest --test-dir build/ci --timeout 60 --output-on-failure
       - name: Diagnose renderer startup failure
         if: failure()
         run: |
           clang -x objective-c tools/macos_gl_probe.m -framework Cocoa -framework OpenGL -o build/macos-gl-probe
           build/macos-gl-probe
-          build/ci/renderer_test > build/renderer-startup.log 2>&1 &
+          sh tools/run_macos_gui.sh build/ci/renderer_test > build/renderer-startup.log 2>&1 &
           probe_pid=$!
           trap 'kill "$probe_pid" 2>/dev/null || true' EXIT
           sleep 5
@@ -140,7 +140,7 @@ jobs:
       - name: Version and menu smoke
         run: |
           test "$(build/ReCraft.app/Contents/MacOS/ReCraft --version)" = "ReCraft $(cat VERSION)"
-          build/ReCraft.app/Contents/MacOS/ReCraft --menu-smoke --no-audio --frames 30 --capture build/menu.png
+          sh tools/run_macos_gui.sh build/ReCraft.app/Contents/MacOS/ReCraft --menu-smoke --no-audio --frames 30 --capture build/menu.png
       - name: Package runtime
         run: |
           cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$PWD/build/package" -P tools/package_runtime.cmake
