@@ -100,6 +100,7 @@ Renderer *renderer_init(void);
 GpuCapabilities renderer_capabilities(const Renderer *renderer);
 RendererOptions renderer_options(const Renderer *renderer);
 void renderer_set_options(Renderer *renderer, World *world, RendererOptions options);
+void renderer_reload_assets(Renderer *renderer);
 
 /* Rebuilds at most max_chunks dirty cached meshes nearest to the camera. */
 int renderer_rebuild_budget(Renderer *renderer, World *world,

@@ -46,7 +46,8 @@ typedef struct NetworkEvent {
     int32_t block_x, block_y, block_z;
     int16_t item_id, item_damage;
     int16_t slot, health;
-    uint8_t block_id, metadata, entity_type, item_count;
+    uint8_t block_id, metadata, item_count, entity_variant;
+    int entity_type; /* Living Beta IDs; 1000 arrow, 1001 cart, 1002 boat visual types. */
     int window_id,window_type,window_slots,property,value,action,accepted;
     int dimension;
     char sign_lines[4][61];

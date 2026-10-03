@@ -184,8 +184,28 @@ leaf pixels and renders internal faces; it adds no blur or translucent blending.
 Reduced Transparency defaults to OFF. When enabled, leaves, door windows and
 portals are opaque; glass, water, ice, cobwebs and bed-leg silhouettes retain
 their essential transparency. All modes use the existing fixed-function passes.
-Chat/sign data preserves Unicode, but the shipped ASCII bitmap atlas displays
-unsupported characters as `?`; a complete Unicode font is still TODO.
+Chat/sign text also uses the original Minecraft 1.5.2 Unicode bitmap pages,
+loaded as needed with nearest filtering. Characters outside the supplied BMP
+glyphs fall back to `?`; bidirectional text and Arabic shaping remain unfinished.
+
+### Texture packs and languages
+
+Put a Beta texture pack folder or ZIP in `build/texturepacks/`, then choose
+**Options → Texture Packs**. Compatible newer texture packs can go in
+`build/resourcepacks/`. Missing textures use the bundled pack. Selecting a pack
+reloads textures in the current world and saves the selection in
+`build/config/options.txt`. Modern shaders, models and sound-pack JSON are not
+supported; animated texture strips currently use their first frame.
+
+The globe button beside Options opens the Minecraft 1.5.2 language list.
+Language selection is saved in the same config. This is the translation
+foundation: original menu captions are translated, while ReCraft-specific text
+and some gameplay labels still use English.
+
+Windows/Linux windows can be resized and maximized. Mouse sensitivity,
+inversion and FOV are in Options, with the nickname field in the center.
+The main menu shows the version from `VERSION`, source revision and UTC build
+date. See [this stage's changes and remaining limits](docs/BETA_GAMEPLAY_UI.md).
 
 ## Testing
 

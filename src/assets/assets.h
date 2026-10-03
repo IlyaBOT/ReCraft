@@ -21,7 +21,7 @@ typedef enum AssetId {
     ASSET_MOB_PIG,ASSET_MOB_SHEEP,ASSET_MOB_SHEEP_FUR,ASSET_MOB_COW,ASSET_MOB_CHICKEN,
     ASSET_MOB_ZOMBIE,ASSET_MOB_SKELETON,ASSET_MOB_SPIDER,ASSET_MOB_CREEPER,
     ASSET_SIGN,ASSET_SERVER_DEFAULT_ICON,
-    ASSET_ARROW,ASSET_MINECART,
+    ASSET_ARROW,ASSET_MINECART,ASSET_BOAT,ASSET_GUI_LANGUAGE,
     ASSET_COUNT
 } AssetId;
 typedef enum AssetSoundId {
@@ -32,6 +32,12 @@ typedef enum AssetSoundId {
 } AssetSoundId;
 
 void assets_init(const char *game_root);
+void *assets_read_file(const char *relative,size_t *size);
+int assets_select_pack(const char *id);
+/* Bit 1 water, 2 lava, 4 portal: default procedural effects only. */
+unsigned assets_animation_mask(void);
+Texture2D assets_unicode_page(unsigned page);
+Texture2D assets_pack_icon(const char *id);
 const char *assets_path(AssetId id, char *buffer, size_t capacity);
 Texture2D assets_get_texture(AssetId id);
 /* Server icon uploads are render-thread only; 64 entries, validated 64x64 PNG.

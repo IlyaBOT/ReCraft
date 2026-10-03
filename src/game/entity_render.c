@@ -51,13 +51,16 @@ int entity_pick(const RenderEntity *entities,int count,const RendererCamera *cam
         const RenderEntity *e=&entities[i]; int axis;
         float width=.6f,height=1.8f,lo[3],hi[3],enter=0,leave=nearest;
         if(!e->active || (e->type!=0 && e->type!=50 && e->type!=51 && e->type!=52 && e->type!=54 &&
-           e->type!=90 && e->type!=91 && e->type!=92 && e->type!=93)) continue;
+           e->type!=90 && e->type!=91 && e->type!=92 && e->type!=93 && e->type!=1001 && e->type!=1002)) continue;
         if(e->type==52) { width=1.4f; height=.9f; }
         else if(e->type==90) { width=.9f; height=.9f; }
         else if(e->type==91 || e->type==92) { width=.9f; height=1.3f; }
         else if(e->type==93) { width=.3f; height=.4f; }
+        else if(e->type==1001) { width=.98f; height=.7f; }
+        else if(e->type==1002) { width=1.5f; height=.6f; }
         lo[0]=e->x-width*.5f-.1f; lo[1]=e->y-.1f; lo[2]=e->z-width*.5f-.1f;
         hi[0]=e->x+width*.5f+.1f; hi[1]=e->y+height+.1f; hi[2]=e->z+width*.5f+.1f;
+        if(e->type==1002) { lo[1]-=.3f; hi[1]-=.3f; }
         for(axis=0;axis<3;++axis) {
             if(fabsf(direction[axis])<1e-6f) { if(origin[axis]<lo[axis] || origin[axis]>hi[axis]) break; }
             else {
@@ -239,6 +242,15 @@ static void transport_model(const RenderEntity *e)
             glTexCoord2f(0,0); glVertex3f(-8,-2,0); glTexCoord2f(.5f,0); glVertex3f(8,-2,0);
             glTexCoord2f(.5f,5.0f/32); glVertex3f(8,2,0); glTexCoord2f(0,5.0f/32); glVertex3f(-8,2,0); glEnd();
         }
+    } else if(e->type==1002) {
+        glRotatef(180-e->yaw,0,1,0); glScalef(-.0625f,-.0625f,.0625f);
+        glBindTexture(GL_TEXTURE_2D,assets_get_texture(ASSET_BOAT).id);
+        glPushMatrix(); glTranslatef(0,4,0); glRotatef(90,1,0,0); skin_box(-12,-8,-3,24,16,4,0,8,0); glPopMatrix();
+        for(n=0;n<4;++n) {
+            glPushMatrix(); glTranslatef(n<2 ? (n==0 ? -11 : 11) : 0,4,n>=2 ? (n==2 ? -9 : 9) : 0);
+            glRotatef(n==0 ? 270 : n==1 ? 90 : n==2 ? 180 : 0,0,1,0);
+            skin_box(-10,-7,-1,20,6,2,0,0,0); glPopMatrix();
+        }
     } else {
         glRotatef(180-e->yaw,0,1,0); glRotatef(-e->pitch,0,0,1);
         if(e->color==1 || e->color==2) {
@@ -286,7 +298,7 @@ int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *ca
         }
         dx=e->draw_x-camera->x; dy=e->draw_y-camera->y; dz=e->draw_z-camera->z;
         if(dx*dx+dy*dy+dz*dz>far2) continue;
-        if(e->type==1000 || e->type==1001) transport_model(e);
+        if(e->type==1000 || e->type==1001 || e->type==1002) transport_model(e);
         else if(e->type==0) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,skin.id); player_model(e); }
         else if(e->type==50 || e->type==51 || e->type==52 || e->type==54 || (e->type>=90 && e->type<=93)) {
             glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,assets_get_texture(mob_skin(e->type)).id); mob_model(e);

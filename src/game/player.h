@@ -2,12 +2,14 @@
 #define RECRAFT_PLAYER_H
 
 #include "../world/world.h"
+#define PLAYER_LOOK_SPEED .00261799388f /* Beta Entity.setAngles: .15 degrees. */
 
 typedef struct Player {
     const char *name;           /* Borrowed from persistent UiOptions.player_name. */
     float x, y, z;              /* feet position, Y points upward */
     float vx, vy, vz;
     float yaw, pitch;           /* radians, yaw 0 looks toward -Z */
+    float push_x,push_z;        /* External collision impulse, independent of input. */
     int on_ground;
     int flying;
     int creative;
@@ -40,6 +42,7 @@ typedef struct BlockHit {
 } BlockHit;
 
 void player_spawn(Player *player, World *world, int creative);
+float player_clamp_pitch(float pitch);
 void player_tick(Player *player, World *world, const PlayerInput *input, float dt);
 void player_damage(Player *player,int amount);
 void player_mob_damage(Player *player,const World *world,int amount);

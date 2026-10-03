@@ -7,6 +7,7 @@
 #include "world/block_entity.h"
 #include "game/player.h"
 #include "game/bed.h"
+#include "game/entity_render.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -241,9 +242,37 @@ static void bed_test(void)
     }
     assert(world_close(&w)==WORLD_OK);
 }
+static void boat_test(void)
+{
+    World w; Player p={0}; InventorySlot held={333,2,0},inv[36]={{0}};
+    SavedEntity *boat; Chunk copy={0}; NbtWriter writer; NbtTag tag={0}; uint8_t bytes[8192]; size_t size;
+    int x,z;
+    init(&w); p.health=20; p.x=8.5f; p.y=64; p.z=12.5f; p.pitch=-.55f;
+    for(x=4;x<=12;++x) for(z=3;z<=10;++z) world_set_state(&w,x,64,z,(BetaBlockState){9,0});
+    assert(world_boat_use(&w,&p,&held) && held.count==1);
+    boat=world_peek_chunk(&w,0,0)->saved_entities; assert(boat && boat->transport.kind==3);
+    ticks(&w,&p,inv,80); assert(boat->mob.y>64.5f && boat->mob.y<65.4f && !boat->transport.dead);
+    p.x=boat->mob.x; p.z=boat->mob.z+2; p.y=64;
+    p.pitch=atan2f(boat->mob.y-(p.y+1.62f),2);
+    assert(world_transport_interact(&w,&p,&held,0) && p.riding && boat->transport.ridden);
+    p.vz=-4.3f; ticks(&w,&p,inv,1); assert(boat->mob.vz<0 && fabsf(p.y-boat->mob.y+.3f)<.001f);
+    world_minecart_dismount(&w,&p); assert(!p.riding && !boat->transport.ridden);
+    p.x=boat->mob.x+.8f; p.z=boat->mob.z; p.y=64;
+    world_entities_collide(&w,&p); assert(p.push_x>0 && boat->mob.vx<0);
+    nbt_writer_init(&writer,bytes,sizeof(bytes),NULL); tag.type=NBT_COMPOUND;
+    assert(nbt_writer_tag(&writer,&tag)==NBT_OK); tag.name=nbt_span("Level"); assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+    assert(world_entities_write_list(world_peek_chunk(&w,0,0),&writer));
+    assert(nbt_writer_end(&writer)==NBT_OK && nbt_writer_end(&writer)==NBT_OK && nbt_writer_finish(&writer,&size)==NBT_OK);
+    assert(world_entities_read(&copy,bytes,size) && copy.saved_entities->transport.kind==3);
+    assert(fabsf(copy.saved_entities->mob.y-boat->mob.y)<.0001f); world_entities_free(&copy);
+    boat->mob.x=8.5f; boat->mob.z=6.5f; boat->mob.vx=8;
+    world_set_block(&w,10,65,6,1); ticks(&w,&p,inv,5);
+    assert(!world_transport_visible(&w,(RenderEntity[1]){{0}},1));
+    assert(world_close(&w)==WORLD_OK);
+}
 int main(void)
 {
     lever_test(); jukebox_test(); arrow_test(); arrow_lifetime_test(); rail_test(); rail_forms_test();
-    cart_use_test(); entity_roundtrip(); bed_test();
+    cart_use_test(); entity_roundtrip(); boat_test(); bed_test();
     puts("Beta lever, jukebox, arrow, rail topology, minecart NBT and sleeping eyes passed"); return 0;
 }

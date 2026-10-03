@@ -2,6 +2,19 @@
 #include "../src/renderer/menu_background.c"
 #include "../src/game/entity_render.h"
 #include "../src/ui/ui.h"
+#include "ui/language.h"
+#include "assets/resource_pack.h"
+#include "util/game_paths.h"
+#ifdef _WIN32
+#include <direct.h>
+#include <process.h>
+#define fixture_pid() _getpid()
+#define fixture_rmdir(p) _rmdir(p)
+#else
+#include <unistd.h>
+#define fixture_pid() getpid()
+#define fixture_rmdir(p) rmdir(p)
+#endif
 #include <assert.h>
 #include "png_fixture.h"
 #if defined(__APPLE__)
@@ -91,10 +104,52 @@ static void pixel_text_test(void)
     assert(MinecraftTextCodepoint(&text)=='?');
     assert(MinecraftTextCodepoint(&text)==0);
     assets_init(RECRAFT_TEST_ASSET_ROOT);
+    language_init(); assert(language_count()>=60 && language_select("ru_RU"));
+    assert(strcmp(language_text("menu.options","Options..."),"Options...")!=0);
+    assert(!language_select("../escape")); language_shutdown();
     assert(MeasureMinecraftText("\xc2\xa7" "aHello\xc2\xa7" "r",16)==MeasureMinecraftText("Hello",16));
-    assert(MeasureMinecraftText("\xd0\xaf",16)==MeasureMinecraftText("?",16));
+    MinecraftTextReset(); assert(MinecraftGlyph(0x42f)==0x42f);
+    assert(MeasureMinecraftText("\xd0\xaf",16)>0);
     assert(MeasureMinecraftText("Hello\nx",16)==MeasureMinecraftText("Hello",16));
     assets_shutdown();
+}
+
+static void pack_upload_test(void)
+{
+    char root[96],path[200]; unsigned char png[300]; size_t size=test_png_fixture(png);
+    Image image; Texture2D before,after; Renderer r={0}; GLubyte *pixels,*unchanged;
+    const size_t atlas_bytes=(size_t)ATLAS_PIXELS*ATLAS_PIXELS*4;
+    static const char *dirs[]={"resourcepacks","resourcepacks/fixture","resourcepacks/fixture/textures","resourcepacks/fixture/textures/blocks"};
+    int i; FILE *file; GLint filter;
+    snprintf(root,sizeof(root),"pack-gl-test-%d",(int)fixture_pid());
+    assert(game_ensure_directory(root));
+    for(i=0;i<4;++i) { snprintf(path,sizeof(path),"%s/%s",root,dirs[i]); assert(game_ensure_directory(path)); }
+    for(i=0;i<2;++i) {
+        snprintf(path,sizeof(path),"%s/resourcepacks/fixture/textures/blocks/%s.png",root,i ? "water_still" : "stone");
+        file=fopen(path,"wb"); assert(file && fwrite(png,1,size,file)==size && fclose(file)==0);
+    }
+    assets_init(RECRAFT_TEST_ASSET_ROOT); before=assets_get_texture(ASSET_TERRAIN); assert(before.id);
+    resource_pack_init(root); /* Isolate pack fixtures; bundled fallback stays in the source root. */
+    assert(assets_select_pack("resourcepacks/fixture") && !glIsTexture(before.id));
+    image=assets_load_image(ASSET_TERRAIN); assert(image.data && image.width==256 && image.height==256);
+    assert(((Color *)image.data)[16].r==48 && ((Color *)image.data)[16].b==192);
+    UnloadImage(image); assert(assets_animation_mask()==6);
+    after=assets_get_texture(ASSET_TERRAIN); assert(after.id && after.id==assets_get_texture(ASSET_TERRAIN).id);
+    glBindTexture(GL_TEXTURE_2D,after.id); glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,&filter); assert(filter==GL_NEAREST);
+    assert(assets_get_texture(ASSET_FONT_ASCII).width==128); /* Partial pack fallback. */
+    assert(!assets_select_pack("resourcepacks/missing") && glIsTexture(after.id));
+    r.atlas=make_atlas(); r.animated_visible=1; texture_animation_init(&r.animations); assert(r.atlas);
+    pixels=(GLubyte *)malloc(atlas_bytes); unchanged=(GLubyte *)malloc(atlas_bytes); assert(pixels && unchanged);
+    glBindTexture(GL_TEXTURE_2D,r.atlas); glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,pixels);
+    renderer_animate(&r,1); glBindTexture(GL_TEXTURE_2D,r.atlas); glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,unchanged);
+    assert(!memcmp(pixels,unchanged,atlas_bytes)); /* Procedural animation must preserve custom water. */
+    free(pixels); free(unchanged); glDeleteTextures(1,&r.atlas);
+    assert(assets_select_pack("") && !glIsTexture(after.id) && assets_animation_mask()==7);
+    assets_shutdown(); assert(glGetError()==GL_NO_ERROR);
+    for(i=0;i<2;++i) { snprintf(path,sizeof(path),"%s/resourcepacks/fixture/textures/blocks/%s.png",root,i ? "water_still" : "stone"); assert(remove(path)==0); }
+    for(i=3;i>=0;--i) { snprintf(path,sizeof(path),"%s/%s",root,dirs[i]); assert(fixture_rmdir(path)==0); }
+    assert(fixture_rmdir(root)==0);
+    puts("Resource pack: sparse tiles, GL cache disposal, nearest filtering, fallback and custom water passed");
 }
 
 static void inventory_preview_test(void)
@@ -794,6 +849,7 @@ int main(int argc, char **argv)
         menu_background_clear(&bg);
     }
     pixel_text_test();
+    pack_upload_test();
     inventory_preview_test();
     first_person_test();
     sign_render_test();

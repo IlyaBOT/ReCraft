@@ -86,3 +86,21 @@ are unchanged `item/arrows.png` and `item/cart.png` from that vanilla Beta JAR.
 copies of the read-only installed Beta resources. No additional discs are used.
 Entity textures use nearest filtering; records use the existing bounded
 Vorbis/OpenAL streaming system.
+
+`textures/entity/boat.png` is unchanged Beta `item/boat.png` from that same
+vanilla JAR. The ReCraft wordmark is drawn from pixel geometry in `ui.c`.
+
+The installed Minecraft **1.5.2** instance was accessed read only. Its version
+descriptor resolved the client at
+`D:/MultiMC/libraries/com/mojang/minecraft/1.5.2/minecraft-1.5.2-client.jar`,
+SHA-256 `dc0fa48951f61c12eafede5e46e248aa86ab86d1e4c28cd880c1d9c348ec44d6`.
+Selected unchanged assets from it:
+
+- `lang/languages.txt` and `.lang` files → `assets/lang/`;
+- `font/glyph_sizes.bin` and 222 `font/glyph_*.png` pages →
+  `assets/fonts/unicode/` (page filenames normalized to lowercase);
+- `gui/gui.png` → `assets/gui/language.png`, using the original 20x20 globe
+  at `(0,106)` and hover row `(0,126)`.
+
+Original assets remain the property of Mojang. The modern language list and
+font do not change Beta gameplay, block IDs, NBT or network protocol.

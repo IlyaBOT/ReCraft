@@ -7,6 +7,8 @@
  * in its GLFW resize callback. Keep the GL context and display mode intact. */
 int recraft_screen_width(void);
 int recraft_screen_height(void);
+/* Smoke verification on the client's own window; preserves its GL context. */
+int recraft_display_check_resize(void);
 void recraft_begin_2d(void);
 
 typedef struct RecraftDisplay {

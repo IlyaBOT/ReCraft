@@ -3,6 +3,7 @@
 #include "../game/bed.h"
 #include "../game/sign.h"
 #include "redstone.h"
+#include "door.h"
 #include "rail.h"
 #include "ticks.h"
 #include "environment.h"
@@ -107,7 +108,7 @@ static void notify_cell(World *w,int x,int y,int z)
     if (id==8 || id==10) world_schedule_tick(w,x,y,z,(uint8_t)id,id==8 ? 5 : 30);
     else if (id==12 || id==13) world_schedule_tick(w,x,y,z,(uint8_t)id,3);
     else if (id==75 || id==76) world_schedule_tick(w,x,y,z,(uint8_t)id,2);
-    else if (id==50 || id==81 || id==55 || id==26 || sign_is_block(id) || rail_is(id)) world_schedule_tick(w,x,y,z,(uint8_t)id,id==55 || rail_is(id) ? 0 : 1);
+    else if (id==50 || id==81 || id==55 || id==26 || id==64 || id==71 || sign_is_block(id) || rail_is(id)) world_schedule_tick(w,x,y,z,(uint8_t)id,id==55 || rail_is(id) ? 0 : 1);
     else if(id==93 || id==94) {
         unsigned meta=world_peek_metadata(w,x,y,z);
         int input=world_repeater_input(w,x,y,z,meta);
@@ -162,10 +163,12 @@ void world_redstone_notify(World *w,int x,int y,int z)
 {
     int i,j;
     world_physics_notify(w,x,y,z);
+    for(i=0;i<6;++i) door_power_changed(w,x+dx[i],y+dy[i],z+dz[i]);
     for (i=0;i<6;++i) for (j=0;j<6;++j) {
         int nx=x+dx[i]+dx[j],ny=y+dy[i]+dy[j],nz=z+dz[i]+dz[j];
         unsigned id=world_peek_block(w,nx,ny,nz);
         if (id==75 || id==76 || id==55 || id==93 || id==94 || rail_is(id)) notify_cell(w,nx,ny,nz);
+        if(id==64 || id==71) door_power_changed(w,nx,ny,nz);
     }
 }
 static int burned_out(const World *w,int x,int y,int z)
@@ -190,6 +193,7 @@ static void step(World *w,WorldPhysicsCell c)
     if(sign_is_block(id)) { sign_neighbor_tick(w,x,y,z); return; }
     if(rail_is(id)) { rail_update(w,x,y,z); return; }
     if(id==26) { bed_neighbor_tick(w,x,y,z); return; }
+    if(id==64 || id==71) { door_neighbor_tick(w,x,y,z); return; }
     if(id==77) {
         if(meta&8) {
             world_set_metadata(w,x,y,z,(uint8_t)(meta&7)); world_redstone_notify(w,x,y,z);
@@ -203,7 +207,7 @@ static void step(World *w,WorldPhysicsCell c)
             world_drop_stack(w,x,y,z,(InventorySlot){356,1,0}); world_set_block(w,x,y,z,0); return;
         }
         if(id==93 || !input) {
-            world_set_block(w,x,y,z,(uint8_t)(id==93 ? 94 : 93)); world_set_metadata(w,x,y,z,(uint8_t)meta);
+            world_set_state(w,x,y,z,(BetaBlockState){(uint8_t)(id==93 ? 94 : 93),(uint8_t)meta});
             if(id==93 && !input) world_schedule_tick(w,x,y,z,94,(((meta>>2)&3)+1)*2);
             world_redstone_notify(w,x,y,z);
         }
@@ -237,7 +241,7 @@ static void step(World *w,WorldPhysicsCell c)
         if (id!=50) {
             int powered=world_redstone_signal(w,sx,sy,sz,x,y,z,1)>0;
             if ((id==76 && powered) || (id==75 && !powered && !burned_out(w,x,y,z))) {
-                world_set_block(w,x,y,z,(uint8_t)(id==76 ? 75 : 76)); world_set_metadata(w,x,y,z,(uint8_t)meta);
+                world_set_state(w,x,y,z,(BetaBlockState){(uint8_t)(id==76 ? 75 : 76),(uint8_t)meta});
                 if (id==76) {
                     unsigned n=w->torch_toggle_head++%128;
                     w->torch_toggles[n].x=x; w->torch_toggles[n].y=y; w->torch_toggles[n].z=z; w->torch_toggles[n].tick=w->tick;

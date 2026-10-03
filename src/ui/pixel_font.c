@@ -2,9 +2,27 @@
 #include "../assets/assets.h"
 
 #include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 
 static unsigned char widths[256];
 static int widths_ready;
+static unsigned char glyph_sizes[65536];
+static int unicode_ready;
+void MinecraftTextReset(void) { widths_ready=unicode_ready=0; memset(widths,0,sizeof(widths)); memset(glyph_sizes,0,sizeof(glyph_sizes)); }
+static void prepare_unicode(void)
+{
+    void *bytes; size_t size;
+    if(unicode_ready) return;
+    unicode_ready=1; bytes=assets_read_file("fonts/unicode/glyph_sizes.bin",&size);
+    if(bytes && size==sizeof(glyph_sizes)) {
+        unsigned i;
+        memcpy(glyph_sizes,bytes,size);
+        for(i=0;i<sizeof(glyph_sizes);++i)
+            if((glyph_sizes[i]&15)<(glyph_sizes[i]>>4)) glyph_sizes[i]=0;
+    }
+    free(bytes);
+}
 
 unsigned MinecraftTextCodepoint(const char **cursor)
 {
@@ -28,9 +46,9 @@ unsigned MinecraftTextCodepoint(const char **cursor)
 
 unsigned MinecraftGlyph(unsigned codepoint)
 {
-    /* This runtime ships the Beta ASCII atlas, not a Unicode font. Keep one
-     * fallback per codepoint instead of drawing each UTF-8 byte separately. */
-    return codepoint>=32 && codepoint<127 ? codepoint : '?';
+    if(codepoint>=32 && codepoint<127) return codepoint;
+    prepare_unicode();
+    return codepoint<65536 && glyph_sizes[codepoint] ? codepoint : '?';
 }
 
 static void prepare_widths(void)
@@ -63,6 +81,7 @@ int MinecraftGlyphWidth(unsigned glyph)
 {
     prepare_widths();
     glyph=MinecraftGlyph(glyph);
+    if(glyph>=127) { unsigned size=glyph_sizes[glyph]; return ((size&15)+1-(size>>4))/2+1; }
     return widths[glyph] ? widths[glyph] : 6;
 }
 
@@ -115,18 +134,26 @@ void DrawMinecraftText(const char *text, int x, int y, int height, Color color, 
         px = x + (offset*height+4)/8;
         ch = MinecraftGlyph(ch);
         if (ch != ' ') {
+            Texture2D texture=atlas;
             src.x = (float)((ch%16)*8); src.y = (float)((ch/16)*8);
             src.width = src.height = 8;
             dst.x = (float)px; dst.y = (float)y;
             dst.width = dst.height = (float)height;
+            if(ch>=127) {
+                unsigned size=glyph_sizes[ch],left=size>>4,right=(size&15)+1;
+                texture=assets_unicode_page(ch>>8);
+                src.x=(float)((ch&15)*16+left); src.y=(float)(((ch&255)>>4)*16);
+                src.width=(float)(right-left); src.height=16;
+                dst.width=(float)height*(right-left)/16;
+            }
             if (shadow) {
                 Color dark = {color.r/4,color.g/4,color.b/4,color.a};
                 dst.x += height >= 16 ? 2 : 1;
                 dst.y += height >= 16 ? 2 : 1;
-                DrawTexturePro(atlas,src,dst,origin,0,dark);
+                if(texture.id) DrawTexturePro(texture,src,dst,origin,0,dark);
                 dst.x = (float)px; dst.y = (float)y;
             }
-            DrawTexturePro(atlas,src,dst,origin,0,color);
+            if(texture.id) DrawTexturePro(texture,src,dst,origin,0,color);
         }
         offset += MinecraftGlyphWidth(ch);
     }

@@ -30,8 +30,7 @@ static unsigned random4(World *w)
 static void set_flow(World *w,int x,int y,int z,unsigned id,int meta)
 {
     if (!loaded(w,x,y,z)) return;
-    if (world_set_block(w,x,y,z,(uint8_t)id)) {
-        world_set_metadata(w,x,y,z,(uint8_t)meta);
+    if (world_set_state(w,x,y,z,(BetaBlockState){(uint8_t)id,(uint8_t)meta})) {
         world_schedule_tick(w,x,y,z,(uint8_t)id,id==8 ? 5 : 30);
     }
 }
@@ -82,7 +81,7 @@ void fluid_tick(World *w,int x,int y,int z,unsigned id)
         above=decay(w,x,y+1,z,kind);
         if (above>=0) next=above>=8 ? above : above+8;
         if (kind==1 && sources>=2 && (beta_material_solid(world_peek_block(w,x,y-1,z)) ||
-            (decay(w,x,y-1,z,kind)>=0 && level==0))) next=0;
+            decay(w,x,y-1,z,kind)==0)) next=0;
         if (kind==2 && level<8 && next<8 && next>level && random4(w)!=0) {
             world_schedule_tick(w,x,y,z,(uint8_t)id,30);
         } else if (next!=level) {

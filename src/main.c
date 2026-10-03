@@ -20,6 +20,7 @@
 #include "world/environment.h"
 #include "world/beta_session.h"
 #include "world/redstone.h"
+#include "world/door.h"
 #include "renderer/weather.h"
 #include "game/bed.h"
 #include "game/sign.h"
@@ -35,6 +36,8 @@
 #include "util/display.h"
 #include "assets/assets.h"
 #include "ui/pixel_font.h"
+#include "ui/language.h"
+#include "assets/resource_pack.h"
 #include "GLFW/glfw3.h"
 
 #include <math.h>
@@ -119,8 +122,9 @@ typedef struct App {
 
 typedef struct RunOptions {
     int frames, width, height, smoke, menu, no_audio, client_arrays, basic, fullscreen;
+    int window_check;
     int distance, mipmaps, smooth, blur, leaves, reduced, budget, vbo_budget, debug, profile_gpu;
-    const char *benchmark, *csv, *capture, *screen, *connect, *data_dir, *world_id;
+    const char *benchmark, *csv, *capture, *screen, *connect, *data_dir, *world_id, *language, *texture_pack;
 } RunOptions;
 
 static void close_inventory(App *app);
@@ -256,6 +260,16 @@ static void apply_options(App *app)
     RendererOptions r;
     if (!app->ui.mipmap_available) o->mipmaps = 0;
     if (memcmp(o, &app->applied, sizeof(*o)) == 0) return;
+    if(strcmp(o->texture_pack,app->applied.texture_pack)) {
+        if(assets_select_pack(o->texture_pack)) {
+            MinecraftTextReset(); renderer_reload_assets(app->renderer); language_select(o->language);
+            app->ui.status[0]=0;
+        } else {
+            snprintf(app->ui.status,sizeof(app->ui.status),"Unable to open texture pack.");
+            snprintf(o->texture_pack,sizeof(o->texture_pack),"%s",resource_pack_current());
+        }
+    }
+    if(strcmp(o->language,app->applied.language)) language_select(o->language);
     menu_background_clear(&app->menu_background);
     r.vbo_mode = o->use_vbo;
     r.vbo_budget_mb = o->vbo_budget_mb;
@@ -309,7 +323,7 @@ static void load_player(App *app)
         &p.yaw, &p.pitch, &p.selected_slot, &p.flying) == 8 && (version>=1 && version<=3) &&
         isfinite(p.x) && isfinite(p.y) && isfinite(p.z) && isfinite(p.yaw) &&
         isfinite(p.pitch) && fabsf(p.x) < 10000000.0f && fabsf(p.z) < 10000000.0f &&
-        p.y >= 0 && p.y < 256 && fabsf(p.pitch) <= 1.48f &&
+        p.y >= 0 && p.y < 256 && fabsf(p.pitch) <= 1.570797f &&
         p.selected_slot >= 0 && p.selected_slot < 9) {
         p.flying = p.creative && p.flying;
         if (version>=2) {
@@ -582,6 +596,7 @@ static void network_event(void *user, const NetworkEvent *event)
         if (event->type == NETWORK_EVENT_ENTITY_SPAWN && free_slot >= 0) {
             Entity *e = &app->entities[free_slot];
             e->active = 1; e->id = event->entity_id; e->type = event->entity_type;
+            e->color=event->entity_variant;
             e->x = (float)event->x; e->y = (float)event->y; e->z = (float)event->z;
             e->yaw=event->yaw; e->pitch=event->pitch;
             e->positioned=0; e->walk=0;
@@ -770,6 +785,13 @@ static void handle_action(App *app, UiAction action)
     size_t index;
     switch (action.type) {
         case UI_ACTION_QUIT: if (leave_world(app)) app->quit = 1; break;
+        case UI_ACTION_OPEN_GITHUB: game_open_external("https://github.com/IlyaBOT/ReCraft"); break;
+        case UI_ACTION_OPEN_PACK_FOLDER: {
+            char path[WORLD_PATH_MAX];
+            if(path_join(path,sizeof(path),app->root,!strncmp(app->ui.options.texture_pack,"resourcepacks/",14) ? "resourcepacks" : "texturepacks"))
+                game_open_external(path);
+            break;
+        }
         case UI_ACTION_PLAY_WORLD:
             if (!leave_world(app)) break;
             if (action.index >= 0 && action.index < app->world_count &&
@@ -1076,8 +1098,10 @@ static void game_input(App *app)
     if(app->player.riding && IsKeyPressed(KEY_LEFT_SHIFT)) world_minecart_dismount(&app->world,&app->player);
     if(app->mouse_settle) --app->mouse_settle;
     else {
-        app->input.look_dx += mouse.x - app->last_mouse.x;
-        app->input.look_dy += mouse.y - app->last_mouse.y;
+        float sensitivity=app->ui.options.sensitivity*.003f+.2f;
+        float factor=sensitivity*sensitivity*sensitivity*8;
+        app->input.look_dx += (mouse.x - app->last_mouse.x)*factor;
+        app->input.look_dy += (mouse.y - app->last_mouse.y)*factor*(app->ui.options.invert_mouse ? -1 : 1);
     }
     app->last_mouse = mouse;
     /* raylib 1.4 typedefs bool as an enum whose arithmetic may be unsigned.
@@ -1170,9 +1194,10 @@ static void game_input(App *app)
                         open_inventory(app,CONTAINER_FURNACE,hit,3);
                     return;
                 }
-                if(world_redstone_activate(&app->world,hit.x,hit.y,hit.z)) return;
+                if(door_activate(&app->world,hit.x,hit.y,hit.z) || world_redstone_activate(&app->world,hit.x,hit.y,hit.z)) return;
             }
             if(player_use_item(&app->player,&app->world,item)) { app->health=app->player.health; app->swing_ticks=6; return; }
+            if(item->id==333 && item->count>0) { if(world_boat_use(&app->world,&app->player,item)) app->swing_ticks=6; return; }
             if(item->id==261 && item->count>0) { if(world_bow_use(&app->world,&app->player,app->inventory)) app->swing_ticks=6; return; }
             if((item->id==328 || item->id==342 || item->id==343) && item->count>0 && hit.hit) {
                 if(world_minecart_spawn(&app->world,hit.x+.5f,hit.y,hit.z+.5f,item->id==328 ? 0 : item->id==342 ? 1 : 2))
@@ -1292,6 +1317,7 @@ static void tick_game(App *app)
         block_entities_tick(&app->world);
         world_mobs_tick(&app->world,&app->player);
         world_transport_tick(&app->world,&app->player,app->inventory);
+        world_entities_collide(&app->world,&app->player);
         app->entity_count=world_mobs_visible(&app->world,app->entities,ENTITY_LIMIT);
         app->entity_count+=world_transport_visible(&app->world,app->entities+app->entity_count,ENTITY_LIMIT-app->entity_count);
         app->health=app->player.health;
@@ -1420,6 +1446,7 @@ static int parse_options(int argc, char **argv, RunOptions *o)
         else if (!strcmp(s, "--basic-mesh")) o->basic = 1;
         else if (!strcmp(s, "--debug")) o->debug = 1;
         else if (!strcmp(s, "--fullscreen")) o->fullscreen = 1;
+        else if (!strcmp(s, "--window-check")) { o->window_check=1; o->menu=1; }
         else if (!strcmp(s, "--profile-gpu")) o->profile_gpu = 1;
         else if (!strcmp(s, "--frames") && i+1 < argc) o->frames = atoi(argv[++i]);
         else if (!strcmp(s, "--distance") && i+1 < argc) o->distance = atoi(argv[++i]);
@@ -1439,6 +1466,8 @@ static int parse_options(int argc, char **argv, RunOptions *o)
         else if (!strcmp(s, "--connect") && i+1 < argc) o->connect = argv[++i];
         else if (!strcmp(s, "--world") && i+1 < argc) o->world_id = argv[++i];
         else if (!strcmp(s, "--data-dir") && i+1 < argc) o->data_dir = argv[++i];
+        else if (!strcmp(s, "--language") && i+1 < argc) o->language = argv[++i];
+        else if (!strcmp(s, "--texture-pack") && i+1 < argc) o->texture_pack = argv[++i];
         else return 0;
     }
     if (o->benchmark && strcmp(o->benchmark,"bench_torch") &&
@@ -1527,6 +1556,26 @@ static int gameplay_preview(App *app,const char *name)
             app->entity_count=world_mobs_visible(&app->world,app->entities,ENTITY_LIMIT);
         }
         world_environment_refresh(&app->world); app->previous_player=app->player;
+    } else if(!strcmp(name,"boats") || !strcmp(name,"repeaters") || !strcmp(name,"doors")) {
+        int x,y,z; InventorySlot boat={333,1,0};
+        for(x=2;x<15;++x) for(z=3;z<13;++z) {
+            world_set_block(&app->world,x,63,z,1);
+            for(y=64;y<70;++y) world_set_block(&app->world,x,y,z,0);
+            if(!strcmp(name,"boats")) world_set_state(&app->world,x,64,z,(BetaBlockState){9,0});
+        }
+        for(i=0;i<3;++i) {
+            if(!strcmp(name,"boats")) {
+                app->player.x=4.5f+i*4; app->player.y=64; app->player.z=13.5f; app->player.yaw=0; app->player.pitch=-.55f;
+                boat.count=1;
+                world_boat_use(&app->world,&app->player,&boat);
+            } else if(!strcmp(name,"doors")) door_place(&app->world,4+i*4,64,8,i==1 ? 71 : 64,i*1.57079633f);
+        }
+        if(!strcmp(name,"repeaters")) for(i=0;i<4;++i) {
+            world_set_state(&app->world,3+i*3,64,8,(BetaBlockState){93,(uint8_t)(i*4)});
+            world_set_state(&app->world,3+i*3,64,9,(BetaBlockState){76,5});
+        }
+        app->player.x=8.5f; app->player.y=65; app->player.z=15; app->player.yaw=0; app->player.pitch=-.35f; app->player.flying=1;
+        app->previous_player=app->player;
     } else if(!strcmp(name,"mechanics") || !strncmp(name,"hand-",5)) {
         int x,y;
         for(x=2;x<14;++x) for(y=64;y<67;++y) world_set_block(&app->world,x,y,4,1);
@@ -1535,6 +1584,7 @@ static int gameplay_preview(App *app,const char *name)
         for(x=2;x<14;++x) world_set_state(&app->world,x,64,9,(BetaBlockState){(uint8_t)(x==7 ? 27 : x==10 ? 28 : 66),1});
         world_set_block(&app->world,2,64,6,84); world_set_block(&app->world,13,64,6,84);
         for(i=0;i<3;++i) world_minecart_spawn(&app->world,4.5f+i*4,64,9.5f,i);
+        for(i=0;i<4;++i) world_set_state(&app->world,3+i*3,64,8,(BetaBlockState){93,(uint8_t)(i*4)});
         app->player.x=8.5f; app->player.y=65; app->player.z=14; app->player.yaw=0; app->player.pitch=-.18f; app->player.flying=1;
         if(!strcmp(name,"hand-empty")) inventory_clear_slot(&app->inventory[0]);
         else app->inventory[0]=(InventorySlot){!strcmp(name,"hand-tool") ? 278 : !strcmp(name,"hand-sword") ? 276 : !strcmp(name,"hand-bow") ? 261 : !strcmp(name,"hand-food") ? 260 : 1,1,0};
@@ -1629,7 +1679,8 @@ int main(int argc, char **argv)
             "  [--screen main|worlds|create|multiplayer|add|direct|video|inventory|pause]\n"
             "  [--smoke-test --screen player|crafting|furnace|chest|large-chest|health|blocks|day|night|rain|snow|bed|mobs]\n"
             "  [--smoke-test --screen materials|sign-edit|multiplayer-demo|chat|players]\n"
-            "  [--no-audio] [--debug] [--fullscreen]\n"
+            "  [--language en_US] [--texture-pack texturepacks/pack.zip]\n"
+            "  [--no-audio] [--debug] [--fullscreen] [--window-check]\n"
             "  [--connect host:port] [--world save-directory] [--data-dir directory] [--profile-gpu]\n");
         return 2;
     }
@@ -1638,6 +1689,12 @@ int main(int argc, char **argv)
     if (!setup_paths(&app, run.data_dir)) { fprintf(stderr, "Unable to create data directory.\n"); return 1; }
     assets_init(app.root);
     if (!app.transient) settings_load(&app.ui.options, app.settings_path);
+    if(run.language) copy_text(app.ui.options.language,sizeof(app.ui.options.language),run.language);
+    if(run.texture_pack) copy_text(app.ui.options.texture_pack,sizeof(app.ui.options.texture_pack),run.texture_pack);
+    language_init();
+    if(!assets_select_pack(app.ui.options.texture_pack)) app.ui.options.texture_pack[0]=0;
+    if(!language_select(app.ui.options.language)) strcpy(app.ui.options.language,"en_US");
+    MinecraftTextReset();
     if (run.fullscreen) app.ui.options.fullscreen=1;
     if (app.ui.options.vsync || app.ui.options.max_framerate == 0) {
         app.ui.options.vsync = 1;
@@ -1673,6 +1730,9 @@ int main(int argc, char **argv)
     SetTargetFPS(-1);
     app.renderer = renderer_init();
     if (!app.renderer) { CloseWindow(); return 1; }
+    if(run.window_check && !recraft_display_check_resize()) {
+        renderer_shutdown(app.renderer); assets_shutdown(); CloseWindow(); return 1;
+    }
     app.ui.mipmap_available = renderer_capabilities(app.renderer).mipmap_level_control;
     app.ui.vbo_available = renderer_capabilities(app.renderer).vbo_functions;
     if (run.mipmaps > 0 && !app.ui.mipmap_available)
@@ -1725,6 +1785,8 @@ int main(int argc, char **argv)
         else if (!strcmp(run.screen,"add")) ui_set_screen(&app.ui,UI_SCREEN_SERVER_EDIT);
         else if (!strcmp(run.screen,"direct")) ui_set_screen(&app.ui,UI_SCREEN_DIRECT_CONNECT);
         else if (!strcmp(run.screen,"options")) ui_set_screen(&app.ui,UI_SCREEN_OPTIONS);
+        else if (!strcmp(run.screen,"languages")) ui_set_screen(&app.ui,UI_SCREEN_LANGUAGES);
+        else if (!strcmp(run.screen,"packs")) ui_set_screen(&app.ui,UI_SCREEN_PACKS);
         else if (!strcmp(run.screen,"video")) ui_set_screen(&app.ui,UI_SCREEN_VIDEO);
     }
     if (run.csv) {
@@ -1825,7 +1887,7 @@ int main(int argc, char **argv)
             const char *vertex_stage;
             if (draw_scene) {
                 camera.x=app.player.x; camera.y=app.player.y+1.62f; camera.z=app.player.z;
-                camera.yaw=app.player.yaw; camera.pitch=app.player.pitch; camera.fov_y=70;
+                camera.yaw=app.player.yaw; camera.pitch=app.player.pitch; camera.fov_y=(float)app.ui.options.fov;
                 if (!run.benchmark && !app.network && !app.ui.world_background) {
                     float alpha=(float)(accumulator/RECRAFT_TICK_SECONDS);
                     if (alpha<0) alpha=0;
@@ -1837,8 +1899,8 @@ int main(int argc, char **argv)
                         camera.y=app.previous_player.y+(app.player.y-app.previous_player.y)*alpha+1.62f;
                         camera.z=app.previous_player.z+(app.player.z-app.previous_player.z)*alpha;
                     }
-                    camera.yaw=app.player.yaw+app.input.look_dx*0.0025f;
-                    camera.pitch=app.player.pitch-app.input.look_dy*0.0025f;
+                    camera.yaw=app.player.yaw+app.input.look_dx*PLAYER_LOOK_SPEED;
+                    camera.pitch=player_clamp_pitch(app.player.pitch-app.input.look_dy*PLAYER_LOOK_SPEED);
                 }
                 if(app.player.sleeping)
                     player_eye(&app.player,&app.world,&camera.x,&camera.y,&camera.z,&camera.yaw,&camera.pitch);
@@ -1986,7 +2048,7 @@ int main(int argc, char **argv)
                 if(app.player.sleeping && ui_draw_sleep(&app.ui,app.player.sleep_ticks)) {
                     player_wake(&app.player,&app.world,0); capture_cursor(&app,1);
                 }
-                ui_draw_chat(&app.ui,app.chat_lines,app.chat_count,app.chat,app.chat_open,start);
+                if(app.ui.options.chat_visible || app.chat_open) ui_draw_chat(&app.ui,app.chat_lines,app.chat_count,app.chat,app.chat_open,start);
                 if(app.roster_preview) {
                     UiPlayerEntry entries[3]={{"Steve",-1},{"Alex",-1},{"ReCraft",-1}};
                     ui_draw_player_list(&app.ui,entries,3,0);
@@ -2051,7 +2113,7 @@ int main(int argc, char **argv)
     server_status_destroy(app.status_browser);
     ui_shutdown();
     renderer_shutdown(app.renderer);
-    assets_shutdown();
+    language_shutdown(); assets_shutdown();
     CloseWindow();
     printf("ReCraft finished: %u frames, status %d\n",frame,status);
     return status;

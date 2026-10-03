@@ -145,22 +145,24 @@ static void upload_animated_slot(unsigned slot,const uint8_t source[1024],int sc
 void renderer_animate(Renderer *r,uint64_t tick)
 {
     GLint old,unpack;
+    unsigned visible;
     if(!r || !r->atlas || r->animation_tick==tick) return;
     r->animation_tick=tick;
-    if(!r->animated_visible) return;
+    visible=r->animated_visible&assets_animation_mask();
+    if(!visible) return;
     texture_animation_step(&r->animations);
     glGetIntegerv(GL_TEXTURE_BINDING_2D,&old); glGetIntegerv(GL_UNPACK_ALIGNMENT,&unpack);
     glBindTexture(GL_TEXTURE_2D,r->atlas); glPixelStorei(GL_UNPACK_ALIGNMENT,1);
-    if(r->animated_visible&1) {
+    if(visible&1) {
         upload_animated_slot(11,r->animations.water_pixels,0);
         upload_animated_slot(83,r->animations.water_pixels,0);
         upload_animated_slot(84,r->animations.water_pixels,(int)tick);
     }
-    if(r->animated_visible&2) {
+    if(visible&2) {
         upload_animated_slot(64,r->animations.lava_pixels,0);
         upload_animated_slot(65,r->animations.lava_pixels,(int)(tick/3));
     }
-    if(r->animated_visible&4) upload_animated_slot(66,r->animations.portal[tick&31],0);
+    if(visible&4) upload_animated_slot(66,r->animations.portal[tick&31],0);
     glPixelStorei(GL_UNPACK_ALIGNMENT,unpack); glBindTexture(GL_TEXTURE_2D,(GLuint)old);
 }
 static GenericProc gl_proc(const char *name)
@@ -611,6 +613,14 @@ GpuCapabilities renderer_capabilities(const Renderer *renderer)
 {
     GpuCapabilities empty = {0};
     return renderer ? renderer->capabilities : empty;
+}
+void renderer_reload_assets(Renderer *renderer)
+{
+    GLuint atlas;
+    if(!renderer) return;
+    atlas=make_atlas(); if(!atlas) return;
+    glDeleteTextures(1,&renderer->atlas); renderer->atlas=atlas;
+    apply_atlas_filter(renderer);
 }
 
 RendererOptions renderer_options(const Renderer *renderer)
@@ -1221,6 +1231,27 @@ static void emit_low_block(const Renderer *r,const World *w,ChunkMesh *mesh,cons
     }
 }
 
+static void emit_repeater(const Renderer *r,const World *w,ChunkMesh *mesh,const Chunk *chunk,
+                          int x,int y,int z,uint8_t id,uint8_t meta)
+{
+    static const float offsets[4]={-.0625f,.0625f,.1875f,.3125f};
+    static const int dx[4]={0,-1,0,1},dz[4]={1,0,-1,0};
+    int n,dir=meta&3;
+    emit_low_block(r,w,mesh,chunk,x,y,z,id,meta);
+    for(n=0;n<2;++n) {
+        MeshLayer *layer=&mesh->layers[BLOCK_LAYER_CUTOUT-1];
+        unsigned first=layer->vertex_count,i;
+        float offset=n ? -.3125f : offsets[(meta>>2)&3];
+        emit_torch_kind(mesh,x,y,z,5,id==94 ? 76 : 75);
+        /* RenderBlocks places both torch stems 3/16 below the plate origin. */
+        for(i=first;i<layer->vertex_count;++i) {
+            layer->vertices[i].x+=(int16_t)(dx[dir]*offset*VERTEX_COORD_SCALE);
+            layer->vertices[i].y-=(int16_t)(.1875f*VERTEX_COORD_SCALE);
+            layer->vertices[i].z+=(int16_t)(dz[dir]*offset*VERTEX_COORD_SCALE);
+        }
+    }
+}
+
 /* RenderBlocks.renderBlockBed uses a separate top UV orientation, lower
  * atlas rows for the wooden frame, and no face between the two bed halves. */
 static void emit_bed(const Renderer *r,const World *w,ChunkMesh *mesh,const Chunk *chunk,
@@ -1548,7 +1579,9 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                                   chunk_get_metadata(chunk,x,y,z));
                     else if(rail_is(chunk_get_block(chunk,x,y,z)))
                         emit_rail(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
-                    else if(chunk_get_block(chunk,x,y,z)==93 || chunk_get_block(chunk,x,y,z)==94 ||
+                    else if(chunk_get_block(chunk,x,y,z)==93 || chunk_get_block(chunk,x,y,z)==94)
+                        emit_repeater(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
+                    else if(
                             chunk_get_block(chunk,x,y,z)==69 || chunk_get_block(chunk,x,y,z)==77 || chunk_get_block(chunk,x,y,z)==78)
                         emit_low_block(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
     }

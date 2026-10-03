@@ -6,6 +6,7 @@ struct Player; struct SavedEntity; struct RenderEntity;
 typedef struct MobState {
     int type,health,fire,on_ground,hurt_ticks,last_damage,attack_ticks,age,walk_ticks;
     float x,y,z,vx,vy,vz,yaw,pitch,walk,fall_distance;
+    float push_x,push_z;
     int runtime_id,sound_ticks,color,sheared;
     int egg_ticks;
 } MobState;

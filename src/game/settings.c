@@ -9,6 +9,7 @@
 typedef struct OptionField { const char *name; size_t offset; int min, max; } OptionField;
 #define FIELD(n,a,b) { #n, offsetof(UiOptions,n), a, b }
 static const OptionField fields[] = {
+    FIELD(invert_mouse,0,1), FIELD(sensitivity,0,200), FIELD(fov,70,110), FIELD(chat_visible,0,1),
     FIELD(difficulty,0,3), FIELD(sound_volume,0,100), FIELD(music_volume,0,100),
     FIELD(fancy_graphics,0,1), FIELD(render_distance,2,12), FIELD(smooth_lighting,0,1),
     FIELD(menu_blur,0,1), FIELD(max_framerate,0,144), FIELD(anaglyph,0,0), FIELD(view_bobbing,0,1),
@@ -33,11 +34,20 @@ int settings_player_name_valid(const char *name)
 void settings_load(UiOptions *options, const char *path)
 {
     FILE *file=fopen(path,"rb");
-    char line[160], key[64];
+    char line[640], key[64];
     int value;
     size_t i;
     if (!file) return;
     while (fgets(line,sizeof(line),file)) {
+        if(!strncmp(line,"language=",9) || !strncmp(line,"texture_pack=",13)) {
+            int language=line[0]=='l'; char *s=strchr(line,'=')+1;
+            size_t n; s[strcspn(s,"\r\n")]=0; n=strlen(s);
+            if(language) {
+                if(n>0 && n<sizeof(options->language) && strspn(s,"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")==n) strcpy(options->language,s);
+            } else if(n<sizeof(options->texture_pack) && !strstr(s,"..") && !strchr(s,'\\') && !strchr(s,':') &&
+                (!n || !strncmp(s,"texturepacks/",13) || !strncmp(s,"resourcepacks/",14))) strcpy(options->texture_pack,s);
+            continue;
+        }
         if(!strncmp(line,"player_name=",12)) {
             char *name=line+12; name[strcspn(name,"\r\n")]=0;
             if(settings_player_name_valid(name)) strcpy(options->player_name,name);
@@ -73,6 +83,7 @@ int settings_save(const UiOptions *options, const char *path)
        fprintf(file,"player_name=%s\n",options->player_name)<0) {
         fclose(file); remove(temp); return 0;
     }
+    if(fprintf(file,"language=%s\ntexture_pack=%s\n",options->language,options->texture_pack)<0) { fclose(file); remove(temp); return 0; }
     for (i=0;i<sizeof(fields)/sizeof(fields[0]);++i) {
         int value=*(const int *)((const char *)options+fields[i].offset);
         if (fprintf(file,"%s=%d\n",fields[i].name,value)<0) {

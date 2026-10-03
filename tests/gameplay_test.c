@@ -7,10 +7,12 @@
 #include "game/bed.h"
 #include "world/environment.h"
 #include "world/redstone.h"
+#include "world/door.h"
 #include "world/mobs.h"
 #include "game/entity_render.h"
 #include "nbt/nbt.h"
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,6 +57,58 @@ static void fluid_tests(void)
     for(x=-4;x<=4;++x) for(z=-4;z<=4;++z) assert(world_peek_block(&w,x,64,z)==0);
     assert(world_close(&w)==WORLD_OK);
 }
+static void regressions(void)
+{
+    World w; Player p={0}; PlayerInput in={0}; int id,dir,i;
+    static const int dx[4]={0,-1,0,1},dz[4]={1,0,-1,0};
+    assert(world_init(&w,42,1,32)==WORLD_OK);
+    for(i=-1;i<=1;++i) { assert(world_get_chunk(&w,i,0)); assert(world_get_chunk(&w,0,i)); }
+    for(id=64;id<=71;id+=7) for(dir=0;dir<4;++dir) {
+        assert(door_place(&w,8,64,8,(unsigned)id,dir*1.57079633f));
+        ticks(&w,1); assert(world_peek_block(&w,8,64,8)==id && world_peek_block(&w,8,65,8)==id);
+        assert(world_peek_metadata(&w,8,65,8)==(world_peek_metadata(&w,8,64,8)|8));
+        i=world_peek_metadata(&w,8,64,8);
+        assert(door_activate(&w,8,65,8));
+        assert(world_peek_metadata(&w,8,64,8)==(id==64 ? (i^4) : i));
+        if(id==64) { ticks(&w,5); assert(world_peek_metadata(&w,8,64,8)==(i^4)); }
+        world_set_block(&w,9,64,8,69); world_set_metadata(&w,9,64,8,5);
+        world_redstone_activate(&w,9,64,8); assert(world_peek_metadata(&w,8,64,8)&4);
+        world_redstone_activate(&w,9,64,8); assert(!(world_peek_metadata(&w,8,64,8)&4));
+        world_set_block(&w,9,64,8,0); world_set_block(&w,8,65,8,0); ticks(&w,1); assert(!world_peek_block(&w,8,64,8));
+    }
+    assert(door_place(&w,8,64,8,64,0) && door_place(&w,9,64,8,64,0));
+    ticks(&w,5); assert(world_peek_metadata(&w,9,64,8)==6 && world_peek_metadata(&w,9,65,8)==14);
+    world_set_block(&w,8,64,8,0); world_set_block(&w,9,64,8,0); ticks(&w,1);
+    /* A removed surface source must regenerate over source water, too. */
+    for(i=0;i<3;++i) { world_set_state(&w,8+i,63,8,(BetaBlockState){9,0}); world_set_state(&w,8+i,64,8,(BetaBlockState){9,0}); }
+    world_set_block(&w,9,64,8,0); ticks(&w,30);
+    assert(fluid_kind(world_peek_block(&w,9,64,8))==1 && world_peek_metadata(&w,9,64,8)==0);
+    assert(world_close(&w)==WORLD_OK);
+    assert(world_init(&w,42,1,32)==WORLD_OK); assert(world_get_chunk(&w,0,0));
+    for(i=0;i<3;++i) { world_set_state(&w,8,64+i*2,8,(BetaBlockState){76,5}); if(i<2) world_set_block(&w,8,65+i*2,8,1); }
+    ticks(&w,10); assert(world_peek_block(&w,8,64,8)==76 && world_peek_block(&w,8,66,8)==75 && world_peek_block(&w,8,68,8)==76);
+    world_set_state(&w,9,63,8,(BetaBlockState){69,9}); ticks(&w,10);
+    assert(world_peek_block(&w,8,64,8)==75 && world_peek_block(&w,8,66,8)==76 && world_peek_block(&w,8,68,8)==75);
+    world_set_block(&w,9,63,8,0); ticks(&w,10); assert(world_peek_block(&w,8,64,8)==76 && world_peek_block(&w,8,68,8)==76);
+    assert(world_close(&w)==WORLD_OK);
+    for(dir=0;dir<4;++dir) {
+        assert(world_init(&w,42,1,32)==WORLD_OK); assert(world_get_chunk(&w,0,0));
+        world_set_state(&w,8,64,8,(BetaBlockState){93,(uint8_t)(dir|12)});
+        world_set_state(&w,8+dx[dir],64,8+dz[dir],(BetaBlockState){76,5});
+        ticks(&w,7); assert(world_peek_block(&w,8,64,8)==93); ticks(&w,1);
+        assert(world_peek_block(&w,8,64,8)==94 && world_peek_metadata(&w,8,64,8)==(dir|12));
+        assert(world_redstone_signal(&w,8,64,8,8-dx[dir],64,8-dz[dir],1)==15);
+        world_set_block(&w,8+dx[dir],64,8+dz[dir],0); ticks(&w,8); assert(world_peek_block(&w,8,64,8)==93);
+        assert(world_close(&w)==WORLD_OK);
+    }
+    assert(world_init(&w,42,1,16)==WORLD_OK); player_spawn(&p,&w,1); p.flying=0; p.y=64; p.x=p.z=8.5f;
+    in.look_dy=-10000; player_tick(&p,&w,&in,.05f); assert(fabsf(p.pitch-1.57079633f)<.00001f);
+    assert(player_clamp_pitch(p.pitch+10)==p.pitch);
+    in.look_dy=10000; player_tick(&p,&w,&in,.05f); assert(fabsf(p.pitch+1.57079633f)<.00001f);
+    assert(world_mob_spawn(&w,92,8.8f,64,8.5f)); world_entities_collide(&w,&p);
+    assert(p.push_x<0); in.look_dy=0; i=(int)(p.x*1000); player_tick(&p,&w,&in,.05f); assert(p.x*1000<i);
+    assert(world_close(&w)==WORLD_OK);
+}
 static void container_tests(void)
 {
     World w; BlockEntity *a,*b,*f; WorldDropEvent drop;
@@ -76,8 +130,11 @@ static void container_tests(void)
     for(i=0;i<199;++i) block_entities_tick(&w);
     assert(f->slots[2].count==0 && f->cook==199 && f->burn>0 && world_peek_block(&w,8,64,4)==62);
     block_entities_tick(&w); assert(f->slots[2].id==263 && f->slots[2].damage==1 && f->slots[0].count==1);
+    assert(door_place(&w,11,64,4,64,0) && door_place(&w,12,64,4,64,0));
     assert(world_close(&w)==WORLD_OK);
     assert(world_open(&w,root,"fixture",16)==WORLD_OK);
+    assert(world_get_block(&w,12,64,4)==64 && world_get_metadata(&w,12,64,4)==6);
+    assert(world_get_block(&w,12,65,4)==64 && world_get_metadata(&w,12,65,4)==14);
     assert(block_chest_halves(&w,4,64,4,&a,&b)==54);
     assert(a->slots[0].id==35 && a->slots[0].count==23 && a->slots[0].damage==14);
     assert(b->slots[26].id==278 && b->slots[26].damage==400);
@@ -397,6 +454,6 @@ static void mob_collision_tests(void)
 }
 int main(void)
 {
-    mob_collision_tests(); mob_tests(); environment_bed_tests(); mechanisms_tests(); fluid_tests(); container_tests(); health_redstone_tests(); bucket_tests(); tick_save_tests(); entity_nbt_tests();
+    regressions(); mob_collision_tests(); mob_tests(); environment_bed_tests(); mechanisms_tests(); fluid_tests(); container_tests(); health_redstone_tests(); bucket_tests(); tick_save_tests(); entity_nbt_tests();
     puts("Scheduled Beta water/lava, containers, persistence, health and torch inversion passed"); return 0;
 }

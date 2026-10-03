@@ -46,7 +46,7 @@ jobs:
         run: |
           ctest --test-dir build/ci --output-on-failure
           test "$(build/ReCraft.exe --version)" = "ReCraft $(cat VERSION)"
-          if ! build/ReCraft.exe --menu-smoke --no-audio --frames 30 --capture build/menu.png; then
+          if ! build/ReCraft.exe --menu-smoke --window-check --no-audio --frames 30 --capture build/menu.png; then
             gdb --batch -ex run -ex 'thread apply all bt' --args build/ReCraft.exe --menu-smoke --no-audio --frames 30
             exit 1
           fi
@@ -82,7 +82,7 @@ jobs:
         run: |
           xvfb-run -a ctest --test-dir build/ci --output-on-failure
           test "$(build/ReCraft --version)" = "ReCraft $(cat VERSION)"
-          xvfb-run -a build/ReCraft --menu-smoke --no-audio --frames 30 --capture build/menu.png
+          xvfb-run -a build/ReCraft --menu-smoke --window-check --no-audio --frames 30 --capture build/menu.png
       - name: Package runtime
         run: |
           cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$PWD/build/package" -P tools/package_runtime.cmake

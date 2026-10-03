@@ -1,3 +1,6 @@
 * text=auto eol=lf
 *.png -text
 *.ogg -text
+*.bin -text
+# Preserve original imported language data, including its original whitespace.
+assets/lang/** -text -whitespace

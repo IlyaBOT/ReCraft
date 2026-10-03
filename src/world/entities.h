@@ -23,4 +23,5 @@ int world_item_spawn(World *world,int x,int y,int z,InventorySlot item);
 int world_item_spawn_at(World *world,float x,float y,float z,InventorySlot item);
 void world_items_tick(World *world,const struct Player *player,InventorySlot *inventory);
 int world_items_visible(const World *world,ItemDrop *out,int count);
+void world_entities_collide(World *world,struct Player *player);
 #endif

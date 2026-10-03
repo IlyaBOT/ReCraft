@@ -7,6 +7,12 @@ if(NOT RECRAFT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+([.+-][A-Za-z0-9.+-]+)?
     message(FATAL_ERROR "VERSION must contain a version such as 0.1.0-dev")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/VERSION")
+string(TIMESTAMP RECRAFT_BUILD_DATE "%Y-%m-%d %H:%M UTC" UTC)
+execute_process(COMMAND git rev-parse --short=9 HEAD WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE RECRAFT_BUILD_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT RECRAFT_BUILD_REVISION)
+    set(RECRAFT_BUILD_REVISION "source")
+endif()
 configure_file(cmake/recraft_version.h.in generated/recraft_version.h @ONLY)
 include(cmake/legacy_source_compat.cmake)
 include_directories("${CMAKE_BINARY_DIR}/generated")
@@ -44,7 +50,7 @@ if(WIN32)
     list(APPEND GLFW_SOURCES win32_init.c win32_monitor.c win32_time.c win32_tls.c
         win32_window.c winmm_joystick.c wgl_context.c)
     set(GLFW_DEFINITIONS _GLFW_WIN32 _GLFW_WGL _GLFW_USE_OPENGL)
-    set(PLATFORM_LIBRARIES opengl32 gdi32 user32 winmm ws2_32)
+    set(PLATFORM_LIBRARIES opengl32 gdi32 user32 winmm ws2_32 shell32)
 elseif(APPLE)
     add_definitions(-DGL_SILENCE_DEPRECATION)
     list(APPEND GLFW_SOURCES cocoa_init.m cocoa_monitor.m cocoa_window.m
@@ -204,6 +210,14 @@ add_test(NAME climate_test COMMAND climate_test)
 target_include_directories(sound_policy_test PRIVATE src)
 add_test(NAME sound_policy_test COMMAND sound_policy_test)
 add_executable(settings_test tests/settings_test.c src/game/settings.c)
+add_executable(resource_pack_test tests/resource_pack_test.c src/assets/resource_pack.c src/util/game_paths.c)
+target_include_directories(resource_pack_test PRIVATE src ${ZLIB_INCLUDE_DIRS})
+target_link_libraries(resource_pack_test ${ZLIB_LIBRARIES} ${PLATFORM_LIBRARIES})
+target_compile_options(resource_pack_test PRIVATE -UNDEBUG)
+if(WIN32)
+    target_compile_options(resource_pack_test PRIVATE -include "${CMAKE_SOURCE_DIR}/src/win_gl_compat.h")
+endif()
+add_test(NAME resource_pack_test COMMAND resource_pack_test)
 target_include_directories(settings_test PRIVATE src)
 add_test(NAME settings_test COMMAND settings_test)
 add_executable(gameplay_test tests/gameplay_test.c src/world/world.c src/world/storage.c src/world/beta_blocks.c src/game/player.c)
@@ -322,12 +336,25 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/build/saves/New World/region/r.0.0.mcr" AND
     set_tests_properties(beta_region_test PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endif()
 
-# Headless world tests use the same container persistence/smelting modules as
-# the client. None of these sources depend on raylib or a graphics context.
+# Asset manager integration uses the same pack resolver as the client.
+foreach(_asset_test audio_record_test renderer_test renderer_gl11_test)
+    if(TARGET ${_asset_test})
+        target_sources(${_asset_test} PRIVATE src/assets/resource_pack.c)
+    endif()
+endforeach()
+if(TARGET renderer_test)
+    target_sources(renderer_test PRIVATE src/ui/language.c)
+endif()
+if(TARGET renderer_gl11_test)
+    target_sources(renderer_gl11_test PRIVATE src/ui/language.c)
+endif()
+
+# Headless world tests share the client's persistence and simulation modules.
+# These sources do not depend on raylib or a graphics context.
 foreach(_world_test world_test renderer_test network_test beta_region_test gameplay_test sign_test transport_test audio_record_test)
     if(TARGET ${_world_test})
         target_sources(${_world_test} PRIVATE src/world/block_entity.c src/world/environment.c src/world/climate.c src/world/redstone.c src/world/beta_session.c src/game/bed.c src/game/sign.c src/game/player.c
-            src/world/entities.c src/world/mobs.c src/world/transport.c src/world/rail.c
+            src/world/entities.c src/world/mobs.c src/world/transport.c src/world/rail.c src/world/door.c
             src/world/physics.c src/world/ticks.c src/world/fluid.c src/game/mining.c
             src/game/crafting.c src/game/inventory.c src/nbt/nbt.c)
     endif()

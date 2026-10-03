@@ -5,6 +5,8 @@
 #include "raylib.h"
 #include "pixel_font.h"
 #include "gui_button.h"
+#include "language.h"
+#include "../assets/resource_pack.h"
 #include "../assets/assets.h"
 #include "../world/beta_blocks.h"
 #include "../game/creative.h"
@@ -41,6 +43,8 @@ typedef struct UiLayout {
 } UiLayout;
 
 static UiLayout layout;
+static ResourcePackEntry pack_entries[128];
+static int pack_count;
 
 static Color col(unsigned char r, unsigned char g, unsigned char b, unsigned char a)
 {
@@ -114,7 +118,7 @@ static int button(Ui *ui, int x, int y, int w, int h, const char *caption, int e
 {
     int hot = enabled && inside(x, y, w, h);
     int pressed = hot && IsMouseButtonDown(MOUSE_LEFT_BUTTON);
-    gui_button_draw(px((float)x),py((float)y),ps((float)w),ps((float)h),caption,
+    gui_button_draw(px((float)x),py((float)y),ps((float)w),ps((float)h),language_caption(caption),
         !enabled ? GUI_BUTTON_DISABLED : pressed ? GUI_BUTTON_PRESSED :
         hot ? GUI_BUTTON_HOVERED : GUI_BUTTON_NORMAL);
     if (hot && layout.clicked) {
@@ -236,6 +240,7 @@ static void panel(int x, int y, int w, int h)
 
 static void title(const char *s)
 {
+    s=language_caption(s);
     centered(s, 321, 25, 16, col(14, 14, 14, 255));
     centered(s, 320, 24, 16, col(252, 252, 246, 255));
 }
@@ -298,6 +303,8 @@ void ui_init(Ui *ui)
     if (!ui) return;
     memset(ui, 0, sizeof(*ui));
     ui->options.difficulty=2;
+    ui->options.sensitivity=100; ui->options.fov=70; ui->options.chat_visible=1;
+    copy_text(ui->options.language,sizeof(ui->options.language),"en_US");
     copy_text(ui->options.player_name,sizeof(ui->options.player_name),"Player");
     ui->options.sound_volume=ui->options.music_volume=100;
     ui->screen = UI_SCREEN_MAIN;
@@ -334,6 +341,8 @@ void ui_set_screen(Ui *ui, UiScreen screen)
     ui->previous_screen = ui->screen;
     ui->screen = screen;
     if(screen==UI_SCREEN_OPTIONS) copy_text(ui->player_name_input,sizeof(ui->player_name_input),ui->options.player_name);
+    if(screen==UI_SCREEN_PACKS) pack_count=resource_pack_list(pack_entries,128);
+    ui->slider_drag=0;
     ui->focus = 0;
     ui->select_all = 0;
 }
@@ -341,26 +350,31 @@ void ui_set_screen(Ui *ui, UiScreen screen)
 static UiAction main_menu(Ui *ui)
 {
     UiAction action = empty_action();
-    int x = 195, w = 250;
+    int i; Texture2D globe=assets_get_texture(ASSET_GUI_LANGUAGE);
     draw_background(0);
-    /* Block-like original wordmark, kept as vector geometry. */
-    rect(150, 62, 340, 64, col(13, 16, 17, 165));
-    rect(158, 70, 324, 48, col(44, 57, 48, 225));
-    rect(158, 70, 324, 4, col(132, 157, 126, 255));
-    rect(158, 114, 324, 4, col(24, 32, 29, 255));
-    centered(RECRAFT_TITLE, 323, 76, 35, col(11, 14, 13, 255));
-    centered(RECRAFT_TITLE, 320, 73, 35, col(234, 233, 210, 255));
-    centered("A WORLD BUILT BLOCK BY BLOCK", 320, 134, 10,
-             col(231, 230, 215, 255));
-    if (button(ui, x, 192, w, 30, "Singleplayer", 1)) ui_set_screen(ui, UI_SCREEN_WORLDS);
-    if (button(ui, x, 228, w, 30, "Multiplayer", 1)) ui_set_screen(ui, UI_SCREEN_MULTIPLAYER);
-    if (button(ui, x, 292, w, 30, "Options...", 1)) {
+    /* Original ReCraft wordmark: pixel geometry with an extruded dark edge. */
+    for(i=8;i>=0;--i) centered(RECRAFT_TITLE,320-i/2,54+i,58,col(20,20,20,255));
+    centered(RECRAFT_TITLE,320,51,58,col(192,190,187,255));
+    if (button(ui, 170, 198, 300, 30, "Singleplayer", 1)) ui_set_screen(ui, UI_SCREEN_WORLDS);
+    if (button(ui, 170, 234, 300, 30, "Multiplayer", 1)) ui_set_screen(ui, UI_SCREEN_MULTIPLAYER);
+    if (button(ui, 170, 320, 145, 30, "Options...", 1)) {
         ui->options_parent = UI_SCREEN_MAIN; ui_set_screen(ui, UI_SCREEN_OPTIONS);
     }
-    if (button(ui, x, 328, w, 30, "Quit Game", 1)) {
+    if (button(ui, 325, 320, 145, 30, "Quit Game", 1)) {
         ui->pending_confirm = 3; ui_set_screen(ui, UI_SCREEN_CONFIRM);
     }
-    footer();
+    {
+        Rectangle src={0,inside(133,320,30,30) ? 126 : 106,20,20};
+        Rectangle dst={(float)px(133),(float)py(320),(float)ps(30),(float)ps(30)}; Vector2 origin={0,0};
+        DrawTexturePro(globe,src,dst,origin,0,WHITE);
+        if(inside(133,320,30,30) && layout.clicked) { ui->click_sound=1; ui->language_parent=UI_SCREEN_MAIN; ui_set_screen(ui,UI_SCREEN_LANGUAGES); }
+    }
+    label(RECRAFT_TITLE " " RECRAFT_VERSION,8,411,10,WHITE);
+    label("Build " RECRAFT_BUILD_REVISION " / " RECRAFT_BUILD_DATE,8,426,8,col(220,220,220,255));
+    centered("Free fan parody. Original Minecraft assets belong to Mojang.",320,445,9,col(230,230,230,255));
+    centered("Not affiliated with Mojang or Microsoft.",320,459,8,col(205,205,205,255));
+    label("github.com/IlyaBOT/ReCraft",422,428,8,inside(417,424,215,17) ? YELLOW : WHITE);
+    if(inside(417,424,215,17) && layout.clicked) { ui->click_sound=1; action.type=UI_ACTION_OPEN_GITHUB; }
     return action;
 }
 
@@ -732,30 +746,122 @@ static UiAction server_form(Ui *ui, int direct)
     return action;
 }
 
+static void option_slider(Ui *ui,int id,int x,int y,int *value,int minimum,int maximum,const char *name,int percent)
+{
+    char caption[100]; int hot=inside(x,y,258,30),position;
+    if(hot && layout.clicked) { ui->slider_drag=id; ui->click_sound=1; }
+    if(!IsMouseButtonDown(MOUSE_LEFT_BUTTON)) ui->slider_drag=0;
+    if(ui->slider_drag==id) {
+        int v=minimum+(int)((layout.mouse_x-x-7)*(maximum-minimum)/244+.5f);
+        *value=v<minimum ? minimum : v>maximum ? maximum : v;
+    }
+    gui_button_draw(px(x),py(y),ps(258),ps(30),"",GUI_BUTTON_DISABLED);
+    position=(*value-minimum)*244/(maximum-minimum);
+    gui_button_draw(px(x+position+1),py(y+1),ps(12),ps(28),"",hot ? GUI_BUTTON_HOVERED : GUI_BUTTON_NORMAL);
+    snprintf(caption,sizeof(caption),"%s: %d%s",language_caption(name),*value,percent ? "%" : "");
+    centered(caption,x+129,y+9,12,WHITE);
+}
 static UiAction options_menu(Ui *ui)
 {
     UiAction action = empty_action();
     static const char *const difficulties[]={"Peaceful","Easy","Normal","Hard"};
-    char text[64];
+    char text[100];
     draw_background(1);
     title("Options");
-    if (button(ui, 175, 104, 290, 30, "Video Settings...", 1)) ui_set_screen(ui, UI_SCREEN_VIDEO);
-    snprintf(text,sizeof(text),"Music: %d%%",ui->options.music_volume);
-    if(button(ui,104,146,210,28,text,1)) ui->options.music_volume=ui->options.music_volume>=25 ? ui->options.music_volume-25 : 100;
-    snprintf(text,sizeof(text),"Sound: %d%%",ui->options.sound_volume);
-    if(button(ui,326,146,210,28,text,1)) ui->options.sound_volume=ui->options.sound_volume>=25 ? ui->options.sound_volume-25 : 100;
-    snprintf(text,sizeof(text),"Difficulty: %s",difficulties[ui->options.difficulty]);
-    if(button(ui,175,180,290,28,text,!ui->network_mode)) ui->options.difficulty=(ui->options.difficulty+1)%4;
-    label("WASD: move    Mouse: look    Space: jump", 129, 212, 11, col(219, 220, 211, 255));
-    label("Left mouse: break    Right mouse: place", 129, 235, 11, col(219, 220, 211, 255));
-    label("1-9 / mouse wheel: hotbar    F3: statistics", 129, 258, 11, col(219, 220, 211, 255));
-    label("F: free flight    Shift / Space: down / up", 129, 281, 11, col(219, 220, 211, 255));
-    label("Escape: pause / back    Tab: next text field", 129, 304, 11, col(219, 220, 211, 255));
-    label("Player Name (1-16 letters, digits or _)",175,329,11,col(219,220,211,255));
-    text_field(ui,1,175,348,290,28,ui->player_name_input,sizeof(ui->player_name_input),"Player");
+    option_slider(ui,1,55,74,&ui->options.music_volume,0,100,"Music",1);
+    option_slider(ui,2,327,74,&ui->options.sound_volume,0,100,"Sound",1);
+    snprintf(text,sizeof(text),"%s: %s",language_caption("Invert Mouse"),language_caption(ui->options.invert_mouse ? "ON" : "OFF"));
+    if(button(ui,55,116,258,30,text,1)) ui->options.invert_mouse=!ui->options.invert_mouse;
+    option_slider(ui,3,327,116,&ui->options.sensitivity,0,200,"Sensitivity",1);
+    option_slider(ui,4,55,158,&ui->options.fov,70,110,"FOV",0);
+    snprintf(text,sizeof(text),"%s: %s",language_caption("Difficulty"),language_caption(difficulties[ui->options.difficulty]));
+    if(button(ui,327,158,258,30,text,!ui->network_mode)) ui->options.difficulty=(ui->options.difficulty+1)%4;
+    centered("Player Name",320,202,11,col(219,220,211,255));
+    text_field(ui,1,175,222,290,30,ui->player_name_input,sizeof(ui->player_name_input),"Player");
     edit_text(ui,1,ui->player_name_input,sizeof(ui->player_name_input));
     if(settings_player_name_valid(ui->player_name_input)) copy_text(ui->options.player_name,sizeof(ui->options.player_name),ui->player_name_input);
-    if (button(ui, 220, 389, 200, 30, "Done", settings_player_name_valid(ui->player_name_input))) ui_set_screen(ui, ui->options_parent);
+    if(button(ui,55,274,258,30,"Video Settings...",1)) ui_set_screen(ui,UI_SCREEN_VIDEO);
+    if(button(ui,327,274,258,30,"Controls...",1)) ui_set_screen(ui,UI_SCREEN_CONTROLS);
+    if(button(ui,55,316,258,30,"Language...",1)) { ui->language_parent=UI_SCREEN_OPTIONS; ui_set_screen(ui,UI_SCREEN_LANGUAGES); }
+    if(button(ui,327,316,258,30,"Multiplayer Settings...",1)) ui_set_screen(ui,UI_SCREEN_MULTIPLAYER_OPTIONS);
+    if(button(ui,55,358,258,30,"Texture Packs",1)) ui_set_screen(ui,UI_SCREEN_PACKS);
+    if (button(ui, 170, 420, 300, 30, "Done", settings_player_name_valid(ui->player_name_input))) ui_set_screen(ui, ui->options_parent);
+    return action;
+}
+
+static void list_scrollbar(Ui *ui,int count,int visible,int row_height,int top,int *scroll,int *drag)
+{
+    int max=count-visible,track=visible*row_height,height,position;
+    (void)ui;
+    if(max<0) max=0;
+    if(inside(55,top,530,track)) *scroll-=GetMouseWheelMove()*3;
+    if(*scroll<0) *scroll=0;
+    if(*scroll>max) *scroll=max;
+    if(!max) { *drag=0; return; }
+    height=track*visible/count; if(height<24) height=24;
+    position=*scroll*(track-height)/max;
+    if(layout.clicked && inside(575,top,10,track)) *drag=1;
+    if(!IsMouseButtonDown(MOUSE_LEFT_BUTTON)) *drag=0;
+    if(*drag) {
+        *scroll=(int)((layout.mouse_y-top-height*.5f)*max/(track-height)+.5f);
+        if(*scroll<0) *scroll=0;
+        if(*scroll>max) *scroll=max;
+        position=*scroll*(track-height)/max;
+    }
+    rect(575,top,10,track,col(0,0,0,255)); rect(575,top+position,8,height,col(157,157,157,255)); rect(575,top+position,2,height,col(206,206,206,255));
+}
+static UiAction languages_menu(Ui *ui)
+{
+    UiAction action=empty_action(); int i,count=language_count();
+    draw_background(1); title("Language..."); rect(55,65,530,330,col(0,0,0,135));
+    list_scrollbar(ui,count,11,30,65,&ui->language_scroll,&ui->language_drag);
+    for(i=ui->language_scroll;i<count && i<ui->language_scroll+11;++i) {
+        const LanguageEntry *entry=language_at(i); int y=65+(i-ui->language_scroll)*30;
+        if(!strcmp(entry->code,ui->options.language)) { rect(145,y,350,29,col(0,0,0,180)); linebox(145,y,350,29,col(155,155,155,255)); }
+        centered(entry->name,320,y+9,12,inside(145,y,350,29) ? YELLOW : WHITE);
+        if(layout.clicked && inside(145,y,350,29) && language_select(entry->code)) {
+            copy_text(ui->options.language,sizeof(ui->options.language),entry->code); ui->click_sound=1;
+        }
+    }
+    centered(language_text("options.languageWarning","Language translations may not be 100% accurate"),320,404,10,col(160,160,160,255));
+    if(button(ui,220,432,200,30,"Done",1)) ui_set_screen(ui,ui->language_parent);
+    return action;
+}
+static UiAction packs_menu(Ui *ui)
+{
+    UiAction action=empty_action(); int i;
+    draw_background(1); title("Select Texture Pack"); rect(55,65,530,330,col(0,0,0,135));
+    list_scrollbar(ui,pack_count+1,6,55,65,&ui->pack_scroll,&ui->pack_drag);
+    for(i=ui->pack_scroll;i<=pack_count && i<ui->pack_scroll+6;++i) {
+        int y=65+(i-ui->pack_scroll)*55; const char *id=i ? pack_entries[i-1].id : "";
+        Texture2D icon=assets_pack_icon(id); Rectangle src={0,0,(float)icon.width,(float)icon.height};
+        Rectangle dst={(float)px(65),(float)py(y+3),(float)ps(48),(float)ps(48)}; Vector2 origin={0,0};
+        if(!strcmp(id,ui->options.texture_pack)) { rect(63,y,505,54,col(0,0,0,180)); linebox(63,y,505,54,col(150,150,150,255)); }
+        label_fit(i ? pack_entries[i-1].name : "Default",120,y+9,12,432,WHITE);
+        DrawTexturePro(icon,src,dst,origin,0,WHITE);
+        label_fit(i ? pack_entries[i-1].description : "The bundled look of ReCraft",120,y+27,10,432,col(150,150,150,255));
+        if(layout.clicked && inside(63,y,505,54)) { copy_text(ui->options.texture_pack,sizeof(ui->options.texture_pack),id); ui->click_sound=1; }
+    }
+    if(button(ui,55,417,230,30,"Open texture pack folder",1)) action.type=UI_ACTION_OPEN_PACK_FOLDER;
+    if(button(ui,295,417,90,30,"Refresh",1)) pack_count=resource_pack_list(pack_entries,128);
+    if(button(ui,395,417,190,30,"Done",1)) ui_set_screen(ui,UI_SCREEN_OPTIONS);
+    centered("texturepacks/ and resourcepacks/ - ZIP files or folders",320,459,9,col(170,170,170,255));
+    if(ui->status[0]) centered(ui->status,320,400,9,col(255,160,140,255));
+    return action;
+}
+static UiAction controls_menu(Ui *ui,int multiplayer)
+{
+    UiAction action=empty_action(); draw_background(1); title(multiplayer ? "Multiplayer Settings..." : "Controls");
+    if(multiplayer) {
+        if(button(ui,170,105,300,30,ui->options.chat_visible ? "Chat: Shown" : "Chat: Hidden",1)) ui->options.chat_visible=!ui->options.chat_visible;
+        centered("Player name is set in Options.",320,160,12,WHITE);
+    } else {
+        static const char *lines[]={"WASD: move    Mouse: look    Space: jump","Left mouse: break    Right mouse: use / place",
+            "1-9 / mouse wheel: hotbar    E: inventory","F: creative flight    Shift: down / dismount",
+            "Ctrl: sprint    T: chat    Tab: players","Escape: pause / back    F2: screenshot    F3: statistics"};
+        int i; for(i=0;i<6;++i) centered(lines[i],320,100+i*38,12,WHITE);
+    }
+    if(button(ui,220,420,200,30,"Done",1)) ui_set_screen(ui,UI_SCREEN_OPTIONS);
     return action;
 }
 
@@ -947,6 +1053,10 @@ UiAction ui_frame(Ui *ui, const UiWorldEntry *worlds, int world_count,
                 action.type = UI_ACTION_RESUME; ui_set_screen(ui, UI_SCREEN_GAME); return action;
             case UI_SCREEN_CONFIRM: ui_set_screen(ui, ui->previous_screen); break;
             case UI_SCREEN_VIDEO: ui_set_screen(ui, UI_SCREEN_OPTIONS); break;
+            case UI_SCREEN_LANGUAGES: ui_set_screen(ui,ui->language_parent); break;
+            case UI_SCREEN_PACKS:
+            case UI_SCREEN_CONTROLS:
+            case UI_SCREEN_MULTIPLAYER_OPTIONS: ui_set_screen(ui,UI_SCREEN_OPTIONS); break;
             case UI_SCREEN_OPTIONS: ui_set_screen(ui, ui->options_parent); break;
             case UI_SCREEN_CREATE_WORLD:
             case UI_SCREEN_WORLD_EDIT: ui_set_screen(ui, UI_SCREEN_WORLDS); break;
@@ -967,6 +1077,10 @@ UiAction ui_frame(Ui *ui, const UiWorldEntry *worlds, int world_count,
         case UI_SCREEN_DIRECT_CONNECT: return server_form(ui, 1);
         case UI_SCREEN_OPTIONS: return options_menu(ui);
         case UI_SCREEN_VIDEO: return video_menu(ui);
+        case UI_SCREEN_LANGUAGES: return languages_menu(ui);
+        case UI_SCREEN_PACKS: return packs_menu(ui);
+        case UI_SCREEN_CONTROLS: return controls_menu(ui,0);
+        case UI_SCREEN_MULTIPLAYER_OPTIONS: return controls_menu(ui,1);
         case UI_SCREEN_PAUSE: return pause_menu(ui);
         case UI_SCREEN_DEATH: return death_menu(ui);
         case UI_SCREEN_CONFIRM: return confirmation(ui, worlds, world_count, servers, server_count);

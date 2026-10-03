@@ -38,6 +38,7 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
         if(t->type==NBT_STRING && named(t,"id")) {
             if(t->value.bytes.size==5 && !memcmp(t->value.bytes.data,"Arrow",5)) r->current->transport.kind=1;
             if(t->value.bytes.size==8 && !memcmp(t->value.bytes.data,"Minecart",8)) r->current->transport.kind=2;
+            if(t->value.bytes.size==4 && !memcmp(t->value.bytes.data,"Boat",4)) r->current->transport.kind=3;
             r->current->mob.type=mob_type(t->value.bytes.data,t->value.bytes.size);
             if(!r->health_seen) r->current->mob.health=mob_default_health(r->current->mob.type);
         }
@@ -305,4 +306,54 @@ int world_items_visible(const World *w,ItemDrop *out,int count)
         for(e=w->cache[i]->saved_entities;e && n<count;e=e->next) if(e->item_entity && e->item.active) out[n++]=e->item;
     }
     return n;
+}
+
+/* Entity.applyEntityCollision pushes horizontally; living mobs are not walls.
+ * Store impulses separately so the next movement input cannot discard them. */
+void world_entities_collide(World *w,Player *p)
+{
+    size_t i,j;
+    if(w->network_mode || p->health<=0) return;
+    for(i=0;i<w->cache_count;++i) {
+        SavedEntity *e;
+        if(abs(w->cache[i]->x-(int)floorf(p->x/16))>2 || abs(w->cache[i]->z-(int)floorf(p->z/16))>2) continue;
+        for(e=w->cache[i]->saved_entities;e;e=e->next) {
+          if(e->transport.kind==3 && !e->transport.dead && !e->transport.ridden && !p->riding) {
+            float dx=p->x-e->mob.x,dz=p->z-e->mob.z,d=fmaxf(fabsf(dx),fabsf(dz));
+            if(p->y<e->mob.y+.3f && p->y+1.8f>e->mob.y-.3f && fabsf(dx)<1.25f && fabsf(dz)<1.25f && d>=.01f) {
+                float f=fminf(1,1/sqrtf(d))/sqrtf(d);
+                p->push_x+=dx*f; p->push_z+=dz*f;
+                e->mob.vx-=dx*f; e->mob.vz-=dz*f; world_transport_changed(w,e);
+            }
+          }
+          if(e->mob.type && e->mob.health>0) {
+            MobState *m=&e->mob;
+            float half=m->type==52 ? .7f : m->type==93 ? .15f : m->type>=90 ? .45f : .3f;
+            float height=m->type==93 ? .4f : m->type==52 || m->type==90 ? .9f : m->type>=90 ? 1.3f : 1.8f;
+            float dx=p->x-m->x,dz=p->z-m->z,d=fmaxf(fabsf(dx),fabsf(dz));
+            if(!p->riding && p->y<m->y+height && p->y+1.8f>m->y &&
+               fabsf(dx)<half+.5f && fabsf(dz)<half+.5f && d>=.01f) {
+                float f=fminf(1,1/sqrtf(d))/sqrtf(d);
+                p->push_x+=dx*f; p->push_z+=dz*f;
+                m->push_x-=dx*f; m->push_z-=dz*f;
+            }
+            for(j=i;j<w->cache_count;++j) {
+                SavedEntity *other;
+                if(abs(w->cache[j]->x-w->cache[i]->x)>1 || abs(w->cache[j]->z-w->cache[i]->z)>1) continue;
+                for(other=j==i ? e->next : w->cache[j]->saved_entities;other;other=other->next)
+                    if(((other->mob.type && other->mob.health>0) || (other->transport.kind==3 && !other->transport.dead)) && fabsf(m->y-other->mob.y)<.9f) {
+                        float ox=other->mob.x-m->x,oz=other->mob.z-m->z;
+                        float oh=other->transport.kind==3 ? .75f : other->mob.type==52 ? .7f : other->mob.type==93 ? .15f : other->mob.type>=90 ? .45f : .3f;
+                        float distance=fmaxf(fabsf(ox),fabsf(oz));
+                        if(fabsf(ox)<half+oh+.2f && fabsf(oz)<half+oh+.2f && distance>=.01f) {
+                            float f=fminf(1,1/sqrtf(distance))/sqrtf(distance);
+                            m->push_x-=ox*f; m->push_z-=oz*f;
+                            if(other->transport.kind==3) { other->mob.vx+=ox*f; other->mob.vz+=oz*f; world_transport_changed(w,other); }
+                            else { other->mob.push_x+=ox*f; other->mob.push_z+=oz*f; }
+                        }
+                    }
+            }
+        }
+        }
+    }
 }

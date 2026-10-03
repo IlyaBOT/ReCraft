@@ -25,3 +25,4 @@ options.txt
 *.app/
 *.log
 *.csv
+/docs/[Ss]creenshots/

@@ -63,7 +63,8 @@ typedef struct RemoteEntity {
     int32_t id;
     double x,y,z;
     float yaw,pitch;
-    uint8_t type;
+    uint16_t type;
+    uint8_t variant;
     char name[65];
 } RemoteEntity;
 struct NetworkClient {
@@ -388,7 +389,7 @@ static RemoteEntity *entity_find(NetworkClient *c,int32_t id,int create)
 }
 static void entity_event(NetworkClient *c,RemoteEntity *r,NetworkEventType type,const char *name)
 {
-    NetworkEvent e; memset(&e,0,sizeof(e)); e.type=type; e.entity_id=r->id; e.entity_type=r->type;
+    NetworkEvent e; memset(&e,0,sizeof(e)); e.type=type; e.entity_id=r->id; e.entity_type=r->type; e.entity_variant=r->variant;
     e.x=r->x; e.y=r->y; e.z=r->z; e.yaw=r->yaw; e.pitch=r->pitch; e.text=name; emit(c,&e);
 }
 static void inventory_slot(NetworkClient *c,const uint8_t *p,int window,int slot)
@@ -474,6 +475,12 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
         RemoteEntity *r=entity_find(c,beta14_i32(p+1),1); if(!r) break; text[0]=0;
         if(p[0]==0x14) { off=beta14_read_string(packet,5,text,sizeof(text)); r->type=0;snprintf(r->name,sizeof(r->name),"%.64s",text); }
         else { off=p[0]==0x15?10:6; r->type=p[0]==0x15?255:p[5]; }
+        r->variant=0;
+        if(p[0]==0x17) {
+            /* Object packet types are a separate Beta registry, not mob IDs. */
+            r->type=p[5]==1 ? 1002 : p[5]==60 ? 1000 : p[5]>=10 && p[5]<=12 ? 1001 : 255;
+            if(r->type==1001) r->variant=p[5]-10;
+        }
         r->x=beta14_i32(p+off)/32.0; r->y=beta14_i32(p+off+4)/32.0; r->z=beta14_i32(p+off+8)/32.0;
         if(p[0]==0x14 || p[0]==0x18) { r->yaw=p[off+12]*(360.0f/256.0f); r->pitch=p[off+13]*(360.0f/256.0f); }
         entity_event(c,r,NETWORK_EVENT_ENTITY_SPAWN,text); break; }

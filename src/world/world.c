@@ -842,7 +842,7 @@ int world_set_state(World *world,int wx,int y,int wz,BetaBlockState state)
     int32_t cx,cz;
     int x,z;
     Chunk *chunk;
-    uint8_t id=state.id;
+    uint8_t id=state.id,old;
     if ((unsigned)y>=WORLD_HEIGHT || id>=BLOCK_COUNT) return 0;
     x=local_from_world(wx,&cx);
     z=local_from_world(wz,&cz);
@@ -851,7 +851,7 @@ int world_set_state(World *world,int wx,int y,int wz,BetaBlockState state)
     if (world->beta_format && !chunk->beta_raw) return 0;
     if (chunk_get_block(chunk,x,y,z)==id) return world_set_metadata(world,wx,y,wz,state.metadata);
     {
-        uint8_t old=chunk_get_block(chunk,x,y,z);
+        old=chunk_get_block(chunk,x,y,z);
         if ((old==54 || old==61 || old==62 || old==63 || old==68 || old==84) &&
             !((old==61 || old==62) && (id==61 || id==62)))
             block_entity_remove(world,wx,y,wz,!world->network_mode);
@@ -864,7 +864,11 @@ int world_set_state(World *world,int wx,int y,int wz,BetaBlockState state)
     if (!world->physics_processing) flush_block_light(world);
     chunk->dirty_flags|=CHUNK_DIRTY_MESH|CHUNK_DIRTY_SAVE;
     mark_mesh_neighbors(world,cx,cz);
-    world_physics_notify(world,wx,y,wz);
+    /* Power providers notify through their adjoining solid block as well. */
+    if(id==55 || id==69 || id==75 || id==76 || id==77 || id==93 || id==94 || id==28 ||
+       old==55 || old==69 || old==75 || old==76 || old==77 || old==93 || old==94 || old==28)
+        world_redstone_notify(world,wx,y,wz);
+    else world_physics_notify(world,wx,y,wz);
     return 1;
 }
 
@@ -946,7 +950,13 @@ int world_set_metadata(World *world, int wx, int y, int wz, uint8_t value)
     chunk=world_get_chunk(world,cx,cz);
     if (!chunk) return 0;
     if (world->beta_format && !chunk->beta_raw) return 0;
+    if(chunk_get_metadata(chunk,x,y,z)==(value&15)) return 1;
     chunk_set_metadata(chunk,x,y,z,value);
+    {
+        unsigned id=chunk_get_block(chunk,x,y,z);
+        if(id==55 || id==69 || id==75 || id==76 || id==77 || id==93 || id==94 || id==28)
+            world_redstone_notify(world,wx,y,wz);
+    }
     return 1;
 }
 

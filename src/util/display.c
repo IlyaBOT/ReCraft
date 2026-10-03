@@ -15,6 +15,7 @@
 #endif
 
 #include <string.h>
+#include <stdio.h>
 
 int recraft_screen_width(void)
 {
@@ -41,6 +42,37 @@ void recraft_begin_2d(void)
     glOrtho(0,width,height,0,0,1);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
+}
+
+int recraft_display_check_resize(void)
+{
+    GLFWwindow *window=glfwGetCurrentContext();
+    GLuint probe; GLint binding; int original_width,original_height,i,ok=1;
+    static const int sizes[2][2]={{800,600},{1280,800}};
+    const unsigned char pixel[4]={64,128,192,255};
+    if(!window || !glfwGetWindowAttrib(window,GLFW_RESIZABLE)) return 0;
+    glfwGetWindowSize(window,&original_width,&original_height);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D,&binding); glGenTextures(1,&probe);
+    glBindTexture(GL_TEXTURE_2D,probe); glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,1,1,0,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
+    for(i=0;i<2;++i) {
+        double deadline=glfwGetTime()+1; int width=0,height=0;
+        glfwSetWindowSize(window,sizes[i][0],sizes[i][1]);
+        do { glfwPollEvents(); glfwGetWindowSize(window,&width,&height); }
+        while((width!=sizes[i][0] || height!=sizes[i][1]) && glfwGetTime()<deadline);
+        if(width!=sizes[i][0] || height!=sizes[i][1] || recraft_screen_width()<1 || recraft_screen_height()<1 || !glIsTexture(probe)) ok=0;
+    }
+#ifdef _WIN32
+    {
+        HWND hwnd=glfwGetWin32Window(window);
+        if(!(GetWindowLongPtr(hwnd,GWL_STYLE)&WS_MAXIMIZEBOX)) ok=0;
+        ShowWindow(hwnd,SW_MAXIMIZE); glfwPollEvents();
+        if(!IsZoomed(hwnd) || !glIsTexture(probe) || recraft_screen_width()<1) ok=0;
+        ShowWindow(hwnd,SW_RESTORE);
+    }
+#endif
+    glfwSetWindowSize(window,original_width,original_height); glfwPollEvents();
+    glDeleteTextures(1,&probe); glBindTexture(GL_TEXTURE_2D,(GLuint)binding);
+    fprintf(stderr,"Window resize/context check: %s\n",ok ? "passed" : "failed"); return ok;
 }
 
 void recraft_display_init(RecraftDisplay *display)

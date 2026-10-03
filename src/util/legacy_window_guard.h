@@ -12,7 +12,9 @@
 static GLFWwindow *recraft_glfw_create_window(int width,int height,const char *title,
                                              GLFWmonitor *monitor,GLFWwindow *share)
 {
-    GLFWwindow *window=glfwCreateWindow(width,height,title,monitor,share);
+    GLFWwindow *window;
+    glfwWindowHint(GLFW_RESIZABLE,1);
+    window=glfwCreateWindow(width,height,title,monitor,share);
     if (!window) {
         fprintf(stderr,"ReCraft: unable to create an OpenGL window.\n");
         glfwTerminate();

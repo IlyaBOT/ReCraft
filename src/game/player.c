@@ -1,4 +1,6 @@
 #include "player.h"
+#include "../world/door.h"
+#include "../world/entities.h"
 #include "../world/rail.h"
 #include "../world/block_entity.h"
 #include "../world/fluid.h"
@@ -6,11 +8,14 @@
 #include "sign.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define PLAYER_RADIUS 0.30f
 #define PLAYER_HEIGHT 1.80f
 #define PLAYER_EYE 1.62f
+float player_clamp_pitch(float pitch)
+{ return pitch>1.57079633f ? 1.57079633f : pitch< -1.57079633f ? -1.57079633f : pitch; }
 
 static int body_intersects_block(const Player *player, int bx, int by, int bz,
                                  const BetaBlockBox *box)
@@ -51,6 +56,18 @@ static int body_collides(const Player *player, World *world)
                     if (body_intersects_block(player, x, y, z, &box)) return 1;
                 }
             }
+    {
+        size_t i;
+        for(i=0;i<world->cache_count;++i) {
+            const SavedEntity *e;
+            if(abs(world->cache[i]->x-(int)floorf(player->x/16))>1 || abs(world->cache[i]->z-(int)floorf(player->z/16))>1) continue;
+            for(e=world->cache[i]->saved_entities;e;e=e->next)
+                if(e->transport.kind==3 && !e->transport.dead && !e->transport.ridden &&
+                   player->x+PLAYER_RADIUS>e->mob.x-.75f && player->x-PLAYER_RADIUS<e->mob.x+.75f &&
+                   player->y<e->mob.y+.3f && player->y+PLAYER_HEIGHT>e->mob.y-.3f &&
+                   player->z+PLAYER_RADIUS>e->mob.z-.75f && player->z-PLAYER_RADIUS<e->mob.z+.75f) return 1;
+        }
+    }
     return 0;
 }
 
@@ -199,9 +216,10 @@ void player_tick(Player *player, World *world, const PlayerInput *input, float d
     if(!world->network_mode && world->difficulty==0 && player->health>0 && player->health<20 && player->age%20==0) ++player->health;
     if(player->sleeping) { player_sleep_tick(player,world); return; }
     if(player->riding) {
-        player->yaw+=input->look_dx*.0025f; player->pitch-=input->look_dy*.0025f;
-        if(player->pitch>1.5f) player->pitch=1.5f;
-        if(player->pitch< -1.5f) player->pitch=-1.5f;
+        player->yaw+=input->look_dx*PLAYER_LOOK_SPEED; player->pitch-=input->look_dy*PLAYER_LOOK_SPEED;
+        player->pitch=player_clamp_pitch(player->pitch);
+        player->vx=(sinf(player->yaw)*input->forward+cosf(player->yaw)*input->strafe)*4.3f;
+        player->vz=(-cosf(player->yaw)*input->forward+sinf(player->yaw)*input->strafe)*4.3f;
         if(!world->network_mode) hazards(player,world,player->y);
         return;
     }
@@ -221,14 +239,15 @@ void player_tick(Player *player, World *world, const PlayerInput *input, float d
     }
     if (in_water && !player->flying) speed*=0.52f;
     if (length > 1.0f) { forward /= length; strafe /= length; }
-    player->yaw += input->look_dx * 0.0025f;
-    player->pitch -= input->look_dy * 0.0025f;
-    if (player->pitch > 1.48f) player->pitch = 1.48f;
-    if (player->pitch < -1.48f) player->pitch = -1.48f;
+    player->yaw += input->look_dx * PLAYER_LOOK_SPEED;
+    player->pitch -= input->look_dy * PLAYER_LOOK_SPEED;
+    player->pitch=player_clamp_pitch(player->pitch);
     sy = sinf(player->yaw);
     cy = cosf(player->yaw);
     player->vx = (sy * forward + cy * strafe) * speed;
     player->vz = (-cy * forward + sy * strafe) * speed;
+    player->vx+=player->push_x; player->vz+=player->push_z;
+    player->push_x*=.6f; player->push_z*=.6f;
     if (in_water && !player->flying) {
         float flow[3]; fluid_flow_vector(world,foot_x,foot_y,foot_z,flow);
         /* World.handleMaterialAcceleration adds a normalized current of .014
@@ -362,6 +381,12 @@ int player_use_item(Player *p,World *w,InventorySlot *item)
             if(beta_material_solid(old) || !world_set_block(w,hit.place_x,hit.place_y,hit.place_z,item->id==326 ? 8 : 10)) return 0;
             if(!p->creative) *item=(InventorySlot){325,1,0};
         }
+        return 1;
+    }
+    if(item->id==324 || item->id==330) {
+        BlockHit hit=player_raycast(p,w,5);
+        if(!hit.hit || hit.place_y!=hit.y+1 || !door_place(w,hit.x,hit.y+1,hit.z,item->id==324 ? 64 : 71,p->yaw)) return 0;
+        if(!p->creative && --item->count<=0) inventory_clear_slot(item);
         return 1;
     }
     if(item->id==355) {

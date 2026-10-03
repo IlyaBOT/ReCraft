@@ -1,5 +1,8 @@
 # Network protocol status
 
+Vehicle/object registry handling and its loopback regressions are described in
+[the gameplay and UI update](BETA_GAMEPLAY_UI.md).
+
 The current adapter speaks the **Minecraft Beta 1.7.3 protocol, version 14**, to
 offline-mode servers. It never sends account credentials. A server that returns an
 online-authentication challenge is rejected. Protocol 47 supports modern

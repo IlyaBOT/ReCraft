@@ -46,6 +46,7 @@ typedef struct Observed {
     int furnace_open,furnace_sync,furnace_slots,properties[3];
     int rejected,accepted,closed,dead,alive,respawn;
     int player_spawn,player_despawn,chat,sign;
+    int vehicle_spawn;
     int16_t chest_id[63],chest_damage[63];
     uint8_t chest_count[63];
 } Observed;
@@ -223,6 +224,13 @@ static int mock_session(TestSocket s)
     if(!recv_all(s,p,1) || p[0]!=0) return 0;
     if(!recv_all(s,p,3) || p[0]!=0x10 || beta14_u16(p+1)!=2) return 0;
     /* Named entity visibility is the only remote roster data Beta sends. */
+    { uint8_t spawn[22]={0x17}; int object; static const unsigned char types[]={1,10,11,12,60};
+      for(object=0;object<5;++object) {
+          put32(spawn+1,1001+object); spawn[5]=types[object]; put32(spawn+6,8*32); put32(spawn+10,65*32); put32(spawn+14,8*32);
+          if(!send_all(s,spawn,sizeof(spawn))) return 0;
+      }
+      if(!recv_all(s,p,10)||p[0]!=0x07||beta14_i32(p+5)!=1001||p[9]!=0)return 0;
+    }
     { uint8_t spawn[64],string[32],chat[256],sign[139];size_t n,at;Beta14Packet parsed;char decoded[64];
       n=beta14_handshake(string,sizeof(string),"Bob");spawn[0]=0x14;put32(spawn+1,456);
       memcpy(spawn+5,string+1,n-1);at=5+n-1;memset(spawn+at,0,16);put32(spawn+at,9*32);put32(spawn+at+4,65*32);put32(spawn+at+8,8*32);
@@ -316,6 +324,13 @@ static void observe(void *user,const NetworkEvent *e)
         assert(network_use_entity(o->client,456,1)&&network_send_animation(o->client,1));
         assert(network_send_player_action(o->client,1)&&network_send_player_action(o->client,2));
         assert(!network_use_entity(o->client,123,1)&&!network_use_entity(o->client,456,2));
+    }
+    if(e->type==NETWORK_EVENT_ENTITY_SPAWN && e->entity_type>=1000) {
+        int object=e->entity_id-1001; assert(object>=0 && object<5);
+        assert(e->entity_type==(object==0 ? 1002 : object==4 ? 1000 : 1001));
+        if(object>=1 && object<=3) assert(e->entity_variant==object-1);
+        if(!object) assert(network_use_entity(o->client,e->entity_id,0));
+        ++o->vehicle_spawn;
     }
     if(e->type==NETWORK_EVENT_ENTITY_DESPAWN) {
         /* Despawn callback is emitted before the entry is released. */
@@ -426,6 +441,7 @@ int main(void)
     assert(observed.furnace_slots==39 && observed.properties[0]==100 && observed.properties[1]==800 && observed.properties[2]==1600);
     assert(observed.closed==1 && observed.dead==1 && observed.respawn==1 && observed.alive==1);
     assert(observed.player_spawn==1&&observed.player_despawn==1&&observed.chat==1&&observed.sign==1);
+    assert(observed.vehicle_spawn==5);
     {NetworkPlayerInfo players[2];assert(network_player_list(client,players,2)==1&&players[0].self);}
     /* Let the nonblocking client flush the final respawn acknowledgement. */
     for(i=0;i<50;++i) { network_tick(client); pause_ms(1); }

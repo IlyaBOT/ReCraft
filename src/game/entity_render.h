@@ -13,7 +13,7 @@ typedef struct RenderEntity {
     int local_interpolation;
     float previous_x,previous_y,previous_z,phase;
 } RenderEntity;
-/* Pick the nearest supported living entity; block_distance occludes targets.
+/* Pick the nearest supported living entity or vehicle; block_distance occludes targets.
  * Returns an entity id, or -1. Camera yaw/pitch follow local Player radians. */
 int entity_pick(const RenderEntity *entities,int count,const RendererCamera *camera,
                 float reach,float block_distance);

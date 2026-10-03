@@ -8,11 +8,34 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <direct.h>
+#include <shellapi.h>
 #else
 #include <limits.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #endif
+
+int game_open_external(const char *path_or_url)
+{
+    if(!path_or_url || !*path_or_url) return 0;
+#ifdef _WIN32
+    return (INT_PTR)ShellExecuteA(NULL,"open",path_or_url,NULL,NULL,SW_SHOWNORMAL)>32;
+#else
+    pid_t child=fork(); int result;
+    if(child<0) return 0;
+    if(!child) {
+#ifdef __APPLE__
+        execl("/usr/bin/open","open",path_or_url,(char *)NULL);
+#else
+        execlp("xdg-open","xdg-open",path_or_url,(char *)NULL);
+#endif
+        _exit(127);
+    }
+    if(waitpid(child,&result,0)<0) return 0;
+    return WIFEXITED(result) && WEXITSTATUS(result)==0;
+#endif
+}
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif

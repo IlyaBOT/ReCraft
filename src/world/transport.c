@@ -32,6 +32,17 @@ static SavedEntity *spawn(World *w,float x,float y,float z,int kind)
     e->transport.previous_x=x; e->transport.previous_y=y; e->transport.previous_z=z;
     e->last_tick=w->tick; e->next=c->saved_entities; c->saved_entities=e; dirty(c); return e;
 }
+int world_boat_use(World *w,Player *p,InventorySlot *held)
+{
+    BlockHit hit; SavedEntity *e;
+    if(held->id!=333 || held->count<=0 || w->network_mode) return 0;
+    hit=player_raycast_sources(p,w,5);
+    if(!hit.hit) return 0;
+    e=spawn(w,hit.x+.5f,hit.y+(hit.block==78 ? .3f : 1.3f),hit.z+.5f,3);
+    if(!e) return 0;
+    if(!p->creative && --held->count==0) inventory_clear_slot(held);
+    return 1;
+}
 static float random_float(World *w) { return (float)world_random(w,16777216)/16777216; }
 static float gaussian(World *w)
 {
@@ -79,6 +90,11 @@ static void cart_hit(World *w,SavedEntity *e,Player *p,int amount,int creative)
     s->damage+=10*amount; s->hit_ticks=10;
     if(!creative && s->damage<=40) return;
     if(s->ridden) world_minecart_dismount(w,p);
+    if(s->kind==3) {
+        world_drop_stack(w,x,y,z,(InventorySlot){5,3,0});
+        world_drop_stack(w,x,y,z,(InventorySlot){280,2,0});
+        s->dead=1; world_transport_changed(w,e); return;
+    }
     world_drop_stack(w,x,y,z,(InventorySlot){328,1,0});
     if(s->type) world_drop_stack(w,x,y,z,(InventorySlot){s->type==1 ? 54 : 61,1,0});
     for(n=0;n<27;++n) if(s->cargo[n].count>0) world_drop_stack(w,x,y,z,s->cargo[n]);
@@ -124,7 +140,7 @@ static void arrow_tick(World *w,SavedEntity *e,Player *player,InventorySlot *inv
            w->cache[i]->z<(int)floorf(fminf(p[2],p[2]+v[2])/16)-1 ||
            w->cache[i]->z>(int)floorf(fmaxf(p[2],p[2]+v[2])/16)+1) continue;
         for(other=w->cache[i]->saved_entities;other;other=other->next) if(other!=e &&
-            ((other->mob.type && other->mob.health>0) || (other->transport.kind==2 && !other->transport.dead))) {
+            ((other->mob.type && other->mob.health>0) || (other->transport.kind>=2 && !other->transport.dead))) {
             MobState *mob=&other->mob; float half=mob->type==52 ? .7f : mob->type==93 ? .15f : mob->type>=90 ? .45f : .3f;
             float height=mob->type==93 ? .4f : mob->type==52 ? .9f : mob->type>=90 ? 1.3f : 1.8f;
             float lo[3]={mob->x-half-.3f,mob->y-.3f,mob->z-half-.3f};
@@ -146,7 +162,7 @@ static void arrow_tick(World *w,SavedEntity *e,Player *player,InventorySlot *inv
         m->vx*= -.1f; m->vy*= -.1f; m->vz*= -.1f; s->air_ticks=0; return;
     }
     if(victim) {
-        if(victim->transport.kind==2) { cart_hit(w,victim,player,4,0); s->dead=1; return; }
+        if(victim->transport.kind>=2) { cart_hit(w,victim,player,4,0); s->dead=1; return; }
         if(world_mob_hit(w,victim,4)) { s->dead=1; world_sound(w,"random.drr",m->x,m->y,m->z,1,1.2f/(random_float(w)*.2f+.9f)); return; }
         m->vx*= -.1f; m->vy*= -.1f; m->vz*= -.1f; s->air_ticks=0; return;
     }
@@ -173,7 +189,7 @@ void world_minecart_dismount(World *w,Player *p)
 {
     size_t i;
     for(i=0;i<w->cache_count;++i) { SavedEntity *e;
-        for(e=w->cache[i]->saved_entities;e;e=e->next) if(e->transport.kind==2 && e->transport.ridden) {
+        for(e=w->cache[i]->saved_entities;e;e=e->next) if(e->transport.kind>=2 && e->transport.ridden) {
             e->transport.ridden=0; p->x=e->mob.x; p->y=e->mob.y+.7f; p->z=e->mob.z;
             p->vx=p->vy=p->vz=0; p->riding=0;
         }
@@ -186,8 +202,9 @@ int world_transport_interact(World *w,Player *p,InventorySlot *held,int attack)
     BlockHit wall=player_raycast(p,w,3); if(wall.hit) time=wall.distance/3;
     for(i=0;i<w->cache_count;++i) { SavedEntity *e;
         if(abs(w->cache[i]->x-(int)floorf(p->x/16))>1 || abs(w->cache[i]->z-(int)floorf(p->z/16))>1) continue;
-        for(e=w->cache[i]->saved_entities;e;e=e->next) if(e->transport.kind==2 && !e->transport.dead) {
-            float lo[3]={e->mob.x-.59f,e->mob.y-.45f,e->mob.z-.59f},hi[3]={e->mob.x+.59f,e->mob.y+.45f,e->mob.z+.59f},t=time;
+        for(e=w->cache[i]->saved_entities;e;e=e->next) if(e->transport.kind>=2 && !e->transport.dead) {
+            float half=e->transport.kind==3 ? .85f : .59f;
+            float lo[3]={e->mob.x-half,e->mob.y-.45f,e->mob.z-half},hi[3]={e->mob.x+half,e->mob.y+.45f,e->mob.z+half},t=time;
             if(intercept(from,v,lo,hi,&t)) { best=e; time=t; }
         }
     }
@@ -207,23 +224,25 @@ int world_transport_interact(World *w,Player *p,InventorySlot *held,int attack)
     }
     dirty(owner(w,best->mob.x,best->mob.z)); return 1;
 }
-static int cart_blocked(const World *w,float x,float y,float z)
+static int vehicle_blocked(const World *w,float x,float y,float z,float half,float height)
 {
     int a,b,c;
-    for(a=(int)floorf(x-.49f);a<=(int)floorf(x+.49f);++a)
-    for(b=(int)floorf(y-.35f+.001f);b<=(int)floorf(y+.35f-.001f);++b)
-    for(c=(int)floorf(z-.49f);c<=(int)floorf(z+.49f);++c) {
+    for(a=(int)floorf(x-half);a<=(int)floorf(x+half);++a)
+    for(b=(int)floorf(y-height+.001f);b<=(int)floorf(y+height-.001f);++b)
+    for(c=(int)floorf(z-half);c<=(int)floorf(z+half);++c) {
         Chunk *chunk=owner(w,(float)a,(float)c); unsigned id; BetaBlockBox box={0,0,0,1,1,1};
         if(!chunk || (w->beta_format && !chunk->beta_raw)) return 1;
         id=world_peek_block(w,a,b,c);
         if(!world_block_def((uint8_t)id)->solid) continue;
         beta_block_selection_box((BetaBlockState){(uint8_t)id,world_peek_metadata(w,a,b,c)},&box);
-        if(x+.49f>a+box.min_x && x-.49f<a+box.max_x && y+.35f>b+box.min_y &&
-           y-.35f+.001f<b+box.max_y && z+.49f>c+box.min_z && z-.49f<c+box.max_z) return 1;
+        if(x+half>a+box.min_x && x-half<a+box.max_x && y+height>b+box.min_y &&
+           y-height+.001f<b+box.max_y && z+half>c+box.min_z && z-half<c+box.max_z) return 1;
     }
     return 0;
 }
-static int cart_move_axis(const World *w,MobState *m,int axis,float delta)
+static int cart_blocked(const World *w,float x,float y,float z)
+{ return vehicle_blocked(w,x,y,z,.49f,.35f); }
+static int vehicle_move_axis(const World *w,MobState *m,int axis,float delta,float half,float height)
 {
     int n,steps; float start=axis==0 ? m->x : axis==1 ? m->y : m->z;
     delta=fmaxf(-16,fminf(16,delta)); steps=(int)ceilf(fabsf(delta)/.125f);
@@ -231,13 +250,13 @@ static int cart_move_axis(const World *w,MobState *m,int axis,float delta)
     for(n=1;n<=steps;++n) {
         float target=start+delta*n/steps,x=m->x,y=m->y,z=m->z;
         if(axis==0) x=target; else if(axis==1) y=target; else z=target;
-        if(cart_blocked(w,x,y,z)) {
+        if(vehicle_blocked(w,x,y,z,half,height)) {
             int k; float lo=0,hi=1,previous=axis==0 ? m->x : axis==1 ? m->y : m->z;
             for(k=0;k<8;++k) {
                 float mid=(lo+hi)*.5f,pos=previous+(target-previous)*mid;
                 x=m->x; y=m->y; z=m->z;
                 if(axis==0) x=pos; else if(axis==1) y=pos; else z=pos;
-                if(cart_blocked(w,x,y,z)) hi=mid; else lo=mid;
+                if(vehicle_blocked(w,x,y,z,half,height)) hi=mid; else lo=mid;
             }
             target=previous+(target-previous)*lo;
             if(axis==0) m->x=target; else if(axis==1) m->y=target; else m->z=target;
@@ -247,6 +266,8 @@ static int cart_move_axis(const World *w,MobState *m,int axis,float delta)
     }
     return 1;
 }
+static int cart_move_axis(const World *w,MobState *m,int axis,float delta)
+{ return vehicle_move_axis(w,m,axis,delta,.49f,.35f); }
 static void cart_collisions(World *w,SavedEntity *e,Player *p)
 {
     size_t i; MobState *m=&e->mob;
@@ -267,14 +288,14 @@ static void cart_collisions(World *w,SavedEntity *e,Player *p)
                     m->vx=m->vx*.2f+vx-nx; m->vz=m->vz*.2f+vz-nz;
                     o->vx=o->vx*.2f+vx+nx; o->vz=o->vz*.2f+vz+nz;
                 }
-            } else { m->vx-=nx; m->vz-=nz; o->vx+=nx*.25f; o->vz+=nz*.25f; }
+            } else { m->vx-=nx; m->vz-=nz; o->push_x+=nx*.25f; o->push_z+=nz*.25f; }
             world_transport_changed(w,other);
         }
     }
     if(!e->transport.ridden && fabsf(p->y-m->y)<1.2f) {
         float dx=p->x-m->x,dz=p->z-m->z,dist=sqrtf(dx*dx+dz*dz);
         if(dist>.01f && dist<.99f) { float nx=dx/dist*fminf(1,1/dist),nz=dz/dist*fminf(1,1/dist);
-            m->vx-=nx; m->vz-=nz; p->vx+=nx*.25f; p->vz+=nz*.25f; }
+            m->vx-=nx; m->vz-=nz; p->push_x+=nx*.25f; p->push_z+=nz*.25f; }
     }
 }
 static void cart_tick(World *w,SavedEntity *e,Player *p)
@@ -355,6 +376,66 @@ static void cart_tick(World *w,SavedEntity *e,Player *p)
     if(s->ridden) { p->x=m->x; p->y=m->y-.3f; p->z=m->z; p->vx=p->vy=p->vz=0; }
     if(m->y< -64) { if(s->ridden) world_minecart_dismount(w,p); s->dead=1; }
 }
+static void boat_tick(World *w,SavedEntity *e,Player *p)
+{
+    MobState *m=&e->mob; TransportState *s=&e->transport;
+    float submerged=0,speed,turn; int slice,x,y,z,hit=0;
+    size_t i;
+    if(s->hit_ticks>0) --s->hit_ticks;
+    if(s->damage>0) --s->damage;
+    /* EntityBoat samples five slices of its 1.5 x .6 bounding box. */
+    for(slice=0;slice<5;++slice) {
+        int water=0;
+        float low=m->y-.3f+slice*.12f-.125f,high=low+.12f;
+        for(x=(int)floorf(m->x-.75f);x<=(int)floorf(m->x+.75f);++x)
+        for(y=(int)floorf(low);y<=(int)floorf(high);++y)
+        for(z=(int)floorf(m->z-.75f);z<=(int)floorf(m->z+.75f);++z)
+            if(fluid_kind(world_peek_block(w,x,y,z))==1) {
+                unsigned level=world_peek_metadata(w,x,y,z);
+                float surface=y+1-(float)((level>=8 ? 0 : level)+1)/9;
+                if(high>y && low<surface) water=1;
+            }
+        if(water) submerged+=.2f;
+    }
+    if(submerged<.999f) m->vy+=.8f*(submerged*2-1);
+    else { if(m->vy<0) m->vy*=.5f; m->vy+=.14f; }
+    if(s->ridden) { m->vx+=p->vx*.2f; m->vz+=p->vz*.2f; }
+    m->vx=fmaxf(-8,fminf(8,m->vx)); m->vz=fmaxf(-8,fminf(8,m->vz));
+    if(m->on_ground) { m->vx*=.5f; m->vy*=.5f; m->vz*=.5f; }
+    speed=sqrtf(m->vx*m->vx+m->vz*m->vz);
+    m->on_ground=0;
+    if(!vehicle_move_axis(w,m,1,m->vy*.05f,.75f,.3f)) { if(m->vy<0) m->on_ground=1; m->vy=0; }
+    if(!vehicle_move_axis(w,m,0,m->vx*.05f,.75f,.3f)) { m->vx=0; hit=1; }
+    if(!vehicle_move_axis(w,m,2,m->vz*.05f,.75f,.3f)) { m->vz=0; hit=1; }
+    if(hit && speed>3) { cart_hit(w,e,p,5,0); return; }
+    m->vx*=.99f; m->vy*=.95f; m->vz*=.99f;
+    if((s->previous_x-m->x)*(s->previous_x-m->x)+(s->previous_z-m->z)*(s->previous_z-m->z)>.001f) {
+        turn=atan2f(s->previous_z-m->z,s->previous_x-m->x)*57.2957795f-m->yaw;
+        while(turn>=180) turn-=360;
+        while(turn< -180) turn+=360;
+        m->yaw+=fmaxf(-20,fminf(20,turn));
+    }
+    m->pitch=0;
+    for(i=0;i<w->cache_count;++i) {
+        SavedEntity *other;
+        if(abs(w->cache[i]->x-(int)floorf(m->x/16))>1 || abs(w->cache[i]->z-(int)floorf(m->z/16))>1) continue;
+        for(other=w->cache[i]->saved_entities;other;other=other->next)
+            if(other!=e && other->transport.kind==3 && !other->transport.dead && fabsf(m->y-other->mob.y)<.6f) {
+                float dx=other->mob.x-m->x,dz=other->mob.z-m->z,d=fmaxf(fabsf(dx),fabsf(dz));
+                if(fabsf(dx)<1.7f && fabsf(dz)<1.7f && d>=.01f) {
+                    float f=fminf(1,1/sqrtf(d))/sqrtf(d);
+                    m->vx-=dx*f; m->vz-=dz*f; other->mob.vx+=dx*f; other->mob.vz+=dz*f;
+                    world_transport_changed(w,other);
+                }
+            }
+    }
+    if(s->ridden) {
+        float a=m->yaw*.01745329252f;
+        p->x=m->x+cosf(a)*.4f; p->y=m->y-.3f; p->z=m->z+sinf(a)*.4f;
+        p->vx=p->vy=p->vz=0;
+    }
+    if(m->y< -64) { if(s->ridden) world_minecart_dismount(w,p); s->dead=1; }
+}
 void world_transport_tick(World *w,Player *p,InventorySlot *inventory)
 {
     size_t i;
@@ -366,7 +447,8 @@ void world_transport_tick(World *w,Player *p,InventorySlot *inventory)
             if(!e->transport.kind || e->last_tick==w->tick) { link=&e->next; continue; }
             e->last_tick=w->tick;
             e->transport.previous_x=e->mob.x; e->transport.previous_y=e->mob.y; e->transport.previous_z=e->mob.z;
-            if(e->transport.kind==1) arrow_tick(w,e,p,inventory); else cart_tick(w,e,p);
+            if(e->transport.kind==1) arrow_tick(w,e,p,inventory);
+            else if(e->transport.kind==3) boat_tick(w,e,p); else cart_tick(w,e,p);
             dirty(c);
             if(e->transport.dead) { *link=e->next; free(e->raw); free(e); continue; }
             target=owner(w,e->mob.x,e->mob.z);
@@ -384,7 +466,7 @@ int world_transport_visible(World *w,RenderEntity *out,int capacity)
         for(e=w->cache[i]->saved_entities;e && n<capacity;e=e->next) if(e->transport.kind && !e->transport.dead) {
             RenderEntity *r=&out[n++]; if(!e->mob.runtime_id) e->mob.runtime_id=++w->next_entity_id;
             if(r->id!=e->mob.runtime_id) memset(r,0,sizeof(*r));
-            r->active=1; r->id=e->mob.runtime_id; r->type=e->transport.kind==1 ? 1000 : 1001;
+            r->active=1; r->id=e->mob.runtime_id; r->type=999+e->transport.kind;
             r->x=e->mob.x; r->y=e->mob.y; r->z=e->mob.z;
             r->yaw=e->mob.yaw; r->pitch=e->transport.kind==1 ? e->mob.pitch : e->transport.slope_pitch; r->color=e->transport.type;
             r->local_interpolation=1; r->phase=0;
@@ -414,7 +496,7 @@ static int list(NbtWriter *w,const char *name,NbtType type,double x,double y,dou
 static int fields(NbtWriter *w,const SavedEntity *e)
 {
     NbtTag t={0}; const MobState *m=&e->mob; const TransportState *s=&e->transport; int n;
-    t.type=NBT_STRING; t.name=nbt_span("id"); t.value.bytes=nbt_span(s->kind==1 ? "Arrow" : "Minecart");
+    t.type=NBT_STRING; t.name=nbt_span("id"); t.value.bytes=nbt_span(s->kind==1 ? "Arrow" : s->kind==3 ? "Boat" : "Minecart");
     if(nbt_writer_tag(w,&t)!=NBT_OK || !list(w,"Pos",NBT_DOUBLE,m->x,m->y,m->z,3) ||
        !list(w,"Motion",NBT_DOUBLE,m->vx/20,m->vy/20,m->vz/20,3) ||
        !list(w,"Rotation",NBT_FLOAT,s->kind==1 ? 180-m->yaw : m->yaw,m->pitch,0,2) ||
@@ -423,6 +505,7 @@ static int fields(NbtWriter *w,const SavedEntity *e)
     if(s->kind==1) return number(w,NBT_SHORT,"xTile",s->x_tile) && number(w,NBT_SHORT,"yTile",s->y_tile) &&
         number(w,NBT_SHORT,"zTile",s->z_tile) && number(w,NBT_BYTE,"inTile",s->in_tile) && number(w,NBT_BYTE,"inData",s->in_data) &&
         number(w,NBT_BYTE,"shake",s->shake) && number(w,NBT_BYTE,"inGround",s->in_ground) && number(w,NBT_BYTE,"player",s->player);
+    if(s->kind==3) return 1; /* Beta Boat adds no fields to Entity NBT. */
     if(!number(w,NBT_INT,"Type",s->type)) return 0;
     if(s->type==2 && (!number(w,NBT_DOUBLE,"PushX",s->push_x) || !number(w,NBT_DOUBLE,"PushZ",s->push_z) || !number(w,NBT_SHORT,"Fuel",s->fuel))) return 0;
     if(s->type!=1) return 1;

@@ -240,8 +240,9 @@ void world_mobs_tick(World *w,Player *p)
                 if(roof<=m->y+1 && world_random(w,30)==0) m->fire=300;
             }
             if(m->fire>0) { if(m->fire%20==0) damage(w,c,m,1); --m->fire; }
-            if(move_axis(w,m,0,m->vx*.05f) && m->on_ground) m->vy=8.4f;
-            if(move_axis(w,m,2,m->vz*.05f) && m->on_ground) m->vy=8.4f;
+            if(move_axis(w,m,0,(m->vx+m->push_x)*.05f) && m->on_ground) m->vy=8.4f;
+            if(move_axis(w,m,2,(m->vz+m->push_z)*.05f) && m->on_ground) m->vy=8.4f;
+            m->push_x*=.6f; m->push_z*=.6f;
             m->vy=(m->vy-1.6f)*.98f; m->on_ground=0;
             if(m->type==93 && m->vy<0) m->vy*=.6f;
             {
