@@ -112,6 +112,14 @@ Windows resize/maximize/context check проходит; проверка resize 
 После повторной сборки проверены SHA-256 всех 102 файлов `build/saves`:
 нет изменений, удаления или новых файлов в этих save directories.
 
+[CI source commit 66b199c, run 37125403158](https://github.com/IlyaBOT/ReCraft/actions/runs/37125403158)
+полностью прошёл: Windows 22/22, Linux 21/21, macOS Vesper 21/21; все три
+артефакта упакованы и загружены. Windows smoke проверил 800x600, 928x672,
+разворачивание до framebuffer 1024x705 и сохранность GL-текстуры. На macOS
+проверен настоящий UI через CGL offscreen drawable. Дополнительные три
+локальные проверки требуют пользовательских read-only save fixtures,
+отсутствующих в CI. Это не проверка Snow Leopard или Retina input.
+
 Остаются: полная локализация ReCraft-specific/gameplay текстов, Unicode вне
 BMP, bidi/shaping, анимированные полосы пака, modern models/blockstates и
 sound-pack JSON; ZIP64/encrypted ZIP не поддерживаются. Для лодок ещё нужны
