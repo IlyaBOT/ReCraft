@@ -126,6 +126,8 @@ jobs:
       - name: Diagnose renderer startup failure
         if: failure()
         run: |
+          clang -x objective-c tools/macos_gl_probe.m -framework Cocoa -framework OpenGL -o build/macos-gl-probe
+          build/macos-gl-probe
           build/ci/renderer_test > build/renderer-startup.log 2>&1 &
           probe_pid=$!
           trap 'kill "$probe_pid" 2>/dev/null || true' EXIT
