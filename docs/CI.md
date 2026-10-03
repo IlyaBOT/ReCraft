@@ -15,21 +15,24 @@ GitHub Actions builds trusted pushes to `main`, `v*` tags and manual runs:
 
 Pull requests build on Windows/Linux. Vesper runs trusted pushes/manual runs
 only. Checkout there uses `clean: false`; rebuilding does not clean persistent
-runtime worlds. The runner must be online, with Xcode command line tools and a
-logged-in graphical session for the window/renderer smoke checks. If CMake is
+runtime worlds. The runner must be online, with Xcode command line tools. If CMake is
 missing the workflow installs it using the runner's existing Homebrew.
-`tools/run_macos_gui.sh` launches CTest and the menu check through
-`launchctl asuser` in that account's `gui/UID` bootstrap session. It fails with
-an explicit setup message if no such session exists; it does not skip tests.
-Running the runner from a system/background session can otherwise make
-WindowServer reject the OpenGL drawable (`CGSNewWindow failed with 1000`).
+macOS renderer tests use a native legacy CGL context and Apple's software
+renderer, so every GL/pixel assertion runs without a desktop login. The test
+also renders the actual `ui_frame` menu using game textures and the bitmap font.
+`GL_EXT_framebuffer_object` supplies the test's offscreen color/depth surface;
+it is not a runtime renderer requirement and adds no game effects or shaders.
+If the runner user has an Aqua session, `tools/run_macos_gui.sh` runs the client
+window smoke through `launchctl asuser`. Otherwise the menu capture uses the
+same UI in the CGL test drawable. This checks offscreen rendering rather than
+pretending to test a visible window. No CTest is disabled or skipped.
 
 The workflow fetches raylib 1.4.0 and GLFW 3.1.2 at verified commits, builds
 Release, runs CTest with assertions enabled, checks `--version`, renders the
 main menu and uploads a runtime package. Action revisions are pinned too.
 Packaging copies the executable and assets selected by
-[`assets/runtime_assets.txt`](../assets/runtime_assets.txt): 28 PNG textures,
-93 sound effects/variants and 12 music tracks (133 assets). The images include
+[`assets/runtime_assets.txt`](../assets/runtime_assets.txt): 30 PNG textures,
+94 sound effects/variants, 12 music tracks and two Beta records (138 assets). The images include
 the preferred Coterie sign texture, the original Beta sign fallback and the
 original unknown-server icon. It also includes VERSION, README
 and dependency/asset notices. Windows includes transitive non-system DLLs.
@@ -59,8 +62,8 @@ headless Mac may report both its GPU and software renderer as offline even
 though usable contexts exist. It first requests an accelerated pixel format. If that fails for
 a legacy OpenGL 1.x/2.x context, it retries without the acceleration requirement,
 allowing Apple's system software renderer. Modern core requests are not relaxed.
-This applies to both the client and renderer test; context errors and the actual
-GL vendor/renderer/version are printed in the renderer test log. Tests still
+This applies to the GLFW client backend; the renderer test uses its own CGL
+drawable. Context errors and actual GL vendor/renderer/version are printed. Tests still
 fail if no usable context exists.
 The music EOF test stops/drains/refills the OpenAL queue deterministically;
 Apple OpenAL ignores the OpenAL Soft null-driver environment and CI output
@@ -78,7 +81,9 @@ the renderer could not create its pixel format. Diagnostic run 37113861381
 confirmed GLFW error 0x10009, `NSGL: Failed to find a suitable pixel format`.
 Native probe run 37114246885 found two renderers, both marked `online=0`.
 Default pixel formats failed; allowing offline renderers created a usable
-context. The offline attribute above addresses that context-selection failure.
+context. An NSWindow drawable still failed (`CGSNewWindow failed with 1000`):
+run 37114775471 confirmed no `gui/501` session and console account `root`.
+The native CGL test drawable removes that WindowServer requirement from CTest.
 The macOS renderer test also checks the actual CGL vertex-processing result.
 CTest on Vesper has a 60-second per-test timeout and captures a bounded stack
 sample after a startup failure. The dependency
