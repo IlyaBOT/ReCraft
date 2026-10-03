@@ -68,14 +68,9 @@ fail if no usable context exists.
 The music EOF test stops/drains/refills the OpenAL queue deterministically;
 Apple OpenAL ignores the OpenAL Soft null-driver environment and CI output
 devices need not advance at wall-clock speed. No tests are disabled by this fix.
-Run 37073222917 passed Windows/Linux and built macOS, but Vesper lost communication
-with GitHub during CTest. macOS test completion remains unverified; this failure
-has no published job log and requires restoring the runner's connection.
-Run 37079001771 passed Windows (21/21) and Linux (20/20), while Vesper again lost
-communication, this time during the build before CTest. No job log was uploaded.
-This leaves the native macOS fix unverified; restoring runner connectivity is
-required before further test diagnosis. Local-only world tests use private save
-fixtures, so their count is higher than CI's.
+Earlier runs 37073222917 and 37079001771 lost runner communication before native
+test verification. Local-only world tests use private save fixtures, so their
+count is higher than CI's.
 The runner subsequently completed run 37080121986: both audio tests passed, but
 the renderer could not create its pixel format. Diagnostic run 37113861381
 confirmed GLFW error 0x10009, `NSGL: Failed to find a suitable pixel format`.
@@ -84,6 +79,10 @@ Default pixel formats failed; allowing offline renderers created a usable
 context. An NSWindow drawable still failed (`CGSNewWindow failed with 1000`):
 run 37114775471 confirmed no `gui/501` session and console account `root`.
 The native CGL test drawable removes that WindowServer requirement from CTest.
+Verification on 3 October 2026: [run 37115852726](https://github.com/IlyaBOT/ReCraft/actions/runs/37115852726)
+passed all 20 macOS CTests on Vesper, the version check and offscreen menu render,
+then packaged and uploaded the macOS client. The native renderer was Apple
+Software Renderer, OpenGL 2.1; this is not a hardware/window smoke verification.
 The macOS renderer test also checks the actual CGL vertex-processing result.
 CTest on Vesper has a 60-second per-test timeout and captures a bounded stack
 sample after a startup failure. The dependency

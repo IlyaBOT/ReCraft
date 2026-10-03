@@ -179,7 +179,13 @@ Vesper: старый unbounded NSApplication run заменён finishLaunching;
 управляет queue без wall-clock sleep. Run **37073222917** собрал macOS клиент,
 затем runner **lost communication** во время CTest, logs не опубликованы.
 Повторный run **37079001771** также потерял связь с Vesper, уже во время сборки;
-до CTest он не дошёл, job log недоступен. Успешное завершение macOS пока не подтверждено.
+до CTest он не дошёл, job log недоступен.
+Последующая диагностика обнаружила отсутствие GUI-сессии у runner. Renderer test
+теперь использует нативный CGL software context и offscreen framebuffer только
+для теста; игровой OpenGL 1.x путь не меняется. [Run 37115852726](https://github.com/IlyaBOT/ReCraft/actions/runs/37115852726)
+прошёл **20/20 macOS CTest**, проверку версии, offscreen-отрисовку настоящего UI
+и упаковку приложения. Оконный запуск требует графического входа и проверяется,
+если такая сессия доступна.
 Windows CI прошёл 21/21, Linux — 20/20; дополнительные локальные world tests
 требуют read-only save fixtures, отсутствующих в CI.
 
