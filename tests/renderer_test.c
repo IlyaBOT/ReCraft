@@ -1,9 +1,12 @@
 #include "../src/renderer/renderer.c"
 #include "../src/renderer/menu_background.c"
 #include "../src/game/entity_render.h"
+#include "../src/ui/ui.h"
 #include <assert.h>
 #include "png_fixture.h"
-#ifndef _WIN32
+#if defined(__APPLE__)
+#include "macos_context.h"
+#elif !defined(_WIN32)
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 static void context_error(int code,const char *description)
@@ -11,6 +14,40 @@ static void context_error(int code,const char *description)
     fprintf(stderr,"renderer_test: GLFW error 0x%x: %s\n",code,description);
 }
 #endif
+
+/* The test provides its framebuffer dimensions instead of querying a window. */
+int recraft_screen_width(void) { return 320; }
+int recraft_screen_height(void) { return 240; }
+extern int stbi_write_png(const char *,int,int,int,const void *,int);
+
+static void menu_render_test(const char *capture)
+{
+    Ui ui;
+    UiAction action;
+    GLubyte pixels[320*240*3],row[320*3];
+    int y,visible=0;
+    assets_init(RECRAFT_TEST_ASSET_ROOT); ui_init(&ui);
+    glViewport(0,0,320,240); glDisable(GL_SCISSOR_TEST); glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE); glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity(); glOrtho(0,320,240,0,0,1);
+    glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+    glMatrixMode(GL_TEXTURE); glLoadIdentity(); glMatrixMode(GL_MODELVIEW);
+    action=ui_frame(&ui,NULL,0,NULL,0);
+    assert(action.type==UI_ACTION_NONE && ui.screen==UI_SCREEN_MAIN);
+    glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,pixels);
+    assert(glGetError()==GL_NO_ERROR);
+    for(y=0;y<320*240;++y) if(pixels[y*3]>20 || pixels[y*3+1]>20 || pixels[y*3+2]>20) ++visible;
+    assert(visible>3000);
+    if(capture) {
+        for(y=0;y<120;++y) {
+            GLubyte *a=pixels+y*320*3,*b=pixels+(239-y)*320*3;
+            memcpy(row,a,sizeof(row)); memcpy(a,b,sizeof(row)); memcpy(b,row,sizeof(row));
+        }
+        assert(stbi_write_png(capture,320,240,3,pixels,320*3));
+    }
+    ui_shutdown(); assets_shutdown();
+    fprintf(stderr,"renderer_test: actual main-menu UI rendered (%d pixels)\n",visible);
+}
 
 static void equal_matrix(const GLfloat *a, const GLfloat *b)
 {
@@ -222,6 +259,8 @@ int main(int argc, char **argv)
     HDC dc;
     HGLRC context;
     PIXELFORMATDESCRIPTOR pfd = {0};
+#elif defined(__APPLE__)
+    (void)argc; (void)argv;
 #else
     GLFWwindow *window;
     (void)argc; (void)argv;
@@ -557,6 +596,10 @@ int main(int argc, char **argv)
     assert(i && SetPixelFormat(dc, i, &pfd));
     context = wglCreateContext(dc);
     assert(context && wglMakeCurrent(dc, context));
+#elif defined(__APPLE__)
+    if(!test_cgl_context(320,240)) return EXIT_FAILURE;
+    fprintf(stderr,"renderer_test: vendor=%s renderer=%s version=%s\n",
+        glGetString(GL_VENDOR),glGetString(GL_RENDERER),glGetString(GL_VERSION));
 #else
     fprintf(stderr,"renderer_test: creating hidden OpenGL context\n");
     glfwSetErrorCallback(context_error);
@@ -752,10 +795,13 @@ int main(int argc, char **argv)
     first_person_test();
     sign_render_test();
     server_icon_test();
+    menu_render_test(argc>2 && strcmp(argv[1],"--menu-capture")==0 ? argv[2] : NULL);
 #ifdef _WIN32
     wglMakeCurrent(NULL, NULL); wglDeleteContext(context);
     ReleaseDC(window, dc); DestroyWindow(window);
     UnregisterClassA(klass.lpszClassName, klass.hInstance);
+#elif defined(__APPLE__)
+    test_cgl_close();
 #else
     glfwDestroyWindow(window);
     glfwTerminate();

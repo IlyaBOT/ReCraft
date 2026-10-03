@@ -249,8 +249,9 @@ endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests/renderer_test.c")
     add_executable(renderer_test tests/renderer_test.c src/world/world.c src/world/storage.c
         src/world/beta_blocks.c src/assets/assets.c src/util/game_paths.c src/renderer/texture_animation.c
-        src/game/entity_render.c src/game/creative.c src/ui/pixel_font.c src/assets/server_icon_png.c)
-    target_include_directories(renderer_test PRIVATE src "${RAYLIB_ROOT}/src")
+        src/game/entity_render.c src/game/creative.c src/ui/pixel_font.c src/assets/server_icon_png.c
+        src/ui/ui.c src/ui/gui_button.c src/game/settings.c src/network/status_json.c)
+    target_include_directories(renderer_test PRIVATE src "${RAYLIB_ROOT}/src" "${CMAKE_BINARY_DIR}/generated")
     target_compile_definitions(renderer_test PRIVATE RECRAFT_TEST_ASSET_ROOT="${CMAKE_SOURCE_DIR}")
     target_compile_options(renderer_test PRIVATE -include "${CMAKE_SOURCE_DIR}/src/win_gl_compat.h")
     target_include_directories(renderer_test PRIVATE "${GLFW_ROOT}/include")
