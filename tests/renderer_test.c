@@ -6,6 +6,10 @@
 #ifndef _WIN32
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
+static void context_error(int code,const char *description)
+{
+    fprintf(stderr,"renderer_test: GLFW error 0x%x: %s\n",code,description);
+}
 #endif
 
 static void equal_matrix(const GLfloat *a, const GLfloat *b)
@@ -555,13 +559,17 @@ int main(int argc, char **argv)
     assert(context && wglMakeCurrent(dc, context));
 #else
     fprintf(stderr,"renderer_test: creating hidden OpenGL context\n");
-    assert(glfwInit());
+    glfwSetErrorCallback(context_error);
+    if(!glfwInit()) return EXIT_FAILURE;
     fprintf(stderr,"renderer_test: GLFW initialized\n");
     glfwWindowHint(GLFW_VISIBLE, 0); /* GLFW 3.1 predates GLFW_FALSE. */
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 1);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     window = glfwCreateWindow(320, 240, "Hidden renderer check", NULL, NULL);
-    assert(window);
+    if(!window) {
+        glfwTerminate();
+        return EXIT_FAILURE;
+    }
     glfwMakeContextCurrent(window);
     fprintf(stderr,"renderer_test: OpenGL context ready\n");
 #endif
