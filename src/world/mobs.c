@@ -507,7 +507,7 @@ int world_mobs_visible(World *w,RenderEntity *out,int capacity)
             if(r->id!=m->runtime_id) memset(r,0,sizeof(*r));
             r->active=1; r->id=m->runtime_id; r->type=m->type;
             r->x=m->x; r->y=m->y; r->z=m->z; r->yaw=m->yaw; r->pitch=m->pitch; r->color=m->color; r->sheared=m->sheared;
-            r->fuse=m->fuse;r->powered=m->powered;
+            r->fuse=m->fuse;r->powered=m->powered;r->fire=m->fire;
         }
     }
     for(i=(size_t)count;i<(size_t)capacity;++i) out[i].active=0;

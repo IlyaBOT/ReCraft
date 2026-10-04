@@ -40,6 +40,18 @@ int beta_block_selection_box(BetaBlockState state, BetaBlockBox *out)
 {
     float inset, height;
     if (!out || !beta_block_state_valid(state)) return 0;
+    if(state.id==55) { *out=(BetaBlockBox){0,0,0,1,.0625f,1}; return 1; }
+    if(state.id==70 || state.id==72) {
+        *out=(BetaBlockBox){.0625f,0,.0625f,.9375f,state.metadata ? .03125f : .0625f,.9375f}; return 1;
+    }
+    if(state.id==29 || state.id==33 || state.id==34) {
+        unsigned dir=state.metadata&7,axis=dir<2 ? 1 : dir<4 ? 2 : 0;
+        float lo[3]={0,0,0},hi[3]={1,1,1};
+        if(dir>5) return 0;
+        if(state.id==34) { if(dir&1) lo[axis]=.75f; else hi[axis]=.25f; }
+        else if(state.metadata&8) { if(dir&1) hi[axis]=.75f; else lo[axis]=.25f; }
+        *out=(BetaBlockBox){lo[0],lo[1],lo[2],hi[0],hi[1],hi[2]}; return 1;
+    }
     if(state.id==BETA_BLOCK_STANDING_SIGN) {
         *out=(BetaBlockBox){.25f,0,.25f,.75f,1,.75f}; return 1;
     }
@@ -145,6 +157,13 @@ int beta_block_terrain_tile(BetaBlockState state, unsigned face)
     if (!beta_block_state_valid(state) || face > 5u) return -1;
     variant = state.metadata & 3u;
     switch (state.id) {
+    case BETA_BLOCK_DISPENSER: return face<2 ? 62 : face==(state.metadata ? state.metadata : 3) ? 46 : 45;
+    case BETA_BLOCK_STONE_PRESSURE_PLATE: return 1;
+    case BETA_BLOCK_WOOD_PRESSURE_PLATE: return 4;
+    case BETA_BLOCK_PISTON: case BETA_BLOCK_STICKY_PISTON:
+        return face==(state.metadata&7) ? ((state.metadata&8) ? 110 : state.id==29 ? 106 : 107) :
+            face==((state.metadata&7)^1) ? 109 : 108;
+    case BETA_BLOCK_PISTON_HEAD: return face==(state.metadata&7) ? ((state.metadata&8) ? 106 : 107) : face==((state.metadata&7)^1) ? 107 : 108;
     case BETA_BLOCK_WEB: return 11;
     case BETA_BLOCK_WOOD_DOOR: case BETA_BLOCK_IRON_DOOR: {
         unsigned direction=((state.metadata&4) ? state.metadata : state.metadata-1)&3;
@@ -168,6 +187,7 @@ int beta_block_terrain_tile(BetaBlockState state, unsigned face)
     case BETA_BLOCK_POWERED_REPEATER: return face==0 ? 99 : face==1 ? 147 : 5;
     case BETA_BLOCK_LEVER: return 96;
     case BETA_BLOCK_JUKEBOX: return face==1 ? 75 : 74;
+    case BETA_BLOCK_NOTE_BLOCK: return 74;
     case BETA_BLOCK_TNT: return face==1 ? 9 : face==0 ? 10 : 8;
     case BETA_BLOCK_FIRE: return 31;
     case BETA_BLOCK_RAIL: return state.metadata>=6 ? 112 : 128;
@@ -256,7 +276,8 @@ int beta_render_source_tile(unsigned slot)
         15,63,79,39,55,56,13,12,29,28,73,5,208,176,192,
         237,238,14,69,70,71,43,59,60,25,26,27,62,45,44,61,99,115,164,
         205,206,41,42,57,58,134,135,149,150,151,152,131,147,66,67,
-        53,133,11,81,97,82,98,81,97,82,98,96,74,75,112,128,179,163,195,9,8,10,31,47};
+        53,133,11,81,97,82,98,81,97,82,98,96,74,75,112,128,179,163,195,9,8,10,31,47,
+        165,180,181,46,106,107,108,109,110};
     return slot<sizeof(tiles)/sizeof(tiles[0]) ? tiles[slot] : -1;
 }
 unsigned beta_render_tile(int terrain_tile)

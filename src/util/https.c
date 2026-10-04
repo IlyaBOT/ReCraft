@@ -19,7 +19,7 @@
 static int allowed(const char *url)
 {
     static const char *hosts[]={"https://login.microsoftonline.com/","https://user.auth.xboxlive.com/",
-        "https://xsts.auth.xboxlive.com/","https://api.minecraftservices.com/","https://textures.minecraft.net/"};
+        "https://xsts.auth.xboxlive.com/","https://api.minecraftservices.com/","https://textures.minecraft.net/","https://sessionserver.mojang.com/","https://api.mojang.com/"};
     unsigned i;for(i=0;i<sizeof(hosts)/sizeof(hosts[0]);++i)if(!strncmp(url,hosts[i],strlen(hosts[i])))return 1;return 0;
 }
 void https_response_free(HttpsResponse *response)

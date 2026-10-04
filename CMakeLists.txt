@@ -154,6 +154,9 @@ if(APPLE)
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_BINARY_DIR}/generated/Info.plist")
 endif()
 target_include_directories(ReCraft PRIVATE "${CMAKE_SOURCE_DIR}/src" "${RAYLIB_ROOT}/src" "${GLFW_ROOT}/include" "${OPENAL_INCLUDE_DIR}" "${ZLIB_INCLUDE_DIRS}")
+if(UNIX AND NOT APPLE)
+    target_include_directories(ReCraft PRIVATE ${X11_INCLUDE_DIR})
+endif()
 target_compile_definitions(ReCraft PRIVATE PLATFORM_DESKTOP GRAPHICS_API_OPENGL_11 RECRAFT_ACCOUNT_USE_BUILD_DEFAULT)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(ReCraft PRIVATE -O2 -include "${CMAKE_SOURCE_DIR}/src/win_gl_compat.h")
@@ -234,6 +237,11 @@ add_test(NAME gameplay_test COMMAND gameplay_test)
 set_tests_properties(gameplay_test PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 add_executable(sign_test tests/sign_test.c src/world/world.c src/world/storage.c src/world/beta_blocks.c)
 add_executable(transport_test tests/transport_test.c src/world/world.c src/world/storage.c src/world/beta_blocks.c)
+add_executable(mechanisms_test tests/mechanisms_test.c src/world/world.c src/world/storage.c src/world/beta_blocks.c)
+target_include_directories(mechanisms_test PRIVATE src)
+target_link_libraries(mechanisms_test m)
+add_test(NAME mechanisms_test COMMAND mechanisms_test)
+set_tests_properties(mechanisms_test PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 target_include_directories(transport_test PRIVATE src)
 target_link_libraries(transport_test m)
 add_test(NAME transport_test COMMAND transport_test)
@@ -349,6 +357,9 @@ foreach(_asset_test audio_record_test renderer_test renderer_gl11_test)
         target_sources(${_asset_test} PRIVATE src/assets/resource_pack.c)
     endif()
 endforeach()
+if(TARGET audio_record_test)
+    target_sources(audio_record_test PRIVATE src/renderer/texture_animation.c)
+endif()
 if(TARGET renderer_test)
     target_sources(renderer_test PRIVATE src/ui/language.c)
 endif()
@@ -362,18 +373,19 @@ add_executable(beta_events_test tests/beta_events_test.c src/world/world.c src/w
 target_include_directories(beta_events_test PRIVATE src)
 target_link_libraries(beta_events_test m)
 add_test(NAME beta_events_test COMMAND beta_events_test)
-foreach(_world_test world_test renderer_test network_test beta_region_test gameplay_test sign_test transport_test audio_record_test beta_events_test)
+foreach(_world_test world_test renderer_test network_test beta_region_test gameplay_test sign_test transport_test audio_record_test beta_events_test mechanisms_test)
     if(TARGET ${_world_test})
         target_sources(${_world_test} PRIVATE src/world/block_entity.c src/world/environment.c src/world/climate.c src/world/redstone.c src/world/beta_session.c src/game/bed.c src/game/sign.c src/game/player.c
             src/world/entities.c src/world/mobs.c src/world/transport.c src/world/rail.c src/world/door.c
             src/world/physics.c src/world/ticks.c src/world/fluid.c src/game/mining.c
-            src/world/foliage.c src/world/fire.c src/world/explosion.c src/world/mob_path.c
+            src/world/foliage.c src/world/fire.c src/world/explosion.c src/world/mob_path.c src/world/mechanisms.c src/world/piston.c
             src/game/crafting.c src/game/inventory.c src/nbt/nbt.c)
     endif()
 endforeach()
 
 # Tests use assert(), including calls with side effects. Keep them active in CI Release.
 add_executable(account_test tests/account_test.c src/account/account.c src/account/account_flow.c
+    src/account/player_textures.c
     src/account/account_store.c src/util/json.c src/util/https.c src/util/file_dialog.c
     src/util/game_paths.c src/util/clock.c src/game/settings.c)
 target_include_directories(account_test PRIVATE src)

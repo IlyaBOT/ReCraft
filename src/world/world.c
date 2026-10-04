@@ -4,6 +4,7 @@
 #include "ticks.h"
 #include "beta_session.h"
 #include "foliage.h"
+#include "piston.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -58,6 +59,7 @@ static const BlockDef block_defs[BLOCK_COUNT] = {
     [BETA_BLOCK_SLAB] = {"Slab",1,0,BLOCK_LAYER_OPAQUE,0,60,0,0},
     [BETA_BLOCK_CRAFTING_TABLE] = {"Crafting Table",1,1,BLOCK_LAYER_OPAQUE,70,71,17,0},
     [BETA_BLOCK_CHEST] = {"Chest",1,1,BLOCK_LAYER_OPAQUE,73,74,73,0},
+    [BETA_BLOCK_NOTE_BLOCK] = {"Note Block",1,1,BLOCK_LAYER_OPAQUE,110,110,110,0},
     [BETA_BLOCK_FURNACE] = {"Furnace",1,1,BLOCK_LAYER_OPAQUE,76,77,76,0},
     [BETA_BLOCK_BURNING_FURNACE] = {"Furnace",1,1,BLOCK_LAYER_OPAQUE,76,77,76,13},
     [BETA_BLOCK_REDSTONE_TORCH] = {"Redstone Torch",0,0,BLOCK_LAYER_CUTOUT,80,80,80,7},
@@ -68,8 +70,15 @@ static const BlockDef block_defs[BLOCK_COUNT] = {
     [BETA_BLOCK_STILL_LAVA] = {"Lava",0,0,BLOCK_LAYER_OPAQUE,64,65,64,15},
     [BETA_BLOCK_REDSTONE_WIRE] = {"Redstone",0,0,BLOCK_LAYER_CUTOUT,82,82,82,0},
     [BETA_BLOCK_BED] = {"Bed",1,0,BLOCK_LAYER_CUTOUT,89,92,17,0},
-    [BETA_BLOCK_UNPOWERED_REPEATER] = {"Redstone Repeater",1,0,BLOCK_LAYER_OPAQUE,95,60,17,0},
-    [BETA_BLOCK_POWERED_REPEATER] = {"Redstone Repeater",1,0,BLOCK_LAYER_OPAQUE,96,60,17,0},
+    [BETA_BLOCK_UNPOWERED_REPEATER] = {"Redstone Repeater",0,0,BLOCK_LAYER_OPAQUE,95,60,17,0},
+    [BETA_BLOCK_POWERED_REPEATER] = {"Redstone Repeater",0,0,BLOCK_LAYER_OPAQUE,96,60,17,0},
+    [BETA_BLOCK_DISPENSER] = {"Dispenser",1,1,BLOCK_LAYER_OPAQUE,76,77,76,0},
+    [BETA_BLOCK_STONE_PRESSURE_PLATE] = {"Stone Pressure Plate",0,0,BLOCK_LAYER_OPAQUE,1,1,1,0},
+    [BETA_BLOCK_WOOD_PRESSURE_PLATE] = {"Wooden Pressure Plate",0,0,BLOCK_LAYER_OPAQUE,17,17,17,0},
+    [BETA_BLOCK_PISTON] = {"Piston",1,0,BLOCK_LAYER_OPAQUE,1,1,1,0},
+    [BETA_BLOCK_STICKY_PISTON] = {"Sticky Piston",1,0,BLOCK_LAYER_OPAQUE,1,1,1,0},
+    [BETA_BLOCK_PISTON_HEAD] = {"Piston Head",1,0,BLOCK_LAYER_OPAQUE,1,1,1,0},
+    [BETA_BLOCK_MOVING_PISTON] = {"Moving Piston",0,0,BLOCK_LAYER_NONE,0,0,0,0},
     [BETA_BLOCK_LEVER] = {"Lever",0,0,BLOCK_LAYER_CUTOUT,7,7,7,0},
     [BETA_BLOCK_TNT] = {"TNT",1,1,BLOCK_LAYER_OPAQUE,118,119,120,0},
     [BETA_BLOCK_FIRE] = {"Fire",0,0,BLOCK_LAYER_CUTOUT,121,121,121,15},
@@ -845,7 +854,7 @@ int world_set_state(World *world,int wx,int y,int wz,BetaBlockState state)
     int32_t cx,cz;
     int x,z;
     Chunk *chunk;
-    uint8_t id=state.id,old;
+    uint8_t id=state.id,old,old_meta;
     if ((unsigned)y>=WORLD_HEIGHT || id>=BLOCK_COUNT) return 0;
     x=local_from_world(wx,&cx);
     z=local_from_world(wz,&cz);
@@ -855,7 +864,8 @@ int world_set_state(World *world,int wx,int y,int wz,BetaBlockState state)
     if (chunk_get_block(chunk,x,y,z)==id) return world_set_metadata(world,wx,y,wz,state.metadata);
     {
         old=chunk_get_block(chunk,x,y,z);
-        if ((old==54 || old==61 || old==62 || old==63 || old==68 || old==84) &&
+        old_meta=chunk_get_metadata(chunk,x,y,z);
+        if ((old==54 || old==61 || old==62 || old==63 || old==68 || old==84 || old==23 || old==36 || old==25) &&
             !((old==61 || old==62) && (id==61 || id==62)))
             block_entity_remove(world,wx,y,wz,!world->network_mode);
     }
@@ -868,9 +878,11 @@ int world_set_state(World *world,int wx,int y,int wz,BetaBlockState state)
     chunk->dirty_flags|=CHUNK_DIRTY_MESH|CHUNK_DIRTY_SAVE;
     mark_mesh_neighbors(world,cx,cz);
     world_foliage_removed(world,wx,y,wz,old);
+    if(world->piston_updating) return 1;
+    world_piston_removed(world,wx,y,wz,old,old_meta,id);
     /* Power providers notify through their adjoining solid block as well. */
-    if(id==55 || id==69 || id==75 || id==76 || id==77 || id==93 || id==94 || id==28 ||
-       old==55 || old==69 || old==75 || old==76 || old==77 || old==93 || old==94 || old==28)
+    if(id==55 || id==69 || id==75 || id==76 || id==77 || id==93 || id==94 || id==28 || id==70 || id==72 ||
+       old==55 || old==69 || old==75 || old==76 || old==77 || old==93 || old==94 || old==28 || old==70 || old==72)
         world_redstone_notify(world,wx,y,wz);
     else world_physics_notify(world,wx,y,wz);
     return 1;
@@ -956,9 +968,11 @@ int world_set_metadata(World *world, int wx, int y, int wz, uint8_t value)
     if (world->beta_format && !chunk->beta_raw) return 0;
     if(chunk_get_metadata(chunk,x,y,z)==(value&15)) return 1;
     chunk_set_metadata(chunk,x,y,z,value);
+    mark_mesh_neighbors(world,cx,cz);
+    if(world->piston_updating) return 1;
     {
         unsigned id=chunk_get_block(chunk,x,y,z);
-        if(id==55 || id==69 || id==75 || id==76 || id==77 || id==93 || id==94 || id==28)
+        if((id==55 && !world->wire_updating) || id==69 || id==75 || id==76 || id==77 || id==93 || id==94 || id==28 || id==70 || id==72)
             world_redstone_notify(world,wx,y,wz);
     }
     return 1;

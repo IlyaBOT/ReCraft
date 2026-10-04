@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+static int uuid32(const char *id);
 int account_client_id_valid(const char *id)
 {
     int i;if(!id||strlen(id)!=36)return 0;
@@ -14,10 +15,43 @@ int account_client_id_valid(const char *id)
     }
     return 1;
 }
+int account_flow_join(const AccountData *d,AccountFlow *f,const char *server_id)
+{
+    char *body=(char *)calloc(20000,1),*quoted=(char *)malloc(18000),server[140];HttpsResponse r={0};int ok=0;
+    f->error[0]=0;
+    if(d->minecraft[0] && uuid32(d->id) && server_id && strlen(server_id)<=64 && server_id[0] &&
+       strspn(server_id,"-0123456789abcdefABCDEF")==strlen(server_id) && body && quoted &&
+       json_quote(quoted,18000,d->minecraft) && json_quote(server,sizeof(server),server_id)) {
+        snprintf(body,20000,"{\"accessToken\":%s,\"selectedProfile\":\"%s\",\"serverId\":%s}",quoted,d->id,server);
+        ok=f->request(f->context,"https://sessionserver.mojang.com/session/minecraft/join","application/json",body,NULL,&r) && r.status==204;
+        if(!ok)snprintf(f->error,sizeof(f->error),"Session join failed (HTTP %d). Check account/session and server authentication.",r.status);
+    } else snprintf(f->error,sizeof(f->error),"Unable to prepare session join.");
+    if(body){memset(body,0,20000);free(body);}if(quoted){memset(quoted,0,18000);free(quoted);}https_response_free(&r);return ok;
+}
 static int text(RecraftJson *j,int object,const char *key,char *out,size_t size)
 {return json_string(j,json_member(j,object,key),out,size)&&out[0]!=0;}
 static int error(AccountFlow *f,const char *message)
 {snprintf(f->error,sizeof(f->error),"%s",message);return 0;}
+static int services_rejection(AccountFlow *f,RecraftJson *j,long status)
+{
+    char message[256]={0};
+    text(j,0,"errorMessage",message,sizeof(message));
+    /* Show a bounded diagnosis, never dump a response containing credentials. */
+    if(strstr(message,"app registration") || strstr(message,"App registration"))
+        snprintf(f->error,sizeof(f->error),"Minecraft HTTP %ld: app registration rejected. Request Minecraft API access for this client_id.",status);
+    else if(status==429 || status>=500)
+        snprintf(f->error,sizeof(f->error),"Minecraft HTTP %ld: service unavailable. Retry sign-in later.",status);
+    else if(status==200) error(f,"Minecraft returned an invalid access token response.");
+    else snprintf(f->error,sizeof(f->error),"Minecraft HTTP %ld: sign-in rejected. Check app API access and Java account entitlement.",status);
+    return 0;
+}
+static int texture_url(char *out,size_t capacity,const char *url)
+{
+    if(!strncmp(url,"http://textures.minecraft.net/",30)) snprintf(out,capacity,"https://%s",url+7);
+    else if(!strncmp(url,"https://textures.minecraft.net/",31)) snprintf(out,capacity,"%s",url);
+    else return 0;
+    return 1;
+}
 static int microsoft_rejection(AccountFlow *f,RecraftJson *j)
 {
     char kind[48]={0};int code=0;
@@ -101,7 +135,7 @@ int account_flow_run(AccountData *d,AccountFlow *f,int refresh)
     snprintf(ticket,sizeof(ticket),"XBL3.0 x=%s;%s",d->uhs,d->xsts);if(!json_quote(quoted,cap,ticket))goto done;
     snprintf(body,cap,"{\"xtoken\":%s,\"platform\":\"PC_LAUNCHER\"}",quoted);
     j=request(f,"https://api.minecraftservices.com/launcher/login","application/json",body,NULL,&r);
-    if(!j||r.status!=200||!text(j,0,"access_token",d->minecraft,sizeof(d->minecraft))||!json_integer(j,json_member(j,0,"expires_in"),&expires)||expires<=0||expires>172800) {error(f,"Minecraft Services rejected this application or account.");goto done;}
+    if(!j||r.status!=200||!text(j,0,"access_token",d->minecraft,sizeof(d->minecraft))||!json_integer(j,json_member(j,0,"expires_in"),&expires)||expires<=0||expires>172800) {if(r.status)services_rejection(f,j,r.status);goto done;}
     d->minecraft_exp=(int64_t)time(NULL)+expires;json_free(j);j=NULL;https_response_free(&r);
     j=request(f,"https://api.minecraftservices.com/minecraft/profile",NULL,NULL,d->minecraft,&r);
     if(!j||r.status!=200||!text(j,0,"name",d->name,sizeof(d->name))||!settings_player_name_valid(d->name)||!text(j,0,"id",d->id,sizeof(d->id))||!uuid32(d->id)) {error(f,"No playable Minecraft Java profile. Check game ownership and profile creation.");goto done;}
@@ -109,9 +143,15 @@ int account_flow_run(AccountData *d,AccountFlow *f,int refresh)
     object=json_member(j,0,"skins");
     {int n;for(n=0;n<16;++n){int skin=json_element(j,object,n);char state[24],url[512];if(skin<0)break;
         if(text(j,skin,"state",state,sizeof(state))&&!strcmp(state,"ACTIVE")&&text(j,skin,"url",url,sizeof(url))) {
-            if(!strncmp(url,"http://textures.minecraft.net/",30))snprintf(d->skin_url,sizeof(d->skin_url),"https://%s",url+7);
-            else if(!strncmp(url,"https://textures.minecraft.net/",31))snprintf(d->skin_url,sizeof(d->skin_url),"%s",url);
+            texture_url(d->skin_url,sizeof(d->skin_url),url);
             text(j,skin,"id",d->skin_id,sizeof(d->skin_id));text(j,skin,"variant",d->skin_variant,sizeof(d->skin_variant));break;
+        }
+    }}
+    d->cape_id[0]=d->cape_url[0]=0;
+    object=json_member(j,0,"capes");
+    {int n;for(n=0;n<32;++n){int cape=json_element(j,object,n);char state[24],url[512];if(cape<0)break;
+        if(text(j,cape,"state",state,sizeof(state))&&!strcmp(state,"ACTIVE")&&text(j,cape,"url",url,sizeof(url)) && texture_url(d->cape_url,sizeof(d->cape_url),url)) {
+            text(j,cape,"id",d->cape_id,sizeof(d->cape_id));break;
         }
     }}
     ok=1;

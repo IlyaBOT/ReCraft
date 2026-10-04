@@ -64,7 +64,7 @@ typedef struct RemoteEntity {
     double x,y,z;
     float yaw,pitch;
     uint16_t type;
-    uint8_t variant;
+    uint8_t variant,flags;
     char name[65];
 } RemoteEntity;
 struct NetworkClient {
@@ -81,6 +81,7 @@ struct NetworkClient {
     size_t rx_count,tx_count;
     int logged_in,dimension;
     int32_t self_id;
+    NetworkJoinFn join;void *join_context;int joining;char server_id[65];
     RemoteEntity entities[NET_MAX_ENTITIES];
 };
 
@@ -274,11 +275,13 @@ void network_disconnect(NetworkClient *c)
     }
     stop_transport(c); set_state(c,NETWORK_DISCONNECTED);
 }
+void network_set_auth(NetworkClient *c,NetworkJoinFn join,void *context)
+{ if(c){c->join=join;c->join_context=context;} }
 int network_connect(NetworkClient *c,const char *host,uint16_t port,const char *username)
 {
     ResolveJob *job; size_t i,len;
     if(!c || !host || !username) return 0;
-    stop_transport(c); c->error[0]=0; memset(c->entities,0,sizeof(c->entities));
+    stop_transport(c); c->error[0]=0;c->joining=0; memset(c->entities,0,sizeof(c->entities));
     if(!port || !host[0] || strlen(host)>255) { fail(c,"Invalid server address or port"); return 0; }
     len=strlen(username);
     if(!len || len>16) { fail(c,"Username must contain 1 to 16 ASCII letters, digits or underscores"); return 0; }
@@ -397,6 +400,27 @@ static void inventory_slot(NetworkClient *c,const uint8_t *p,int window,int slot
     NetworkEvent e; memset(&e,0,sizeof(e)); e.type=NETWORK_EVENT_INVENTORY; e.entity_type=(uint8_t)window; e.slot=(int16_t)slot;
     e.item_id=(int16_t)beta14_u16(p); if(e.item_id!=-1) { e.item_count=p[2]; e.item_damage=(int16_t)beta14_u16(p+3); } emit(c,&e);
 }
+static void entity_metadata(NetworkClient *c,const Beta14Packet *packet,size_t off,int32_t id)
+{
+    const uint8_t *p=packet->bytes;RemoteEntity *r=entity_find(c,id,0);
+    while(off<packet->size) {
+        unsigned tag=p[off++],type=tag>>5,index=tag&31;size_t bytes=0;
+        if(tag==127)break;
+        if(type==0) {
+            if(index==0) {
+                NetworkEvent event;memset(&event,0,sizeof(event));
+                if(r)r->flags=p[off];
+                event.type=NETWORK_EVENT_ENTITY_FLAGS;event.entity_id=id;
+                event.entity_type=id==c->self_id ? -1 : r ? r->type : 255;event.value=p[off];emit(c,&event);
+            }
+            bytes=1;
+        } else if(type==1)bytes=2;else if(type==2 || type==3)bytes=4;
+        else if(type==4)bytes=2+beta14_u16(p+off)*2;
+        else if(type==5)bytes=beta14_u16(p+off)==65535 ? 2 : 5;
+        else if(type==6)bytes=12;else break;
+        off+=bytes;
+    }
+}
 static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
 {
     const uint8_t *p=packet->bytes; NetworkEvent e; char text[4096]; size_t off,i; uint8_t response[128];
@@ -405,7 +429,12 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
     if(p[0]==0x00) { queue_bytes(c,p,1); return; }
     if(c->state==NETWORK_HANDSHAKE) {
         if(p[0]!=2) { fail(c,"Expected protocol 14 handshake response"); return; }
-        if(!beta14_read_string(packet,1,text,sizeof(text)) || strcmp(text,"-")!=0) { fail(c,"Server requires online authentication; only offline-mode protocol 14 is supported"); return; }
+        if(!beta14_read_string(packet,1,text,sizeof(text))) {fail(c,"Invalid handshake server id");return;}
+        if(strcmp(text,"-")) {
+            if(!c->join){fail(c,"This server requires a signed-in Minecraft Java account");return;}
+            if(!text[0] || strlen(text)>64 || strspn(text,"-0123456789abcdefABCDEF")!=strlen(text)){fail(c,"Invalid online server id");return;}
+            snprintf(c->server_id,sizeof(c->server_id),"%s",text);c->joining=1;c->deadline=net_time()+120;return;
+        }
         off=beta14_login(response,sizeof(response),c->username); if(queue_bytes(c,response,off)) set_state(c,NETWORK_LOGIN); return;
     }
     if(p[0]==0x01) {
@@ -467,6 +496,14 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
         if(count) world_relight_chunk(c->world,chunk);
         break; }
     case 0x35: set_remote_block(c,beta14_i32(p+1),p[5],beta14_i32(p+6),p[10],p[11],1); break;
+    case 0x36:
+        /* Packet54PlayNoteBlock: short Y, instrument then pitch; no block ID. */
+        if(p[11]<=4 && p[12]<=24) {
+            e.type=NETWORK_EVENT_NOTE;e.block_x=beta14_i32(p+1);
+            e.block_y=beta14_u16(p+5);e.block_z=beta14_i32(p+7);
+            e.property=p[11];e.value=p[12];emit(c,&e);
+        }
+        break;
     case 0x3c: {
         double x=beta14_f64(p+1),y=beta14_f64(p+9),z=beta14_f64(p+17); size_t count=beta14_u32(p+29);
         if(!isfinite(x)||!isfinite(y)||!isfinite(z)||fabs(x)>32000000||fabs(y)>32000000||fabs(z)>32000000) { fail(c,"Invalid explosion coordinates"); break; }
@@ -483,7 +520,10 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
         }
         r->x=beta14_i32(p+off)/32.0; r->y=beta14_i32(p+off+4)/32.0; r->z=beta14_i32(p+off+8)/32.0;
         if(p[0]==0x14 || p[0]==0x18) { r->yaw=p[off+12]*(360.0f/256.0f); r->pitch=p[off+13]*(360.0f/256.0f); }
-        entity_event(c,r,NETWORK_EVENT_ENTITY_SPAWN,text); break; }
+        entity_event(c,r,NETWORK_EVENT_ENTITY_SPAWN,text);
+        if(p[0]==0x18)entity_metadata(c,packet,20,r->id);
+        break; }
+    case 0x28: entity_metadata(c,packet,5,beta14_i32(p+1));break;
     case 0x1f: case 0x20: case 0x21: case 0x22: {
         RemoteEntity *r=entity_find(c,beta14_i32(p+1),0); if(!r) break;
         if(p[0]==0x22) { r->x=beta14_i32(p+5)/32.0; r->y=beta14_i32(p+9)/32.0; r->z=beta14_i32(p+13)/32.0; off=17; }
@@ -527,6 +567,13 @@ void network_tick(NetworkClient *c)
     if(c->state!=NETWORK_PLAY && now>c->deadline) { fail(c,"Connection/login timed out"); return; }
     if(c->state==NETWORK_CONNECTING) { poll_connect(c); if(c->state==NETWORK_CONNECTING || c->state==NETWORK_ERROR) return; }
     if(now-c->last_receive>60.0) { fail(c,"Server receive timeout"); return; }
+    if(c->joining) {
+        char message[160]={0};int joined=c->join(c->join_context,c->server_id,message,sizeof(message));
+        if(joined<0){fail(c,message[0]?message:"Online authentication failed");return;}
+        if(!joined)return;
+        {uint8_t login[128];size_t n=beta14_login(login,sizeof(login),c->username);
+         c->joining=0;if(!queue_bytes(c,login,n))return;set_state(c,NETWORK_LOGIN);c->deadline=now+20;}
+    }
     flush_send(c); if(c->state==NETWORK_ERROR) return;
     while(packets<128) {
         Beta14Packet packet; int result=beta14_next_packet(c->rx,c->rx_count,&packet);
@@ -535,7 +582,9 @@ void network_tick(NetworkClient *c)
             if(packet.id==0x33 && regions++>=2) break;
             handle_packet(c,&packet);
             if(c->state==NETWORK_ERROR || c->state==NETWORK_DISCONNECTED) return;
-            c->rx_count-=packet.size; memmove(c->rx,c->rx+packet.size,c->rx_count); ++packets; continue;
+            c->rx_count-=packet.size; memmove(c->rx,c->rx+packet.size,c->rx_count); ++packets;
+            if(c->joining)break;
+            continue;
         }
         if(reads++>=4) break;
         if(c->rx_count==NET_RX_CAP) { fail(c,"Network receive buffer exhausted"); return; }

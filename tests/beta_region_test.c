@@ -147,6 +147,17 @@ int main(int argc,char **argv)
         assert(world_set_block(&world,72,81,19,54));
         chest=block_entity_get(&world,72,81,19,1); assert(chest);
         chest->slots[0]=(InventorySlot){35,19,6}; block_entity_changed(&world,chest);
+        {
+            BlockEntity *dispenser,*piston;
+            assert(world_set_state(&world,76,105,19,(BetaBlockState){23,5}));
+            dispenser=block_entity_get(&world,76,105,19,1); assert(dispenser);
+            dispenser->slots[8]=(InventorySlot){332,23,0}; block_entity_changed(&world,dispenser);
+            assert(world_set_state(&world,77,105,19,(BetaBlockState){36,12}));
+            piston=block_entity_get(&world,77,105,19,1); assert(piston);
+            piston->piston_id=35; piston->piston_data=12; piston->piston_facing=5;
+            piston->piston_progress=piston->piston_previous=.5f; piston->piston_extending=1;
+            block_entity_changed(&world,piston);
+        }
         world_drop_stack(&world,74,82,19,(InventorySlot){278,1,123});
         {
             Player p={0}; InventorySlot inv[36]={{262,2,0}},disc={2257,1,0}; int sx,sy,sz;
@@ -173,6 +184,11 @@ int main(int argc,char **argv)
     {
         BlockEntity *chest=block_entity_get(&world,72,81,19,0); ItemDrop items[128]; int count;
         assert(chest && chest->slots[0].id==35 && chest->slots[0].count==19 && chest->slots[0].damage==6);
+        {
+            BlockEntity *dispenser=block_entity_get(&world,76,105,19,0),*piston=block_entity_get(&world,77,105,19,0);
+            assert(dispenser && dispenser->kind==BLOCK_ENTITY_DISPENSER && dispenser->slots[8].id==332 && dispenser->slots[8].count==23);
+            assert(piston && piston->kind==BLOCK_ENTITY_PISTON && piston->piston_id==35 && piston->piston_data==12 && piston->piston_facing==5 && piston->piston_previous==.5f && piston->piston_extending);
+        }
         {
             SavedEntity *entity; int carts=0,arrows=0;
             assert(world_peek_metadata(&world,70,100,19)==14 && world_peek_block(&world,70,100,19)==69);

@@ -6,7 +6,8 @@
 struct World;
 struct Chunk;
 
-typedef enum BlockEntityKind { BLOCK_ENTITY_UNKNOWN, BLOCK_ENTITY_CHEST, BLOCK_ENTITY_FURNACE, BLOCK_ENTITY_SIGN, BLOCK_ENTITY_JUKEBOX } BlockEntityKind;
+typedef enum BlockEntityKind { BLOCK_ENTITY_UNKNOWN, BLOCK_ENTITY_CHEST, BLOCK_ENTITY_FURNACE, BLOCK_ENTITY_SIGN, BLOCK_ENTITY_JUKEBOX,
+    BLOCK_ENTITY_DISPENSER,BLOCK_ENTITY_PISTON,BLOCK_ENTITY_NOTE } BlockEntityKind;
 typedef struct BlockEntity {
     struct BlockEntity *next;
     BlockEntityKind kind;
@@ -14,6 +15,10 @@ typedef struct BlockEntity {
     InventorySlot slots[27];
     int burn,cook,fuel;
     int record; /* TileEntityRecordPlayer.Record: legacy item id, not a stack. */
+    unsigned char note,note_powered;
+    int piston_id,piston_data,piston_facing,piston_extending,piston_base;
+    float piston_progress,piston_previous;
+    uint64_t piston_tick;
     /* UTF-8, four lines of at most 15 Java UTF-16 units each. */
     char sign_text[4][61];
     uint8_t sign_text_modified;
@@ -22,6 +27,8 @@ typedef struct BlockEntity {
     size_t raw_size;
 } BlockEntity;
 int jukebox_use(struct World *world,int x,int y,int z,InventorySlot *held);
+int note_block_use(struct World *world,int x,int y,int z,int tune);
+void note_block_changed(struct World *world,int x,int y,int z);
 
 BlockEntity *block_entity_get(struct World *world,int x,int y,int z,int create);
 void block_entity_changed(struct World *world,BlockEntity *entity);

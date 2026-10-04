@@ -4,7 +4,8 @@
 #include "../nbt/nbt.h"
 struct Player; struct SavedEntity; struct RenderEntity;
 typedef struct TransportState {
-    int kind,dead; /* 1 Arrow, 2 Minecart, 3 Boat, 4 PrimedTnt. */
+    int kind,dead; /* 1 Arrow, 2 Minecart, 3 Boat, 4 TNT, 5 Snowball, 6 Egg, 7 FallingSand. */
+    int falling_block,fall_time;
     int x_tile,y_tile,z_tile,in_tile,in_data,in_ground,shake,player,ground_ticks,air_ticks;
     int type,fuel,ridden,damage,hit_ticks;
     int fuse,owner_id;
@@ -24,4 +25,7 @@ struct SavedEntity *world_minecart_find(World *world,int runtime_id);
 void world_transport_changed(World *world,struct SavedEntity *entity);
 void world_transport_damage(World *w,struct SavedEntity *e,struct Player *p,int amount);
 int world_skeleton_arrow(World *w,struct SavedEntity *skeleton,const struct Player *target);
+float world_entity_gaussian(World *world);
+int world_dispenser_projectile(World *world,float x,float y,float z,int dx,int dz,int item);
+int world_falling_spawn(World *world,int x,int y,int z,int id);
 #endif

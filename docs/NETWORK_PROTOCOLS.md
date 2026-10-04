@@ -3,14 +3,21 @@
 Vehicle/object registry handling and its loopback regressions are described in
 [the gameplay and UI update](BETA_GAMEPLAY_UI.md).
 
-The current adapter speaks the **Minecraft Beta 1.7.3 protocol, version 14**, to
-offline-mode servers. It never sends account credentials. A server that returns an
-online-authentication challenge is rejected. Protocol 47 supports modern
-**server-list status queries**, including MOTD, player counts, ping and favicon.
-It is not a usable modern gameplay client; selecting modern status does not
-enable modern gameplay login. Optional Microsoft profile authentication is a
-separate feature, described in [account setup](MICROSOFT_ACCOUNT.md); it does not
-enable online-mode Beta joining or modern gameplay.
+The current adapter speaks **Minecraft Beta 1.7.3 protocol 14**. Offline-mode
+servers work as before. With a signed-in Java profile, an online challenge starts
+an asynchronous session join using the official UUID/token; login waits for
+HTTP 204. The game server receives no access/refresh token. Account/application
+approval and real-server authentication remain unverified; see
+[account setup and limits](MICROSOFT_ACCOUNT.md).
+
+Protocol 47 supports modern **server-list status queries**, including MOTD,
+player counts, ping and favicon. Modern gameplay, encrypted login and modern
+player-info packets are not implemented. Remote skin/cape lookup accepts Beta
+names and future UUIDs through the public Mojang profile API and a bounded
+worker/cache. Server entity metadata `0x28` and mob-spawn metadata drive the
+burning flag; the fire HUD is not a client-side damage authority.
+Note-block packet `0x36` delivers the five Beta instruments and pitch 0..24;
+the client plays the server event with the original note sounds.
 
 The transport resolves DNS on a worker thread, connects over nonblocking TCP,
 buffers partial packets, and processes at most 128 packets and two zlib chunk
@@ -77,7 +84,7 @@ Implemented traffic:
 
 Other known protocol 14 packets are framed and skipped when they do not affect
 the current client. The adapter rejects a dimension other than the Overworld and
-does not handle dimension changes or online authentication. Same-dimension death
+does not handle dimension changes. Online challenges use asynchronous session join. Same-dimension death
 respawns retain chunks and wait for the server's new player position. A number of Beta block
 IDs have no ReCraft model yet. Their original ID and metadata nibble now stay
 in the chunk; rendering and collision still use solid or hidden placeholders.
@@ -127,7 +134,9 @@ chunk, single and multiple block changes, relighting, and inventory callbacks.
 It checks that a wool ID and its color metadata survive the chunk packet.
 It also checks server chest slots, rejected/accepted window clicks, cursor
 resynchronization, furnace properties and the same-dimension respawn exchange.
-It also checks named-entity roster creation/removal, Unicode chat and sign
+The loopback session runs both offline and online with a mock session-join
+callback that stays pending before allowing login; self/remote burning metadata
+are checked too. It also checks named-entity roster creation/removal, Unicode chat and sign
 round trips, entity attack, arm swing and sneak packet fields. Packet truncation
 boundaries and oversized compressed chunk lengths are covered.
 

@@ -4,6 +4,27 @@
 /* Numeric registry and items.png coordinates from Beta 1.7.3 Item.java.
  * This table is runtime data; no Java or reference tree is required. */
 typedef struct ItemIcon { int id,tile; const char *name; } ItemIcon;
+typedef struct CreativeEntry { int id,damage;const char *key,*name; } CreativeEntry;
+static const CreativeEntry catalogue[]={
+#define CREATIVE(id,damage,key,name) {id,damage,key,name},
+#include "creative_catalogue.def"
+#undef CREATIVE
+};
+const char *beta_item_translation_key(int id,int damage)
+{
+    size_t i;
+    /* Damage on a tool is wear, not a different localized item subtype. */
+    if(inventory_max_damage(id)>0)damage=0;
+    for(i=0;i<sizeof(catalogue)/sizeof(catalogue[0]);++i)if(catalogue[i].id==id && catalogue[i].damage==damage)return catalogue[i].key;
+    return NULL;
+}
+const char *beta_item_variant_name(int id,int damage)
+{
+    size_t i;
+    for(i=0;i<sizeof(catalogue)/sizeof(catalogue[0]);++i)if(catalogue[i].id==id && catalogue[i].damage==damage)return catalogue[i].name;
+    for(i=0;i<sizeof(catalogue)/sizeof(catalogue[0]);++i)if(catalogue[i].id==id)return catalogue[i].name;
+    return NULL;
+}
 static const ItemIcon icons[]={
     {256, 82, "Shovel Iron"},
     {257, 98, "Pickaxe Iron"},
@@ -105,7 +126,7 @@ static const ItemIcon icons[]={
     {353, 13, "Sugar"},
     {354, 29, "Cake"},
     {355, 45, "Bed"},
-    {356, 86, "Diode"},
+    {356, 86, "Redstone Repeater"},
     {357, 92, "Cookie"},
     {358, 60, "Map"},
     {359, 93, "Shears"},
@@ -124,6 +145,7 @@ int beta_item_tile(int id,int damage)
 }
 const char *beta_item_name(int id)
 {
+    const char *name=beta_item_variant_name(id,0);if(name)return name;
     switch(id) {
     case 58: return "Crafting Table";
     case 54: return "Chest";
@@ -139,39 +161,13 @@ const char *beta_item_name(int id)
     return NULL;
 }
 
-static int variants(int id)
-{
-    if (id==35 || id==351) return 16;
-    if (id==6 || id==17 || id==18 || id==31) return 3;
-    if (id==43 || id==44) return 4;
-    if (id==263) return 2;
-    return 1;
-}
-
 int creative_get(int index,InventorySlot *out)
 {
-    int id,n;
-    if (!out || index<0) return 0;
-    for (id=1;id<=2257;++id) {
-        if (id==97) id=256;
-        if (id==360) id=2256;
-        n=variants(id);
-        if (index<n) {
-            out->id=id; out->damage=index; out->count=inventory_stack_limit(id);
-            return 1;
-        }
-        index-=n;
-    }
-    return 0;
+    if(!out || index<0 || (size_t)index>=sizeof(catalogue)/sizeof(catalogue[0]))return 0;
+    out->id=catalogue[index].id;out->damage=catalogue[index].damage;
+    out->count=inventory_stack_limit(out->id);return 1;
 }
-
-int creative_count(void)
-{
-    InventorySlot slot;
-    int n=0;
-    while (creative_get(n,&slot)) ++n;
-    return n;
-}
+int creative_count(void) { return (int)(sizeof(catalogue)/sizeof(catalogue[0])); }
 
 int creative_give(InventorySlot *slots,int hotbar,int index,int creative)
 {

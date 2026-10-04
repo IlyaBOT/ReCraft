@@ -1,7 +1,9 @@
 # Microsoft account and local skins
 
 Main menu → the button under the player model → **Player Profile**.
-The nickname, skin choice and imported PNG survive a normal restart. Nicknames
+The nickname, skin choice and imported PNG survive a normal restart. The nickname
+field lives only in Player Profile. A signed-in Java profile locks it and draws
+the name in gray; the same official name is used for protocol 14. Nicknames
 remain 1–16 ASCII letters/digits/underscores for the legacy protocol. Pack skin
 and Classic Steve are the two bundled presets. **Choose skin file** imports a
 64×32 or 64×64 PNG into `config/player_skin.png`; the selected file is never
@@ -77,7 +79,7 @@ passwords, refresh/access tokens and client secrets are not needed in chat.
 `microsoft.com/link`; the profile screen shows the device code and a Cancel
 button. ReCraft does not display a password form or run an embedded browser.
 The flow is device code / refresh token → Xbox user token → Minecraft XSTS
-token → `/launcher/login` → Java profile and active skin. It respects polling
+token → `/launcher/login` → Java profile and active skin/cape. It respects polling
 intervals, `authorization_pending`, `slow_down`, expiry and cancellation.
 An expired/revoked refresh grant starts a new device-code flow. The official
 profile name becomes the shared player/network nickname after successful login.
@@ -96,7 +98,7 @@ dependency. Skin file selection uses the OS dialog, osascript, or zenity/kdialog
 
 `config/accounts.json` uses Prism's version-3 account schema: active MSA account,
 `msa-client-id`, MSA access/refresh tokens, `utoken`, `xrp-mc`, `ygg`, and profile
-name/id/skin. ReCraft owns its own **single-account** file and does not open
+name/id/skin and active capes. ReCraft owns its own **single-account** file and does not open
 Prism/MultiMC user files. Like that schema, tokens are stored as JSON, without
 an invented encryption layer. Writes use an exclusive temporary file and
 atomic replacement. POSIX permissions are 0600; Windows writes an explicit
@@ -125,8 +127,40 @@ This caught a 1045-character device code that exceeded the old 1024-character
 buffer; the bounded buffer is now 8192 bytes, with an explicit regression test.
 The probe was cancelled before authorization, without saving any account tokens.
 An actual account sign-in and Minecraft Services application access remain
-unverified. Modern server gameplay and authenticated Beta-server joining
-are still absent: logging in to the profile does not enable either. Protocol 14
-continues to use the configured name for offline-mode servers, without sending
-account credentials. Online skin upload, capes, multi-account selection and
-automatic session refresh during gameplay are follow-up work.
+unverified. For a protocol 14 online challenge, the client now posts the
+Minecraft token, official UUID (`selectedProfile`) and server ID to
+`https://sessionserver.mojang.com/session/minecraft/join` on a worker thread.
+It waits for HTTP 204 before sending the Beta login. An expired token refreshes
+before joining. Offline `-` challenges do not contact the session service.
+Actual interoperability requires a compatible server whose authentication also
+uses the current session service; retired server-side checkserver URLs are not
+repaired by the client. Modern gameplay/RSA/AES remain absent.
+
+Active skin and cape download through the asset manager. The cape cache is
+`config/microsoft_cape_<uuid>.png`; it is cleared when the profile has no active
+cape. Beta already had a cape model, so no new shader path was needed. Visible
+remote Beta players use public Mojang name -> UUID -> textures lookup on a separate
+worker, with at most 64 session cache entries. The same fetch interface accepts
+UUID directly for future protocols. Remote PNGs are kept in memory, never in
+account files. Other clients use the player's official profile textures normally.
+Slim/Alex geometry, full cape movement animation, online skin upload,
+multi-account selection and modern gameplay remain follow-up work.
+
+## Minecraft Services rejection after browser authorization
+
+Browser authorization confirms the Microsoft OAuth step only. The client now
+reports the service HTTP status, distinguishes an invalid app registration from
+service outages, and avoids printing raw credential-bearing responses.
+The `/launcher/login` body was checked against the current
+[Prism implementation](https://github.com/PrismLauncher/PrismLauncher/blob/develop/launcher/minecraft/auth/steps/LauncherLoginStep.cpp).
+
+If the new message says **HTTP 403: app registration rejected**, the application
+owner needs Minecraft Services approval for the public Client ID. Entra public
+client settings alone are not that approval. Consult
+[Minecraft's application access support page](https://help.minecraft.net/hc/en-us/articles/16254801392141)
+or Minecraft Support, include the ReCraft repository and public Client ID, and
+request the current third-party application access process. Approval and the
+current availability of an application form cannot be granted by ReCraft.
+For other statuses, use the specific message; do not assume every rejection is
+an app-registration error. No private account response was inspected to diagnose
+the reported generic failure.

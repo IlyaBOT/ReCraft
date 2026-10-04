@@ -45,6 +45,15 @@ int world_boat_use(World *w,Player *p,InventorySlot *held)
     return 1;
 }
 static float random_float(World *w) { return (float)world_random(w,16777216)/16777216; }
+int world_falling_spawn(World *w,int x,int y,int z,int id)
+{
+    SavedEntity *e=spawn(w,x+.5f,y+.5f,z+.5f,7);
+    if(!e)return 0;
+    e->transport.falling_block=id;
+    /* Remove the source once, atomically with spawning. Scheduled duplicate
+     * updates now see air; the persistent entity owns the block until landing. */
+    world_set_block(w,x,y,z,0);return 1;
+}
 int world_tnt_prime(World *w,float x,float y,float z,int fuse)
 {
     SavedEntity *e=spawn(w,x,y,z,4); float angle;
@@ -53,11 +62,32 @@ int world_tnt_prime(World *w,float x,float y,float z,int fuse)
     e->mob.vx=-sinf(angle)*.4f;e->mob.vz=-cosf(angle)*.4f;e->mob.vy=4;
     world_sound(w,"random.fuse",x,y,z,1,1);return 1;
 }
-static float gaussian(World *w)
+float world_entity_gaussian(World *w)
 {
     float x,y,s;
     do { x=2*random_float(w)-1; y=2*random_float(w)-1; s=x*x+y*y; } while(s>=1 || s==0);
     return x*sqrtf(-2*logf(s)/s);
+}
+#define gaussian world_entity_gaussian
+int world_dispenser_projectile(World *w,float x,float y,float z,int dx,int dz,int item)
+{
+    SavedEntity *e=spawn(w,x,y,z,item==262 ? 1 : item==332 ? 5 : 6);
+    float length=sqrtf(dx*dx+dz*dz+.01f);
+    if(!e) return 0;
+    e->transport.player=item==262;
+    e->transport.owner_id=-1; /* No shooting entity for a dispenser projectile. */
+    e->mob.vx=(dx/length+gaussian(w)*.045f)*22;
+    e->mob.vy=(.1f/length+gaussian(w)*.045f)*22;
+    e->mob.vz=(dz/length+gaussian(w)*.045f)*22;
+    return 1;
+}
+static void throwable_impact(World *w,SavedEntity *e)
+{
+    int i,n=1;
+    e->transport.dead=1;
+    if(e->transport.kind!=6 || world_random(w,8)!=0) return;
+    if(world_random(w,32)==0) n=4;
+    for(i=0;i<n;++i) world_mob_spawn(w,93,e->mob.x,e->mob.y,e->mob.z);
 }
 int world_bow_use(World *w,const Player *p,InventorySlot *inventory)
 {
@@ -67,6 +97,7 @@ int world_bow_use(World *w,const Player *p,InventorySlot *inventory)
     e=spawn(w,p->x+cosf(p->yaw)*.16f,p->y+1.52f,p->z+sinf(p->yaw)*.16f,1);
     if(!e) return 0;
     e->transport.player=1;
+    e->transport.owner_id=-2; /* Runtime local player; vanilla NBT omits owner. */
     e->mob.vx=(sinf(p->yaw)*cp+gaussian(w)*.0075f)*30;
     e->mob.vy=(sinf(p->pitch)+gaussian(w)*.0075f)*30;
     e->mob.vz=(-cosf(p->yaw)*cp+gaussian(w)*.0075f)*30;
@@ -178,18 +209,20 @@ static void arrow_tick(World *w,SavedEntity *e,Player *player,InventorySlot *inv
             if(intercept(p,v,lo,hi,&t)) { best=t; victim=other; }
         }
     }
-    if(!s->player || s->air_ticks>=5) {
+    if(s->owner_id!=-2 || s->air_ticks>=5) {
         float lo[3]={player->x-.6f,player->y-.3f,player->z-.6f},hi[3]={player->x+.6f,player->y+2.1f,player->z+.6f},t=best;
         if(player->health>0 && !player->creative && intercept(p,v,lo,hi,&t)) {
             best=t; victim=NULL; hit_player=1;
         }
     }
     if(hit_player) {
+        if(s->kind>=5) { throwable_impact(w,e); return; }
         int health=player->health; if(s->player) player_damage(player,4); else player_mob_damage(player,w,4);
         if(player->health<health) { s->dead=1; world_sound(w,"random.drr",m->x,m->y,m->z,1,1); return; }
         m->vx*= -.1f; m->vy*= -.1f; m->vz*= -.1f; s->air_ticks=0; return;
     }
     if(victim) {
+        if(s->kind>=5) { if(victim->mob.type) world_mob_hit(w,victim,0); throwable_impact(w,e); return; }
         if(victim->transport.kind>=2) { cart_hit(w,victim,player,4,0); s->dead=1; return; }
         if(world_mob_hit(w,victim,4)) {
             if(victim->mob.type==50 && victim->mob.health==0 && s->owner_id)
@@ -199,6 +232,7 @@ static void arrow_tick(World *w,SavedEntity *e,Player *player,InventorySlot *inv
         m->vx*= -.1f; m->vy*= -.1f; m->vz*= -.1f; s->air_ticks=0; return;
     }
     if(block) {
+        if(s->kind>=5) { m->x+=v[0]*best; m->y+=v[1]*best; m->z+=v[2]*best; throwable_impact(w,e); return; }
         float length=sqrtf(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]),t=best-(length>0 ? .05f/length : 0);
         s->x_tile=bx; s->y_tile=by; s->z_tile=bz; s->in_tile=world_peek_block(w,bx,by,bz);
         s->in_data=world_peek_metadata(w,bx,by,bz); s->in_ground=1; s->shake=7;
@@ -207,7 +241,7 @@ static void arrow_tick(World *w,SavedEntity *e,Player *player,InventorySlot *inv
     } else { m->x+=v[0]; m->y+=v[1]; m->z+=v[2]; }
     m->yaw=atan2f(m->vx,-m->vz)*57.2957795f; m->pitch=atan2f(m->vy,sqrtf(m->vx*m->vx+m->vz*m->vz))*57.2957795f;
     { float drag=fluid_kind(world_peek_block(w,(int)floorf(m->x),(int)floorf(m->y),(int)floorf(m->z)))==1 ? .8f : .99f;
-      m->vx*=drag; m->vy=m->vy*drag-.6f; m->vz*=drag; }
+      m->vx*=drag; m->vy=m->vy*drag-(s->kind==1 ? 1.0f : .6f); m->vz*=drag; }
     if(m->y< -64) s->dead=1;
 }
 int world_minecart_spawn(World *w,float x,float y,float z,int type)
@@ -479,15 +513,26 @@ void world_transport_tick(World *w,Player *p,InventorySlot *inventory)
             if(!e->transport.kind || e->last_tick==w->tick) { link=&e->next; continue; }
             e->last_tick=w->tick;
             e->transport.previous_x=e->mob.x; e->transport.previous_y=e->mob.y; e->transport.previous_z=e->mob.z;
-            if(e->transport.kind==1) arrow_tick(w,e,p,inventory);
+            if(e->transport.kind==1 || e->transport.kind==5 || e->transport.kind==6) arrow_tick(w,e,p,inventory);
             else if(e->transport.kind==3) boat_tick(w,e,p);
-            else if(e->transport.kind==4) {
+            else if(e->transport.kind==4 || e->transport.kind==7) {
                 MobState *m=&e->mob;m->vy-=.8f;m->on_ground=0;
                 if(!vehicle_move_axis(w,m,1,m->vy*.05f,.49f,.49f)) { if(m->vy<0)m->on_ground=1;m->vy*= -.5f; }
                 vehicle_move_axis(w,m,0,m->vx*.05f,.49f,.49f);vehicle_move_axis(w,m,2,m->vz*.05f,.49f,.49f);
                 m->vx*=.98f;m->vy*=.98f;m->vz*=.98f;
                 if(m->on_ground) {m->vx*=.7f;m->vz*=.7f;}
-                if(e->transport.fuse--<=0) {e->transport.dead=1;world_explode(w,p,m->x,m->y,m->z,4,0);}
+                if(e->transport.kind==4) {
+                    if(e->transport.fuse--<=0) {e->transport.dead=1;world_explode(w,p,m->x,m->y,m->z,4,0);}
+                } else {
+                    int x=(int)floorf(m->x),y=(int)floorf(m->y),z=(int)floorf(m->z);
+                    if(m->on_ground || ++e->transport.fall_time>100) {
+                        unsigned at=world_peek_block(w,x,y,z),below=world_peek_block(w,x,y-1,z);
+                        e->transport.dead=1;
+                        if(!m->on_ground || y<=0 || (at && at!=51 && !fluid_kind(at)) || !below || below==51 || fluid_kind(below) ||
+                           !world_set_block(w,x,y,z,(uint8_t)e->transport.falling_block))
+                            world_item_spawn_at(w,m->x,m->y,m->z,(InventorySlot){e->transport.falling_block,1,0});
+                    }
+                }
             } else cart_tick(w,e,p);
             dirty(c);
             if(e->transport.dead) {
@@ -516,8 +561,8 @@ int world_transport_visible(World *w,RenderEntity *out,int capacity)
             if(r->id!=e->mob.runtime_id) memset(r,0,sizeof(*r));
             r->active=1; r->id=e->mob.runtime_id; r->type=999+e->transport.kind;
             r->x=e->mob.x; r->y=e->mob.y; r->z=e->mob.z;
-            r->yaw=e->mob.yaw; r->pitch=e->transport.kind==1 ? e->mob.pitch : e->transport.slope_pitch; r->color=e->transport.type;
-            r->local_interpolation=1; r->phase=0; r->walk=(float)e->transport.fuse;
+            r->yaw=e->mob.yaw; r->pitch=e->transport.kind==1 || e->transport.kind==5 || e->transport.kind==6 ? e->mob.pitch : e->transport.slope_pitch; r->color=e->transport.kind==7 ? e->transport.falling_block : e->transport.type;
+            r->local_interpolation=1; r->phase=0; r->fuse=e->transport.fuse;r->fire=e->mob.fire;
             r->previous_x=e->transport.previous_x; r->previous_y=e->transport.previous_y; r->previous_z=e->transport.previous_z;
         }
     }
@@ -544,15 +589,16 @@ static int list(NbtWriter *w,const char *name,NbtType type,double x,double y,dou
 static int fields(NbtWriter *w,const SavedEntity *e)
 {
     NbtTag t={0}; const MobState *m=&e->mob; const TransportState *s=&e->transport; int n;
-    t.type=NBT_STRING; t.name=nbt_span("id"); t.value.bytes=nbt_span(s->kind==1 ? "Arrow" : s->kind==3 ? "Boat" : s->kind==4 ? "PrimedTnt" : "Minecart");
+    t.type=NBT_STRING; t.name=nbt_span("id"); t.value.bytes=nbt_span(s->kind==1 ? "Arrow" : s->kind==3 ? "Boat" : s->kind==4 ? "PrimedTnt" : s->kind==5 ? "Snowball" : s->kind==6 ? "Egg" : s->kind==7 ? "FallingSand" : "Minecart");
     if(nbt_writer_tag(w,&t)!=NBT_OK || !list(w,"Pos",NBT_DOUBLE,m->x,m->y,m->z,3) ||
        !list(w,"Motion",NBT_DOUBLE,m->vx/20,m->vy/20,m->vz/20,3) ||
-       !list(w,"Rotation",NBT_FLOAT,s->kind==1 ? 180-m->yaw : m->yaw,m->pitch,0,2) ||
+       !list(w,"Rotation",NBT_FLOAT,s->kind==1 || s->kind==5 || s->kind==6 ? 180-m->yaw : m->yaw,m->pitch,0,2) ||
        !number(w,NBT_FLOAT,"FallDistance",0) || !number(w,NBT_SHORT,"Fire",m->fire) ||
        !number(w,NBT_SHORT,"Air",300) || !number(w,NBT_BYTE,"OnGround",m->on_ground)) return 0;
-    if(s->kind==1) return number(w,NBT_SHORT,"xTile",s->x_tile) && number(w,NBT_SHORT,"yTile",s->y_tile) &&
-        number(w,NBT_SHORT,"zTile",s->z_tile) && number(w,NBT_BYTE,"inTile",s->in_tile) && number(w,NBT_BYTE,"inData",s->in_data) &&
-        number(w,NBT_BYTE,"shake",s->shake) && number(w,NBT_BYTE,"inGround",s->in_ground) && number(w,NBT_BYTE,"player",s->player);
+    if(s->kind==7)return number(w,NBT_BYTE,"Tile",s->falling_block);
+    if(s->kind==1 || s->kind==5 || s->kind==6) return number(w,NBT_SHORT,"xTile",s->x_tile) && number(w,NBT_SHORT,"yTile",s->y_tile) &&
+        number(w,NBT_SHORT,"zTile",s->z_tile) && number(w,NBT_BYTE,"inTile",s->in_tile) && (s->kind!=1 || number(w,NBT_BYTE,"inData",s->in_data)) &&
+        number(w,NBT_BYTE,"shake",s->shake) && number(w,NBT_BYTE,"inGround",s->in_ground) && (s->kind!=1 || number(w,NBT_BYTE,"player",s->player));
     if(s->kind==3) return 1; /* Beta Boat adds no fields to Entity NBT. */
     if(s->kind==4) return number(w,NBT_BYTE,"Fuse",s->fuse);
     if(!number(w,NBT_INT,"Type",s->type)) return 0;
@@ -571,7 +617,7 @@ static int fields(NbtWriter *w,const SavedEntity *e)
 typedef struct Rewrite { NbtWriter *w; const SavedEntity *e; int skip; unsigned skip_depth; } Rewrite;
 static int known(NbtSpan name)
 {
-    static const char *names[]={"id","Pos","Motion","Rotation","FallDistance","Fire","Air","OnGround","xTile","yTile","zTile","inTile","inData","shake","inGround","player","Type","PushX","PushZ","Fuel","Items","Fuse"};
+    static const char *names[]={"id","Pos","Motion","Rotation","FallDistance","Fire","Air","OnGround","xTile","yTile","zTile","inTile","inData","shake","inGround","player","Type","PushX","PushZ","Fuel","Items","Fuse","Tile"};
     unsigned i; for(i=0;i<sizeof(names)/sizeof(names[0]);++i) if(name.size==strlen(names[i]) && !memcmp(name.data,names[i],name.size)) return 1;
     return 0;
 }

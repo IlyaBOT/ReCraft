@@ -34,7 +34,7 @@ typedef int TestSocket;
 
 typedef struct MockServer {
     TestSocket listener;
-    int passed;
+    int passed,online,joins;
 } MockServer;
 typedef struct Observed {
     int state_play,position,chunk,block,inventory;
@@ -46,7 +46,7 @@ typedef struct Observed {
     int furnace_open,furnace_sync,furnace_slots,properties[3];
     int rejected,accepted,closed,dead,alive,respawn;
     int player_spawn,player_despawn,chat,sign;
-    int vehicle_spawn;
+    int vehicle_spawn,fire_flags,notes;
     int16_t chest_id[63],chest_damage[63];
     uint8_t chest_count[63];
 } Observed;
@@ -158,14 +158,14 @@ static int mock_containers(TestSocket s)
        fabs(beta14_f64(p+9)-66.62)>0.0001 || fabs(beta14_f64(p+17)-65.0)>0.0001) return 0;
     return 1;
 }
-static int mock_session(TestSocket s)
+static int mock_session(TestSocket s,int online)
 {
     uint8_t p[64],out[64],*blocks,*chunk_packet; size_t i,index,wool_index,packet_size;
     uLongf compressed_size=131072;
-    /* The first two packets must be the offline Beta 14 handshake and login. */
+    /* Online login must wait for the asynchronous session join callback. */
     if(!recv_all(s,p,15) || p[0]!=2 || p[1]!=0 || p[2]!=6 ||
        memcmp(p+3,"\0P\0l\0a\0y\0e\0r",12)!=0) return 0;
-    { const uint8_t reply[]={2,0,1,0,'-'}; if(!send_all(s,reply,sizeof(reply))) return 0; }
+    { uint8_t reply[64];size_t n=beta14_handshake(reply,sizeof(reply),online ? "-abc123" : "-"); if(!send_all(s,reply,n)) return 0; }
     if(!recv_all(s,p,28) || p[0]!=1 || beta14_u32(p+1)!=14 ||
        p[5]!=0 || p[6]!=6 || memcmp(p+7,"\0P\0l\0a\0y\0e\0r",12)!=0) return 0;
     memset(out,0,16); out[0]=1; put32(out+1,123); out[14]=42; /* Seed=42, overworld. */
@@ -217,6 +217,11 @@ static int mock_session(TestSocket s)
       }
       if(!send_all(s,slots,at)) return 0;
     }
+    for(i=0;i<5;++i) {
+        uint8_t note[13]={0x36};put32(note+1,(uint32_t)-3);note[5]=0;note[6]=65;
+        put32(note+7,8);note[11]=(uint8_t)i;note[12]=(uint8_t)(i*6);
+        if(!send_all(s,note,6) || !send_all(s,note+6,7))return 0;
+    }
     out[0]=0; if(!send_all(s,out,1)) return 0;
     /* Position acknowledgement, keepalive and selected hotbar slot. */
     if(!recv_all(s,p,42) || p[0]!=0x0d || fabs(beta14_f64(p+9)-66.62)>0.0001 ||
@@ -235,6 +240,8 @@ static int mock_session(TestSocket s)
       n=beta14_handshake(string,sizeof(string),"Bob");spawn[0]=0x14;put32(spawn+1,456);
       memcpy(spawn+5,string+1,n-1);at=5+n-1;memset(spawn+at,0,16);put32(spawn+at,9*32);put32(spawn+at+4,65*32);put32(spawn+at+8,8*32);
       if(!send_all(s,spawn,at+16))return 0;
+      { const uint8_t flags[]={0x28,0,0,0,123,0,1,127,0x28,0,0,1,200,0,1,127};
+        if(!send_all(s,flags,sizeof(flags)))return 0; }
       n=beta14_chat(chat,sizeof(chat),unicode_chat);if(!recv_all(s,p,n)||memcmp(p,chat,n))return 0;
       if(!recv_all(s,p,10)||p[0]!=0x07||beta14_i32(p+1)!=123||beta14_i32(p+5)!=456||p[9]!=1)return 0;
       if(!recv_all(s,p,6)||p[0]!=0x12||beta14_i32(p+1)!=123||p[5]!=1)return 0;
@@ -261,7 +268,7 @@ static void *mock_worker(void *arg)
 #else
         { struct timeval timeout={3,0}; setsockopt(s,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout)); }
 #endif
-        server->passed=mock_session(s); test_close(s);
+        server->passed=mock_session(s,server->online); test_close(s);
     }
 #ifdef _WIN32
     return 0;
@@ -272,6 +279,11 @@ static void *mock_worker(void *arg)
 static void observe(void *user,const NetworkEvent *e)
 {
     Observed *o=(Observed *)user;
+    if(e->type==NETWORK_EVENT_NOTE) {
+        assert(e->block_x==-3 && e->block_y==65 && e->block_z==8);
+        assert(e->property==o->notes && e->value==o->notes*6);++o->notes;
+    }
+    if(e->type==NETWORK_EVENT_ENTITY_FLAGS) {assert(e->value==1);assert(e->entity_id==123 ? e->entity_type==-1 : e->entity_id==456 && e->entity_type==0);++o->fire_flags;}
     if(e->type==NETWORK_EVENT_STATE && e->state==NETWORK_PLAY) o->state_play++;
     if(e->type==NETWORK_EVENT_POSITION) { o->position++; o->feet_y=e->y; }
     if(e->type==NETWORK_EVENT_CHUNK) o->chunk++;
@@ -375,10 +387,12 @@ static void test_packet_boundaries(void)
     assert(beta14_next_packet(packet,n,&parsed)==1);
     {char bad[4][61]={{0}};memset(bad[0],'x',16);assert(!beta14_sign_update(packet,sizeof(packet),0,64,0,bad));}
 }
+static int mock_join(void *context,const char *id,char *error,size_t capacity)
+{ MockServer *s=(MockServer *)context;(void)error;(void)capacity;assert(!strcmp(id,"-abc123"));return ++s->joins>=3; }
 int main(void)
 {
     TestSocket listener; struct sockaddr_in addr; World world; NetworkClient *client;
-    MockServer server; Observed observed; int ready=0,i;
+    MockServer server; Observed observed; int ready=0,i,online;
 #ifdef _WIN32
     WSADATA data; uintptr_t worker;
     assert(WSAStartup(MAKEWORD(2,2),&data)==0);
@@ -386,6 +400,8 @@ int main(void)
     pthread_t worker;
 #endif
     test_packet_boundaries();
+    for(online=0;online<=1;++online) {
+    ready=0;
     listener=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP); assert(listener!=TEST_INVALID);
     memset(&addr,0,sizeof(addr)); addr.sin_family=AF_INET;
     /* Darwin hides the BSD INADDR_LOOPBACK constant under _POSIX_C_SOURCE.
@@ -402,7 +418,7 @@ int main(void)
 #endif
         assert(getsockname(listener,(struct sockaddr *)&addr,&len)==0);
     }
-    server.listener=listener; server.passed=0;
+    server.listener=listener; server.passed=0;server.online=online;server.joins=0;
 #ifdef _WIN32
     worker=_beginthreadex(NULL,0,mock_worker,&server,0,NULL); assert(worker!=0);
 #else
@@ -411,6 +427,7 @@ int main(void)
     assert(world_init(&world,0,0,64)==WORLD_OK); world.network_mode=1;
     memset(&observed,0,sizeof(observed));
     client=network_create(&world,observe,&observed); assert(client!=NULL); observed.client=client;
+    if(online)network_set_auth(client,mock_join,&server);
     assert(network_connect(client,"127.0.0.1",ntohs(addr.sin_port),"Player"));
     for(i=0;i<5000;++i) {
         network_tick(client);
@@ -442,6 +459,8 @@ int main(void)
     assert(observed.closed==1 && observed.dead==1 && observed.respawn==1 && observed.alive==1);
     assert(observed.player_spawn==1&&observed.player_despawn==1&&observed.chat==1&&observed.sign==1);
     assert(observed.vehicle_spawn==5);
+    assert(observed.fire_flags==2 && server.joins==(online ? 3 : 0));
+    assert(observed.notes==5);
     {NetworkPlayerInfo players[2];assert(network_player_list(client,players,2)==1&&players[0].self);}
     /* Let the nonblocking client flush the final respawn acknowledgement. */
     for(i=0;i<50;++i) { network_tick(client); pause_ms(1); }
@@ -454,9 +473,10 @@ int main(void)
     assert(server.passed);
     assert(world_close(&world)==WORLD_OK);
     test_close(listener);
+    }
 #ifdef _WIN32
     WSACleanup();
 #endif
-    puts("network_test: protocol framing and loopback Beta 14 session passed");
+    puts("network_test: offline/online Beta 14 sessions, asynchronous join and burning metadata passed");
     return 0;
 }

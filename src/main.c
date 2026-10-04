@@ -14,6 +14,8 @@
 #include "game/crafting.h"
 #include "game/mining.h"
 #include "game/container.h"
+#include "world/mechanisms.h"
+#include "world/piston.h"
 #include "world/block_entity.h"
 #include "world/entities.h"
 #include "world/fluid.h"
@@ -37,6 +39,7 @@
 #include "util/game_paths.h"
 #include "util/file_dialog.h"
 #include "account/account.h"
+#include "account/player_textures.h"
 #include "util/display.h"
 #include "assets/assets.h"
 #include "ui/pixel_font.h"
@@ -63,8 +66,6 @@ extern int stbi_write_png(const char *, int, int, int, const void *, int);
 #define ENTITY_LIMIT 256
 #define PI_F 3.14159265358979323846f
 static const int beta_items[9] = { 1, 3, 2, 12, 4, 17, 18, 20, 50 };
-static const char *const hotbar_labels[9] = {
-    "Stone", "Dirt", "Grass", "Sand", "Cobble", "Wood", "Leaves", "Glass", "Torch" };
 
 typedef RenderEntity Entity;
 
@@ -86,6 +87,7 @@ typedef struct App {
     NetworkClient *network;
     ServerStatusBrowser *status_browser;
     Account *account;
+    PlayerTextures *player_textures;
     unsigned account_revision;
     unsigned status_revisions[RECRAFT_MAX_SERVERS];
     int status_visible;
@@ -265,7 +267,7 @@ static int store_skin(App *app,const char *relative,const unsigned char *bytes,s
 }
 static void poll_account(App *app)
 {
-    AccountView view;unsigned char *skin;size_t size;
+    AccountView view;unsigned char *skin;size_t size;int cape_changed;
     account_view(app->account,&view);
     if(view.revision!=app->account_revision) {
         app->account_revision=view.revision;
@@ -275,6 +277,13 @@ static void poll_account(App *app)
         if(!view.busy&&view.signed_in&&view.name[0]) {
             copy_text(app->ui.options.player_name,sizeof(app->ui.options.player_name),view.name);
             copy_text(app->ui.player_name_input,sizeof(app->ui.player_name_input),view.name);
+            if(!assets_player_cape().id && strlen(view.id)==32) {
+                char relative[96],path[WORLD_PATH_MAX];void *bytes;
+                snprintf(relative,sizeof(relative),"config/microsoft_cape_%s.png",view.id);
+                if(game_path_join(path,sizeof(path),app->root,relative) && (bytes=game_read_small_file(path,65536,&size))) {
+                    assets_set_player_cape(bytes,size);free(bytes);
+                }
+            }
         }
     }
     skin=account_take_skin(app->account,&size);
@@ -284,6 +293,29 @@ static void poll_account(App *app)
         }
         free(skin);
     }
+    skin=account_take_cape(app->account,&size,&cape_changed);
+    if(cape_changed) {
+        assets_set_player_cape(skin,size);
+        if(size && strlen(view.id)==32) {char relative[96];snprintf(relative,sizeof(relative),"config/microsoft_cape_%s.png",view.id);store_skin(app,relative,skin,size);}
+        else if(view.signed_in && strlen(view.id)==32) {
+            char relative[96],path[WORLD_PATH_MAX];snprintf(relative,sizeof(relative),"config/microsoft_cape_%s.png",view.id);
+            if(game_path_join(path,sizeof(path),app->root,relative))remove(path);
+        }
+    }
+    free(skin);
+}
+static void poll_player_textures(App *app)
+{
+    PlayerTextureResult result;int i;
+    if(!player_textures_poll(app->player_textures,&result))return;
+    assets_set_remote_texture(result.slot,0,result.skin,result.skin_size);
+    assets_set_remote_texture(result.slot,1,result.cape,result.cape_size);
+    for(i=0;i<ENTITY_LIMIT;++i) if(app->entities[i].active && app->entities[i].appearance==(int)result.slot+1) {
+        Texture2D skin=assets_remote_texture(result.slot,0);
+        app->entities[i].skin=skin.id;app->entities[i].skin_height=skin.height;
+        app->entities[i].cape=assets_remote_texture(result.slot,1).id;
+    }
+    player_texture_result_free(&result);
 }
 
 static void notice(App *app, const char *text)
@@ -484,7 +516,8 @@ static int leave_world(App *app)
             capture_cursor(app, 0);
             return 0;
         }
-        if (app->network) { network_destroy(app->network); app->network = NULL; }
+        if (app->network) { account_reset_join(app->account); network_destroy(app->network); app->network = NULL; }
+        player_textures_destroy(app->player_textures);app->player_textures=NULL;assets_clear_remote_textures();
         if (world_close(&app->world) != WORLD_OK) return 0;
         audio_stop_records(&app->audio);
         memset(&app->first_person,0,sizeof(app->first_person));
@@ -596,6 +629,11 @@ static void network_event(void *user, const NetworkEvent *event)
     }
     else if(event->type==NETWORK_EVENT_SIGN)
         sign_text_receive(&app->world,event->block_x,event->block_y,event->block_z,event->sign_lines);
+    else if(event->type==NETWORK_EVENT_NOTE) {
+        static const char *sounds[]={"note.harp","note.bd","note.snare","note.hat","note.bassattack"};
+        if(world_peek_block(&app->world,event->block_x,event->block_y,event->block_z)==25)
+            world_sound(&app->world,sounds[event->property],event->block_x+.5f,event->block_y+.5f,event->block_z+.5f,3,powf(2,(event->value-12)/12.0f));
+    }
     else if (event->type == NETWORK_EVENT_DISCONNECT) {
         reset_modal_inputs(app,0);
         notice(app, event->text);
@@ -622,6 +660,7 @@ static void network_event(void *user, const NetworkEvent *event)
         if(event->window_type==0 && (event->window_slots==27 || event->window_slots==54)) kind=CONTAINER_CHEST;
         else if(event->window_type==1) kind=CONTAINER_WORKBENCH;
         else if(event->window_type==2 && event->window_slots==3) kind=CONTAINER_FURNACE;
+        else if(event->window_type==3 && event->window_slots==9) kind=CONTAINER_DISPENSER;
         else { network_close_window(app->network,event->window_id); notice(app,"This server container is not supported yet."); return; }
         open_inventory(app,kind,hit,event->window_type==1 ? 0 : event->window_slots);
         app->container.window_id=event->window_id;
@@ -638,6 +677,10 @@ static void network_event(void *user, const NetworkEvent *event)
     } else if(event->type==NETWORK_EVENT_WINDOW_SYNC && app->container.window_id==event->window_id) {
         if(app->container.pending==2) app->container.pending=0;
     }
+    else if(event->type==NETWORK_EVENT_ENTITY_FLAGS) {
+        if(event->entity_type==-1)app->player.fire=(event->value&1) ? 32767 : 0;
+        else for(i=0;i<ENTITY_LIMIT;++i)if(app->entities[i].active && app->entities[i].id==event->entity_id)app->entities[i].fire=(event->value&1) ? 1 : 0;
+    }
     else if (event->type == NETWORK_EVENT_ENTITY_SPAWN || event->type == NETWORK_EVENT_ENTITY_MOVE ||
              event->type == NETWORK_EVENT_ENTITY_DESPAWN) {
         for (i = 0; i < ENTITY_LIMIT; ++i) {
@@ -652,11 +695,16 @@ static void network_event(void *user, const NetworkEvent *event)
         }
         if (event->type == NETWORK_EVENT_ENTITY_SPAWN && free_slot >= 0) {
             Entity *e = &app->entities[free_slot];
+            memset(e,0,sizeof(*e));
             e->active = 1; e->id = event->entity_id; e->type = event->entity_type;
             e->color=event->entity_variant;
             e->x = (float)event->x; e->y = (float)event->y; e->z = (float)event->z;
             e->yaw=event->yaw; e->pitch=event->pitch;
             e->positioned=0; e->walk=0;
+            if(e->type==0) {
+                int slot=player_textures_queue(app->player_textures,event->text,NULL);
+                if(slot>=0){Texture2D skin=assets_remote_texture((unsigned)slot,0);e->appearance=slot+1;e->skin=skin.id;e->skin_height=skin.height;e->cape=assets_remote_texture((unsigned)slot,1).id;}
+            }
             ++app->entity_count;
         }
     }
@@ -789,11 +837,13 @@ static void join_server(App *app, const char *address)
         for (i = 0; i < RECRAFT_INVENTORY_SLOTS; ++i) app->inventory[i].id = -1;
     }
     app->network = network_create(&app->world, network_event, app);
+    app->player_textures=player_textures_create();
+    if(app->network && app->ui.auth_signed_in) network_set_auth(app->network,account_join_server,app->account);
     if (!app->network || !network_connect(app->network, host, port, app->ui.options.player_name)) {
         notice(app, app->network ? network_last_error(app->network) : "Network allocation failed.");
         leave_world(app); return;
     }
-    notice(app, "Connecting to offline-mode Beta 1.7.3 server...");
+    notice(app, "Connecting to Beta 1.7.3 server...");
     ui_set_screen(&app->ui, UI_SCREEN_GAME);
     capture_cursor(app, 1);
 }
@@ -1052,7 +1102,7 @@ static void container_input(App *app)
     } else if (!s->server && s->kind==CONTAINER_CHEST) {
         s->size=block_chest_halves(&app->world,s->x,s->y,s->z,&first,&second);
         if (!s->size) { close_inventory(app); capture_cursor(app,1); return; }
-    } else if (!s->server && s->kind==CONTAINER_FURNACE) {
+    } else if (!s->server && (s->kind==CONTAINER_FURNACE || s->kind==CONTAINER_DISPENSER)) {
         first=block_entity_get(&app->world,s->x,s->y,s->z,0);
         if (!first) { close_inventory(app); capture_cursor(app,1); return; }
     }
@@ -1205,6 +1255,10 @@ static void game_input(App *app)
     }
     app->attack=IsMouseButtonDown(MOUSE_LEFT_BUTTON)!=0;
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) app->attack_pressed=1;
+    if(app->attack_pressed && !app->network) {
+        BlockHit hit=player_raycast(&app->player,&app->world,5);
+        if(hit.hit && hit.block==25)note_block_use(&app->world,hit.x,hit.y,hit.z,0);
+    }
     if(app->network && app->attack) {
         BlockHit hit=player_raycast(&app->player,&app->world,4);
         RendererCamera camera={app->player.x,app->player.y+1.62f,app->player.z,app->player.yaw,app->player.pitch,70};
@@ -1255,6 +1309,7 @@ static void game_input(App *app)
             if(world_mobs_interact(&app->world,&app->player,item,3)) { app->swing_ticks=6; return; }
             if (hit.hit && !IsKeyDown(KEY_LEFT_SHIFT)) {
                 if(hit.block==84 && jukebox_use(&app->world,hit.x,hit.y,hit.z,item)) return;
+                if(hit.block==25 && note_block_use(&app->world,hit.x,hit.y,hit.z,1))return;
                 if(hit.block==26) {
                     int result=player_sleep(&app->player,&app->world,hit.x,hit.y,hit.z);
                     if(result==1) notice(app,"You can only sleep at night.");
@@ -1268,9 +1323,9 @@ static void game_input(App *app)
                     if (n) open_inventory(app,CONTAINER_CHEST,hit,n);
                     return;
                 }
-                if (hit.block==61 || hit.block==62) {
+                if (hit.block==61 || hit.block==62 || hit.block==23) {
                     if (block_entity_get(&app->world,hit.x,hit.y,hit.z,1))
-                        open_inventory(app,CONTAINER_FURNACE,hit,3);
+                        open_inventory(app,hit.block==23 ? CONTAINER_DISPENSER : CONTAINER_FURNACE,hit,hit.block==23 ? 9 : 3);
                     return;
                 }
                 if(door_activate(&app->world,hit.x,hit.y,hit.z) || world_redstone_activate(&app->world,hit.x,hit.y,hit.z)) return;
@@ -1407,6 +1462,7 @@ static void tick_game(App *app)
     if (!app->network) {
         WorldDropEvent drop;
         world_environment_tick(&app->world);
+        world_mechanisms_tick(&app->world,&app->player);
         world_step_physics(&app->world,64);
         block_entities_tick(&app->world);
         world_mobs_spawn_tick(&app->world,&app->player);
@@ -1618,7 +1674,30 @@ static int gameplay_preview(App *app,const char *name)
             if(b) b->slots[i]=(InventorySlot){i%2 ? 278 : 1,i%2 ? 1 : 64,i%2 ? 321 : 0};
         }
         open_inventory(app,CONTAINER_CHEST,hit,large ? 54 : 27);
-    } else if(!strcmp(name,"events")) {
+    } else if(!strcmp(name,"dispenser")) {
+        world_set_state(&app->world,4,64,4,(BetaBlockState){23,3});
+        a=block_entity_get(&app->world,4,64,4,1);
+        for(i=0;i<9;++i) a->slots[i]=(InventorySlot){i<3 ? 262 : i<6 ? 332 : 344,32,0};
+        block_entity_changed(&app->world,a); open_inventory(app,CONTAINER_DISPENSER,hit,9);
+    } else if(!strcmp(name,"mechanisms")) {
+        int x,z,y;
+        for(x=1;x<16;++x) for(z=3;z<15;++z) {
+            world_set_block(&app->world,x,63,z,1);
+            for(y=64;y<70;++y) world_set_block(&app->world,x,y,z,0);
+        }
+        world_set_state(&app->world,3,64,6,(BetaBlockState){23,3});
+        world_set_state(&app->world,6,64,6,(BetaBlockState){29,5});
+        world_set_state(&app->world,7,64,6,(BetaBlockState){35,5});
+        world_set_state(&app->world,6,64,5,(BetaBlockState){69,13});
+        world_set_block(&app->world,2,64,10,70); world_set_block(&app->world,4,64,10,72);
+        for(i=0;i<4;++i) world_set_state(&app->world,6+i*2,64,10,(BetaBlockState){93,(uint8_t)(i*4)});
+        world_set_state(&app->world,6,64,12,(BetaBlockState){76,5});
+        for(i=0;i<6;++i) world_set_block(&app->world,7+i,64,12,55);
+        for(i=0;i<4;++i) { world_step_physics(&app->world,4096); block_entities_tick(&app->world); }
+        app->world.beta_world_time=6000; world_environment_refresh(&app->world);
+        app->player.x=8; app->player.y=67; app->player.z=18; app->player.yaw=0; app->player.pitch=-.42f;
+        app->previous_player=app->player;
+    } else if(!strcmp(name,"events") || !strcmp(name,"effects")) {
         static const int types[4]={54,51,52,50};int x,y,z;
         for(x=1;x<16;++x)for(z=3;z<15;++z) {
             world_set_block(&app->world,x,63,z,1);
@@ -1626,13 +1705,23 @@ static int gameplay_preview(App *app,const char *name)
         }
         world_set_block(&app->world,4,63,10,87);world_ignite(&app->world,4,64,10);
         world_set_block(&app->world,12,63,10,87);world_ignite(&app->world,12,64,10);
-        world_tnt_prime(&app->world,8.5f,64.5f,10.5f,6);
+        world_tnt_prime(&app->world,8.5f,64.5f,10.5f,!strcmp(name,"effects") ? 80 : 6);
+        if(!strcmp(name,"effects")) {
+            SavedEntity *e;
+            world_set_block(&app->world,10,70,10,12); world_falling_spawn(&app->world,10,70,10,12);
+            app->player.fire=400;
+            for(e=world_peek_chunk(&app->world,0,0)->saved_entities;e;e=e->next) if(e->transport.kind==4) e->mob.vx=e->mob.vz=0;
+        }
         for(i=0;i<4;++i)world_mob_spawn(&app->world,types[i],3.5f+i*3,64,6.5f);
         app->world.beta_world_time=6000;world_environment_refresh(&app->world);
         app->player.x=8.5f;app->player.y=64;app->player.z=17;app->player.yaw=0;app->player.pitch=-.12f;
         app->previous_player=app->player;
         app->entity_count=world_mobs_visible(&app->world,app->entities,ENTITY_LIMIT);
         app->entity_count+=world_transport_visible(&app->world,app->entities+app->entity_count,ENTITY_LIMIT-app->entity_count);
+        if(!strcmp(name,"effects")) {
+            SavedEntity *e;
+            for(e=world_peek_chunk(&app->world,0,0)->saved_entities;e;e=e->next) if(e->mob.type) e->mob.fire=400;
+        }
     } else if(!strcmp(name,"health")) {
         app->player.creative=0; app->player.health=13; app->health=13;
     } else if(!strcmp(name,"day") || !strcmp(name,"night") || !strcmp(name,"rain") ||
@@ -1681,8 +1770,9 @@ static int gameplay_preview(App *app,const char *name)
             } else if(!strcmp(name,"doors")) door_place(&app->world,4+i*4,64,8,i==1 ? 71 : 64,i*1.57079633f);
         }
         if(!strcmp(name,"repeaters")) for(i=0;i<4;++i) {
-            world_set_state(&app->world,3+i*3,64,8,(BetaBlockState){93,(uint8_t)(i*4)});
-            world_set_state(&app->world,3+i*3,64,9,(BetaBlockState){76,5});
+            static const int input_x[4]={0,-1,0,1},input_z[4]={1,0,-1,0};
+            world_set_state(&app->world,3+i*3,64,8,(BetaBlockState){93,(uint8_t)(i*4+i)});
+            world_set_state(&app->world,3+i*3+input_x[i],64,8+input_z[i],(BetaBlockState){76,5});
         }
         app->player.x=8.5f; app->player.y=65; app->player.z=15; app->player.yaw=0; app->player.pitch=-.35f; app->player.flying=1;
         app->previous_player=app->player;
@@ -1804,9 +1894,10 @@ int main(int argc, char **argv)
             "  [--frames N] [--window 960x720] [--capture file.png] [--csv file.csv]\n"
             "  [--client-arrays] [--basic-mesh] [--distance 2..12] [--mipmaps 0..4]\n"
             "  [--smooth-lighting 0|1] [--menu-blur 0|1] [--fancy-leaves 0|1] [--reduced-transparency 0|1] [--chunk-budget 1..8] [--vbo-budget 4|8|16|32]\n"
-            "  [--screen main|profile|worlds|create|multiplayer|add|direct|video|inventory|pause]\n"
+            "  [--screen main|profile|profile-online|worlds|create|multiplayer|add|direct|video|inventory|pause]\n"
             "  [--smoke-test --screen player|crafting|furnace|chest|large-chest|health|blocks|day|night|rain|snow|bed|mobs|events]\n"
             "  [--smoke-test --screen materials|sign-edit|multiplayer-demo|chat|players]\n"
+            "  [--smoke-test --screen mechanisms|dispenser|repeaters|effects]\n"
             "  [--smoke-test --screen chests-north|chests-south|chests-west|chests-east]\n"
             "  [--language en_US] [--texture-pack texturepacks/pack.zip]\n"
             "  [--no-audio] [--debug] [--fullscreen] [--window-check]\n"
@@ -1916,7 +2007,12 @@ int main(int argc, char **argv)
         else if (!strcmp(run.screen,"add")) ui_set_screen(&app.ui,UI_SCREEN_SERVER_EDIT);
         else if (!strcmp(run.screen,"direct")) ui_set_screen(&app.ui,UI_SCREEN_DIRECT_CONNECT);
         else if (!strcmp(run.screen,"options")) ui_set_screen(&app.ui,UI_SCREEN_OPTIONS);
-        else if (!strcmp(run.screen,"profile")) ui_set_screen(&app.ui,UI_SCREEN_PROFILE);
+        else if (!strcmp(run.screen,"profile") || !strcmp(run.screen,"profile-online")) {
+            ui_set_screen(&app.ui,UI_SCREEN_PROFILE);
+            if(app.transient && !strcmp(run.screen,"profile-online")) {
+                app.ui.auth_signed_in=1;copy_text(app.ui.profile_status,sizeof(app.ui.profile_status),"Signed-in GUI fixture; no credentials or service requests.");
+            }
+        }
         else if (!strcmp(run.screen,"languages")) ui_set_screen(&app.ui,UI_SCREEN_LANGUAGES);
         else if (!strcmp(run.screen,"packs")) ui_set_screen(&app.ui,UI_SCREEN_PACKS);
         else if (!strcmp(run.screen,"video")) ui_set_screen(&app.ui,UI_SCREEN_VIDEO);
@@ -1937,6 +2033,7 @@ int main(int argc, char **argv)
         char debug_text[2048];
         app.skip_ui_frame=0;
         poll_account(&app);
+        poll_player_textures(&app);
         stream_ms=terrain_ms=hud_ms=swap_ms=gpu_wait_ms=0;
         if (WindowShouldClose()) {
             if (leave_world(&app)) break;
@@ -2057,6 +2154,11 @@ int main(int argc, char **argv)
                     camera.y += 0.035f*sinf((float)start*14);
                 renderer_draw(app.renderer,&app.world,&camera,scene_width,scene_height,app.ui.options.render_distance);
                 terrain_ms=(recraft_now_seconds()-terrain_start)*1000;
+                {
+                    int burning=app.player.fire>0,entity;
+                    for(entity=0;!burning && entity<ENTITY_LIMIT;++entity)burning=app.entities[entity].active && app.entities[entity].fire>0;
+                    if(burning)assets_animate_fire(app.animation_tick);
+                }
                 app.rendered_entities = entity_render_draw(app.entities,ENTITY_LIMIT,&camera,
                     scene_width,scene_height,app.ui.options.render_distance,(float)elapsed);
                 app.rendered_entities += item_drop_draw(app.drops,128,&camera,
@@ -2079,6 +2181,7 @@ int main(int argc, char **argv)
                         app.first_person.previous_equip+(app.first_person.equip-app.first_person.previous_equip)*(float)(accumulator/RECRAFT_TICK_SECONDS),
                         app.ui.options.view_bobbing && app.player.on_ground && (app.input.forward || app.input.strafe) ? .035f*sinf((float)start*14) : 0);
                 }
+                if(app.player.fire>0)first_person_fire(scene_width,scene_height);
                 if (run.profile_gpu) {
                     double began=recraft_now_seconds();
                     glFinish();
@@ -2128,19 +2231,13 @@ int main(int argc, char **argv)
                     app.player.flying?"flying":"walking",stats.gpu_vendor,stats.gpu_renderer,stats.gpu_version,
                     app.entity_count,app.rendered_entities,app.health);
                 {
-                    int slot, known;
+                    int slot;
                     for (slot = 0; slot < 9; ++slot) {
                         const InventorySlot *item = &app.inventory[slot];
                         if (item->id < 0 || item->count <= 0) copy_text(app.inventory_labels[slot],
-                            sizeof(app.inventory_labels[slot]), "Empty");
+                            sizeof(app.inventory_labels[slot]), "");
                         else {
-                            const char *name = beta_item_name(item->id);
-                            for (known = 0; known < 9; ++known)
-                                if (item->id == beta_items[known]) name = hotbar_labels[known];
-                            if (!name && item->id<BETA_BLOCK_COUNT) {
-                                const BetaBlockDef *def=beta_block_find((unsigned)item->id);
-                                if (def) name=def->name;
-                            }
+                            const char *name = language_item(item->id,item->damage);
                             if (name) snprintf(app.inventory_labels[slot],sizeof(app.inventory_labels[slot]),
                                 "%s x%d",name,item->count);
                             else snprintf(app.inventory_labels[slot],sizeof(app.inventory_labels[slot]),
@@ -2170,7 +2267,7 @@ int main(int argc, char **argv)
                             if(cart) memcpy(contents,cart->transport.cargo,sizeof(cart->transport.cargo));
                         } else if (app.container.kind==CONTAINER_CHEST)
                             block_chest_halves(&app.world,app.container.x,app.container.y,app.container.z,&a,&b);
-                        else if (app.container.kind==CONTAINER_FURNACE)
+                        else if (app.container.kind==CONTAINER_FURNACE || app.container.kind==CONTAINER_DISPENSER)
                             a=block_entity_get(&app.world,app.container.x,app.container.y,app.container.z,0);
                         if (a) { memcpy(contents,a->slots,sizeof(a->slots)); burn=a->burn; fuel=a->fuel; cook=a->cook; }
                         if (b) memcpy(contents+27,b->slots,sizeof(b->slots));

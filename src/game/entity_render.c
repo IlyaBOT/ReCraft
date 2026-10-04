@@ -11,6 +11,27 @@
 #include <GL/gl.h>
 #endif
 #include <math.h>
+static void held_sprite(int tile,int block);
+static void fire_quad(float left,float bottom,float right,float top,float z,int layer,int flip)
+{
+    float u0=flip?1:0,u1=1-u0,v0=layer*.5f,v1=v0+.499f;
+    glTexCoord2f(u1,v1);glVertex3f(left,bottom,z);glTexCoord2f(u0,v1);glVertex3f(right,bottom,z);
+    glTexCoord2f(u0,v0);glVertex3f(right,top,z);glTexCoord2f(u1,v0);glVertex3f(left,top,z);
+}
+static void burning_model(const RenderEntity *e,const RendererCamera *camera)
+{
+    float width=e->type==52 ? 1.4f : e->type==93 ? .3f : e->type>=90 && e->type<=92 ? .9f : .6f;
+    float height=e->type==52 || e->type==90 ? .9f : e->type==93 ? .4f : e->type==91 || e->type==92 ? 1.3f : 1.8f;
+    float size=width*1.4f,remaining=height/size,half=.5f,bottom=0,z=0;int layer=0;
+    glPushAttrib(GL_ENABLE_BIT|GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_TEXTURE_BIT|GL_CURRENT_BIT);
+    glDisable(GL_LIGHTING);glEnable(GL_TEXTURE_2D);glDisable(GL_BLEND);glEnable(GL_ALPHA_TEST);glDepthMask(GL_TRUE);
+    glBindTexture(GL_TEXTURE_2D,assets_fire_texture().id);glColor4f(1,1,1,1);
+    glPushMatrix();glTranslatef(e->draw_x,e->draw_y,e->draw_z);glScalef(size,size,size);
+    glRotatef(-camera->yaw*57.2957795f,0,1,0);glTranslatef(0,0,-.3f+(int)remaining*.02f);
+    glBegin(GL_QUADS);
+    while(remaining>0 && layer<16){fire_quad(-half,bottom,half,bottom+1.4f,z,layer&1,(layer/2)&1);bottom+=.45f;remaining-=.45f;half*=.9f;z+=.03f;++layer;}
+    glEnd();glPopMatrix();glPopAttrib();
+}
 
 static void box(float x, float y, float z, float half, float height)
 {
@@ -35,6 +56,7 @@ static GLint scene_begin(const RendererCamera *camera,int width,int height,float
     glTranslatef(-camera->x,-camera->y,-camera->z); glViewport(0,0,width,height);
     glDisable(GL_LIGHTING); glDisable(GL_FOG); glDisable(GL_BLEND); glDisable(GL_CULL_FACE); glDisable(GL_SCISSOR_TEST);
     glEnable(GL_TEXTURE_2D); glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_GREATER,.1f);
+    glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_MODULATE);
     glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthMask(GL_TRUE);
     return mode;
 }
@@ -110,7 +132,7 @@ static void player_model_pose(const RenderEntity *e,float head_yaw)
 {
     float angle=sinf(e->walk)*32;
     int previous_height=skin_height,previous_modern=player_modern;
-    if(e->type==0) skin_height=assets_get_texture(ASSET_PLAYER_SKIN).height;
+    if(e->type==0) skin_height=e->skin ? e->skin_height : assets_get_texture(ASSET_PLAYER_SKIN).height;
     player_modern=e->type==0&&skin_height==64;
     glPushMatrix(); glTranslatef(e->draw_x,e->draw_y+1.40625f,e->draw_z);
     glRotatef(180-e->yaw,0,1,0); glScalef(.05859375f,-.05859375f,.05859375f);
@@ -123,7 +145,14 @@ static void player_model_pose(const RenderEntity *e,float head_yaw)
     glPopMatrix();
     limb(-5,2,e->type==54 || e->type==51 ? -90+e->pitch : angle,1,0,e->type==51);
     limb(5,2,e->type==54 || e->type==51 ? -90+e->pitch : -angle,1,1,e->type==51);
-    limb(-2,12,-angle,0,0,e->type==51); limb(2,12,angle,0,1,e->type==51); glPopMatrix();
+    limb(-2,12,-angle,0,0,e->type==51); limb(2,12,angle,0,1,e->type==51);
+    if(e->type==0 && e->cape) {
+        GLint texture;glGetIntegerv(GL_TEXTURE_BINDING_2D,&texture);glBindTexture(GL_TEXTURE_2D,e->cape);
+        skin_height=32;glPushMatrix();glTranslatef(0,0,2);
+        glRotatef(6+fabsf(sinf(e->walk))*4,1,0,0);glRotatef(180,0,1,0);
+        skin_box(-5,0,-1,10,16,1,0,0,0);glPopMatrix();glBindTexture(GL_TEXTURE_2D,(GLuint)texture);
+    }
+    glPopMatrix();
     skin_height=previous_height;player_modern=previous_modern;
 }
 static void player_model(const RenderEntity *e) { player_model_pose(e,0); }
@@ -131,6 +160,7 @@ static void player_model(const RenderEntity *e) { player_model_pose(e,0); }
 void player_inventory_draw(int x,int feet_y,int scale,float mouse_x,float mouse_y,int width,int height)
 {
     RenderEntity preview={0}; GLint mode; Texture2D skin;
+    preview.cape=assets_player_cape().id;
     float units,yaw,pitch;
     const GLfloat light0[4]={-.2f,.8f,.6f,0},light1[4]={.2f,.8f,-.6f,0};
     const GLfloat diffuse[4]={.6f,.6f,.6f,1},ambient[4]={.4f,.4f,.4f,1},none[4]={0,0,0,1};
@@ -314,12 +344,13 @@ int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *ca
         }
         dx=e->draw_x-camera->x; dy=e->draw_y-camera->y; dz=e->draw_z-camera->z;
         if(dx*dx+dy*dy+dz*dz>far2) continue;
-        if(e->type==1003) {
+        if(e->type==1003 || e->type==1006) {
             float swell=1;
-            InventorySlot tnt={46,1,0};glPushMatrix();glTranslatef(e->draw_x,e->draw_y,e->draw_z);
-            if(e->fuse<10){float phase=1-(e->fuse-e->phase+1)/10;if(phase<0)phase=0;phase*=phase;phase*=phase;swell+=phase*.3f;}
+            InventorySlot tnt={e->type==1003 ? 46 : e->color,1,0};glPushMatrix();glTranslatef(e->draw_x,e->draw_y,e->draw_z);
+            glEnable(GL_TEXTURE_2D);glDisable(GL_BLEND);glDepthMask(GL_TRUE);
+            if(e->type==1003 && e->fuse<10){float phase=1-(e->fuse-e->phase+1)/10;if(phase<0)phase=0;phase*=phase;phase*=phase;swell+=phase*.3f;}
             glScalef(.98f*swell,.98f*swell,.98f*swell);held_cube(&tnt);
-            if((e->fuse/5)%2==0) {
+            if(e->type==1003 && (e->fuse/5)%2==0) {
                 glDisable(GL_TEXTURE_2D);glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
                 glDepthFunc(GL_LEQUAL);glDepthMask(GL_FALSE);glColor4f(1,1,1,(1-(e->fuse-e->phase+1)/100)*.8f);
                 glBegin(GL_QUADS);box(0,-.5f,0,.5f,1);glEnd();
@@ -328,7 +359,13 @@ int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *ca
             glPopMatrix();
         }
         else if(e->type==1000 || e->type==1001 || e->type==1002) transport_model(e);
-        else if(e->type==0) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,skin.id); player_model(e); }
+        else if(e->type==1004 || e->type==1005) {
+            glEnable(GL_TEXTURE_2D);
+            glPushMatrix(); glTranslatef(e->draw_x,e->draw_y,e->draw_z);
+            glRotatef(-camera->yaw*57.2957795f,0,1,0); glScalef(.5f,.5f,.5f);
+            held_sprite(beta_item_tile(e->type==1004 ? 332 : 344,0),0); glPopMatrix();
+        }
+        else if(e->type==0) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,e->skin ? e->skin : skin.id); player_model(e); }
         else if(e->type==50 || e->type==51 || e->type==52 || e->type==54 || (e->type>=90 && e->type<=93)) {
             glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,assets_get_texture(mob_skin(e->type)).id); mob_model(e);
         }
@@ -337,6 +374,7 @@ int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *ca
             box(e->draw_x,e->draw_y,e->draw_z,.27f,1.25f); box(e->draw_x,e->draw_y+1.25f,e->draw_z,.22f,.48f);
             glEnd();
         }
+        if(e->fire>0 && assets_fire_texture().id)burning_model(e,camera);
         ++rendered;
     }
     scene_end(mode); return rendered;
@@ -451,6 +489,18 @@ void first_person_tick(FirstPersonState *s,const InventorySlot *item,int slot)
 }
 void first_person_draw(const InventorySlot *item,int width,int height,float swing,int hurt)
 { first_person_draw_pose(item,width,height,swing,hurt,1,0); }
+void first_person_fire(int width,int height)
+{
+    RendererCamera camera={0};GLint mode;int i;
+    if(width<=0 || height<=0 || !assets_fire_texture().id)return;
+    camera.fov_y=70;mode=scene_begin(&camera,width,height,10);
+    glDisable(GL_DEPTH_TEST);glDepthMask(GL_FALSE);glEnable(GL_ALPHA_TEST);glAlphaFunc(GL_GREATER,.1f);
+    glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);glColor4f(1,1,1,.9f);
+    glBindTexture(GL_TEXTURE_2D,assets_fire_texture().id);
+    for(i=0;i<2;++i){glPushMatrix();glTranslatef(-(i*2-1)*.24f,-.3f,0);glRotatef((i*2-1)*10,0,1,0);
+        glBegin(GL_QUADS);fire_quad(-.5f,-.5f,.5f,.5f,-.5f,i,0);glEnd();glPopMatrix();}
+    scene_end(mode);
+}
 void first_person_draw_pose(const InventorySlot *item,int width,int height,float swing,int hurt,float equip,float bob)
 {
     RendererCamera camera={0}; GLint mode; float arc,phase=sinf(swing*3.14159265f);

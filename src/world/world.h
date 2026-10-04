@@ -167,6 +167,11 @@ typedef struct World {
     struct { int x,y,z; uint64_t tick; } torch_toggles[128];
     unsigned torch_toggle_head;
     uint8_t physics_processing;
+    uint8_t wire_updating,piston_updating;
+    struct { int x,y,z,id,action,facing; } piston_events[512];
+    unsigned piston_event_count;
+    struct Player *local_player;
+    int piston_push_x,piston_push_y,piston_push_z,piston_push_active;
     WorldDropEvent drops[WORLD_DROP_QUEUE];
     unsigned drop_head,drop_count;
     struct { const char *key; float x,y,z,volume,pitch; } sounds[64];

@@ -27,8 +27,9 @@ drops/pickup exist in survival; exact per-block drops and world-wide light
 propagation are not complete.
 Normal and redstone torches now have attachment geometry and support drops.
 Redstone adds two-tick inversion/burnout, stepped wire propagation, weak/strong
-power, lever/button and directional repeaters. Pistons and the remaining
-redstone mechanisms are unfinished. Beds support two halves and local sleep;
+power, lever/button/plates and directional repeaters. Pistons, dispensers and
+note blocks now have a local implementation; exact callback ordering is not
+fully verified. Beds support two halves and local sleep;
 rain/snow, ice and day/night have a bounded local implementation.
 Workbench, furnace, single/double chest and cactus have their own geometry and
 behaviour. Water/lava use scheduled Beta decay and sloping meshes. Portal has
@@ -39,6 +40,7 @@ not generated. See [the gameplay milestone](GAMEPLAY_PARITY.md) for precise
 checks and limits. Unlisted block mechanisms remain unfinished.
 Lever attachments/UV, jukebox RecordPlayer/discs, rail topology and three cart
 variants now have a local implementation; see [transport audit](BETA_TRANSPORT.md).
+Current redstone/Creative/effects checks: [mechanisms audit](BETA_MECHANISMS_AND_EFFECTS.md).
 
 | Block ID | Block name | Metadata usage | Implemented | Rendering | Collision | Drops | Interaction | Scheduled tick | Random tick | Tile entity | Redstone | Lighting | Fluid behavior | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -54,8 +56,8 @@ variants now have a local implementation; see [transport audit](BETA_TRANSPORT.m
 | 9 | water | fluid level and falling | level + still/moving conversion | animated sloping liquid | none | no | bucket/source placement | on neighbour change | no | no | no | local approximation | decay 1; water source joining | fluid foundation |
 | 10 | lava | fluid level and falling | level + scheduled flow | animated sloping liquid | none | no | bucket/source placement | 30 ticks | no | no | no | emission 15 | decay 2; no source joining | fluid foundation |
 | 11 | lava | fluid level and falling | level + still/moving conversion | animated sloping liquid | none | no | bucket/source placement | on neighbour change | no | no | no | emission 15 | decay 2; no source joining | fluid foundation |
-| 12 | sand | none | ID + metadata stored | approximate | box approximation | no | generic break/place | 3 ticks | no | no | no | local approximation | no | falling without entity animation |
-| 13 | gravel | none | ID + metadata stored | approximate | box approximation | no | generic break/place | 3 ticks | no | no | no | local approximation | no | falling without entity animation |
+| 12 | sand | none | ID + metadata stored | terrain cube / FallingSand entity | full cube, entity AABB | sand or item on failed landing | break/place | 3 ticks before falling | no | no | no | day/night | falls through fluids | gravity/drag/collision, legacy entity NBT |
+| 13 | gravel | none | ID + metadata stored | terrain cube / FallingSand entity | full cube, entity AABB | gravel/flint; item on failed landing | break/place | 3 ticks before falling | no | no | no | day/night | falls through fluids | gravity/drag/collision, legacy entity NBT |
 | 14 | oreGold | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 15 | oreIron | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 16 | oreCoal | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
@@ -65,20 +67,20 @@ variants now have a local implementation; see [transport audit](BETA_TRANSPORT.m
 | 20 | glass | none | ID + metadata stored | approximate | box approximation | no | generic break/place | no | no | no | no | local approximation | no | visual proxy |
 | 21 | oreLapis | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 22 | blockLapis | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
-| 23 | dispenser | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 23 | dispenser | horizontal facing | block + 9-slot storage | Beta top/side/front | full cube | block + contents | open inventory, dispense | 4 ticks after power notification | no | Trap | block or above powered | day/night | no | Beta projectiles/items; callback ordering not fully verified |
 | 24 | sandStone | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 25 | musicBlock | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 25 | musicBlock | none; note in TileEntity | tune/play + instruments | Beta tile 74 cube | full cube | note block | right tune; left play | no | no | Music.note byte | rising-edge play | day/night | no | five instruments, pitch and NBT; note particle pending |
 | 26 | bed | facing, head, occupied | two halves + saved spawn | rotated Beta top, frame/legs cutout, hidden join | 9/16 height | bed from foot | place/sleep/wake | orphan check | no | no | no | day/night | no | partial bed/camera; no nightmares |
 | 27 | goldenRail | shape and powered | 0..5 + power bit 8 | sloping cutout rail | none | rail 27 | connectivity/support/cart path | neighbor chain | no | no | eight-rail powered reach | day/night | no | local transport |
 | 28 | detectorRail | shape and powered | 0..5 + detection bit 8 | sloping cutout rail | none | rail 28 | cart AABB detection | 20-tick recheck | no | no | weak/strong output | day/night | no | local transport |
-| 29 | pistonStickyBase | facing and extended | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 29 | pistonStickyBase | facing 0..5 + extended bit 8 | sticky push/pull, limit 12 | base/head + moving renderer | axis boxes, moving AABB | sticky piston | placement orientation | block-event queue / progress 0.5 | no | moving state uses ID 36 | normal/quasi power | day/night | breaks replaceable fluids | legacy moving NBT; full Java collision parity pending |
 | 30 | web | none | ID + metadata stored | crossed Beta cutout planes | none | mining harvest rules | generic break/place | no | no | no | no | local approximation | no | slowing/entity behavior unfinished |
 | 31 | tallgrass | plant variant | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | local approximation | no | crossed plant |
 | 32 | deadbush | none | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | local approximation | no | crossed plant |
-| 33 | pistonBase | facing and extended | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 34 | pistonExtension | facing and sticky | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 33 | pistonBase | facing 0..5 + extended bit 8 | push, limit 12 | base/head + moving renderer | axis boxes, moving AABB | piston | placement orientation | block-event queue / progress 0.5 | no | moving state uses ID 36 | normal/quasi power | day/night | breaks replaceable fluids | legacy moving NBT; full Java collision parity pending |
+| 34 | pistonExtension | facing 0..5 + sticky bit 8 | head + support removal | oriented plate and rod | plate/rod boxes | associated base | technical block | neighbour updates | no | no | no | day/night | no | not in Creative; short-rod parity pending |
 | 35 | cloth | wool color | ID + metadata + texture variants | metadata texture | box approximation | no | generic break/place | no | no | no | no | local approximation | no | texture variants |
-| 36 | pistonMoving | moving block state | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 36 | pistonMoving | metadata + moving TileEntity | moving block progress | translated block/head | progress AABB; entity pushing | stored block if interrupted | technical state | moving TileEntity tick | no | Piston | supports queued transitions | day/night | no | legacy NBT + save/load; full Java collision parity pending |
 | 37 | flower | none | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | local approximation | no | crossed plant |
 | 38 | rose | none | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | local approximation | no | crossed plant |
 | 39 | mushroom | none | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | emission 1; local approximation | no | crossed plant |
@@ -97,7 +99,7 @@ variants now have a local implementation; see [transport audit](BETA_TRANSPORT.m
 | 52 | mobSpawner | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 53 | stairsWood | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 54 | chest | facing | 27/54 slots + NBT | Beta single/double chest cube | full cube | chest + contents | open; obstruction/triple checks | no | no | Chest | no | local approximation | no | container |
-| 55 | redstoneDust | power level | power metadata | flat cutout | none | redstone dust | dust placement | neighbour updates | no | no | weak/strong, steps | day/night | no | partial redstone |
+| 55 | redstoneDust | power level 0..15 | component propagation | tinted tiles 164/165 + overlay | none; 1/16 selection | redstone dust | dust placement | immediate neighbour propagation | no | no | weak/strong, steps | day/night | no | clock with dust branch regression; complex callback ordering pending |
 | 56 | oreDiamond | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 57 | blockDiamond | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 58 | workbench | none | 3 x 3 crafting | Beta face textures | full cube | workbench | 151 Beta recipes | no | no | no | no | local approximation | no | crafting |
@@ -112,14 +114,14 @@ variants now have a local implementation; see [transport audit](BETA_TRANSPORT.m
 | 67 | stairsStone | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 68 | sign | attachment face | placement + four saved text lines | textured wall board, bitmap text | none; Beta selection box | item 323 | placement editor | support check | no | Sign; preserves unknown NBT | no | local approximation | replace fluids | local + server-owned text |
 | 69 | lever | attachment and powered | floor 5/6; walls 1..4; bit 8 ON | cobble base + tile 96 prism | none | lever | attach/toggle | support check | no | no | weak/strong support power | day/night | no | cached attachment model |
-| 70 | pressurePlate | powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 70 | pressurePlate | powered bit | living-entity detector | thin stone plate | none | plate | entity contact | 20 ticks release polling | no | no | weak + strong below | day/night | no | contact/support and signal tests |
 | 71 | doorIron | facing, open, upper half | duplicated lower metadata, upper bit 8 | thin Beta atlas model; optional opaque windows | metadata-oriented thin box | door item, support removal | item 330, paired hinge, power activation | support validation | no | no | reacts to neighbour power | local approximation | no | power and orientation tested |
-| 72 | pressurePlate | powered | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 72 | pressurePlate | powered bit | all-entity detector | thin wooden plate | none | plate | entity contact | 20 ticks release polling | no | no | weak + strong below | day/night | no | living/item/transport/projectile contact tests |
 | 73 | oreRedstone | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 74 | oreRedstone | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | emission 9; local approximation | no | cube texture |
 | 75 | notGate | attachment face | attachment + inversion | unlit narrow prism | none | lit redstone torch | attach/support | 2 ticks | yes (burnout recovery) | no | inversion/burnout | no emission | no | partial redstone |
 | 76 | notGate | attachment face | attachment + inversion | lit narrow prism | none | redstone torch | attach/support | 2 ticks | yes | no | inversion/burnout | emission 7 | no | partial redstone |
-| 77 | button | attachment and powered | support + held timer | narrow prism | none | button | press, no timer reset | 20 ticks release | no | no | weak/strong support power | day/night | no | partial geometry |
+| 77 | button | wall attachment + powered bit 8 | support + held timer | oriented narrow prism | none | button | press, no timer reset | 20 ticks release | no | no | weak/strong support power | day/night | no | floor placement excluded in Beta; four wall orientations |
 | 78 | snow | none | layer + cold weather placement | 1/8 layer | none | snowball with shovel | break/place | no | weather placement | no | no | day/night | no | melting/support unfinished |
 | 79 | ice | none | cube + cold source freezing | transparent cube | full cube | none | break/place | no | weather freezing | no | no | day/night | freezing | melting/break-water unfinished |
 | 80 | snow | none | Beta texture | full cube | full cube | 4 snowballs with shovel | break/place | no | no | no | no | day/night | no | cube |
@@ -135,8 +137,8 @@ variants now have a local implementation; see [transport audit](BETA_TRANSPORT.m
 | 90 | portal | portal axis | portal visual/ambient | animated double-sided plane | none | no | no dimension transport | no | no | no | no | emission 11 | no | visual/ambient only |
 | 91 | litpumpkin | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 92 | cake | bites eaten | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 93 | diode | facing and delay | direction/delay + support | 1/8 plate + fixed and movable torches | 1/8 height | repeater item | place/cycle delay | 2/4/6/8 ticks | no | no | directional output | day/night | no | atomic state updates, delay/output tested |
-| 94 | diode | facing and delay | direction/delay + support | 1/8 plate + fixed and movable torches | 1/8 height | repeater item | place/cycle delay | 2/4/6/8 ticks | no | no | directional output | day/night | no | atomic state updates, delay/output tested |
+| 93 | diode | facing 0..3 + delay bits | direction/delay + support | Beta 131 plate + two torches | none; 1/8 selection | repeater item | place/cycle delay | 2/4/6/8 ticks | no | no | directional output | day/night | no | four UV orientations; clock branch regression |
+| 94 | diode | facing 0..3 + delay bits | direction/delay + support | Beta 147 plate + two torches | none; 1/8 selection | repeater item | place/cycle delay | 2/4/6/8 ticks | no | no | directional output | day/night | no | four UV orientations; clock branch regression |
 | 95 | lockedchest | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 | 96 | trapdoor | facing and open | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
 

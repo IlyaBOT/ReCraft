@@ -22,6 +22,7 @@ typedef enum AssetId {
     ASSET_MOB_ZOMBIE,ASSET_MOB_SKELETON,ASSET_MOB_SPIDER,ASSET_MOB_CREEPER,
     ASSET_SIGN,ASSET_SERVER_DEFAULT_ICON,
     ASSET_ARROW,ASSET_MINECART,ASSET_BOAT,ASSET_GUI_LANGUAGE,
+    ASSET_GUI_DISPENSER,
     ASSET_COUNT
 } AssetId;
 typedef enum AssetSoundId {
@@ -48,6 +49,14 @@ void assets_clear_server_icons(void);
 /* Render-thread skin override. Accept only bounded 64x32/64x64 PNGs. */
 int assets_set_player_skin(const unsigned char *png,size_t size);
 int assets_skin_png_valid(const unsigned char *png,size_t size);
+int assets_set_player_cape(const unsigned char *png,size_t size);
+Texture2D assets_player_cape(void);
+int assets_set_remote_texture(unsigned slot,int cape,const unsigned char *png,size_t size);
+Texture2D assets_remote_texture(unsigned slot,int cape);
+void assets_clear_remote_textures(void);
+/* Small, nearest-filtered Beta fire layers, advanced only at simulation ticks. */
+void assets_animate_fire(unsigned long long tick);
+Texture2D assets_fire_texture(void);
 Image assets_load_image(AssetId id);
 Sound assets_get_sound(AssetSoundId id);
 AssetSoundId assets_find_sound(const char *key,unsigned variant);

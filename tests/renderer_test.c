@@ -158,6 +158,49 @@ static void button_texture_test(void)
     UnloadImage(atlas);assets_shutdown();puts("Button atlas halves/states at 1x/2x and nearest filtering passed");
 }
 
+static void fire_cape_tnt_test(void)
+{
+    static GLubyte first[16*32*4],later[16*32*4],normal[320*240*3],flashed[320*240*3];
+    Texture2D fire,cape;RenderEntity e={0};RendererCamera camera={0,.1f,3,0,0,70};
+    GLint filter,binding;GLfloat before[16],after[16];size_t size;unsigned char *png;int i,colored=0;
+    assets_init(RECRAFT_TEST_ASSET_ROOT);assets_animate_fire(1);fire=assets_fire_texture();
+    assert(fire.id && fire.width==16 && fire.height==32);
+    glBindTexture(GL_TEXTURE_2D,fire.id);glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,&filter);assert(filter==GL_NEAREST);
+    glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,first);
+    assets_animate_fire(1);glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,later);assert(!memcmp(first,later,sizeof(first)));
+    assets_animate_fire(20);glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_UNSIGNED_BYTE,later);assert(memcmp(first,later,sizeof(first)));
+    png=assets_read_file("textures/mob/char.png",&size);assert(png && assets_set_player_cape(png,size));free(png);
+    cape=assets_player_cape();assert(cape.id && cape.width==64 && cape.height==32);
+    png=assets_read_file("textures/mob/char.png",&size);assert(png && assets_set_remote_texture(3,0,png,size) && assets_set_remote_texture(3,1,png,size));free(png);
+    assert(assets_remote_texture(3,0).id && assets_remote_texture(3,1).id && !assets_set_remote_texture(64,0,NULL,0));
+    assert(!assets_set_player_cape((const unsigned char *)"invalid",7) && glIsTexture(cape.id));
+    glDisable(GL_SCISSOR_TEST);glDepthMask(GL_TRUE);glClearDepth(1);glClearColor(0,0,0,1);
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);glBindTexture(GL_TEXTURE_2D,0);
+    glMatrixMode(GL_MODELVIEW);glLoadIdentity();glTranslatef(.1f,.2f,.3f);glGetFloatv(GL_MODELVIEW_MATRIX,before);
+    first_person_fire(320,240);glGetFloatv(GL_MODELVIEW_MATRIX,after);equal_matrix(before,after);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D,&binding);assert(!binding);
+    glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,normal);
+    for(i=0;i<(int)sizeof(normal);i+=3) if(normal[i]>30 && normal[i]>normal[i+2])++colored;
+    assert(colored>100);
+    e.active=1;e.type=1003;e.fuse=75;
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);assert(entity_render_draw(&e,1,&camera,320,240,4,0)==1);
+    glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,normal);
+    e.fuse=70;glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);assert(entity_render_draw(&e,1,&camera,320,240,4,0)==1);
+    glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,flashed);assert(memcmp(normal,flashed,sizeof(normal)));
+    e.type=54;e.fire=100;glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);entity_render_draw(&e,1,&camera,320,240,4,0);
+    glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,normal);
+    e.fire=0;glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);entity_render_draw(&e,1,&camera,320,240,4,0);
+    glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,flashed);assert(memcmp(normal,flashed,sizeof(normal)));
+    e.type=0;e.yaw=180;e.skin=assets_remote_texture(3,0).id;e.skin_height=32;
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);entity_render_draw(&e,1,&camera,320,240,4,0);
+    glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,normal);
+    e.cape=assets_remote_texture(3,1).id;glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);entity_render_draw(&e,1,&camera,320,240,4,0);
+    glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,flashed);assert(memcmp(normal,flashed,sizeof(normal)));
+    assert(glGetError()==GL_NO_ERROR && assets_set_player_cape(NULL,0) && !glIsTexture(cape.id));
+    cape=assets_remote_texture(3,1);assets_clear_remote_textures();assert(!glIsTexture(cape.id));
+    assets_shutdown();puts("Fire tick cache/HUD, nearest cape upload, burning entity and textured TNT flash passed");
+}
+
 static void pixel_text_test(void)
 {
     const char *text="A\xd0\xaf\xf0\x9f\x98\x80";
@@ -462,6 +505,56 @@ static void chest_mesh_test(void)
     puts("Double chest: four facings, front/back UV, chunk seams, greedy/plain and slab clipping passed");
 }
 
+static void mechanism_mesh_test(void)
+{
+    World w; Renderer policy={0}; Chunk *c; ChunkMesh mesh={0}; BetaBlockBox b; int i;
+    assert(world_init(&w,42,1,4)==WORLD_OK); c=world_get_chunk(&w,0,0); assert(c);
+    chunk_set_block(c,8,100,8,55); chunk_set_metadata(c,8,100,8,15);
+    emit_wire(&policy,&w,&mesh,c,8,100,8);
+    assert(mesh.layers[1].vertex_count==8);
+    for(i=0;i<8;i+=4) {
+        const VoxelVertex *v=&mesh.layers[1].vertices[i];
+        int nx=(v[1].z-v[0].z)*(v[2].x-v[0].x)-(v[1].x-v[0].x)*(v[2].z-v[0].z);
+        assert(nx>0); /* Front face points upwards, so culling retains dust. */
+        assert(v[0].y==100*128+2);
+        assert(v[0].u==partial_texcoord(beta_render_tile(i ? 180 : 164),1,0,0));
+        assert(v[0].r>0 && v[0].a==255);
+    }
+    assert(beta_block_selection_box((BetaBlockState){55,0},&b) && b.max_y==.0625f);
+    assert(!world_block_def(93)->solid && !world_block_def(94)->solid);
+    free(mesh.layers[1].vertices); memset(&mesh,0,sizeof(mesh));
+    emit_repeater(&policy,&w,&mesh,c,8,100,8,93,4);
+    assert(mesh.layers[1].vertex_count==40);
+    { int zmin=100000,zmax=-100000,ymax=-100000;
+      for(i=0;i<20;++i) { const VoxelVertex *v=&mesh.layers[1].vertices[i]; if(v->z<zmin) zmin=v->z; if(v->z>zmax) zmax=v->z; if(v->y>ymax) ymax=v->y; }
+      assert((zmin+zmax)/2==8*128+64+8); assert(ymax==100*128+56); }
+    for(i=0;i<3;++i) free(mesh.layers[i].vertices);
+    {
+        int direction,on,j;
+        for(direction=0;direction<4;++direction) for(on=0;on<2;++on) {
+            unsigned tile=beta_render_tile(on ? 147 : 131);int top=0;
+            memset(&mesh,0,sizeof(mesh));emit_repeater(&policy,&w,&mesh,c,8,100,8,(uint8_t)(on ? 94 : 93),(uint8_t)(direction|4));
+            for(j=0;j<(int)mesh.layers[0].vertex_count;j+=4) {
+                const VoxelVertex *v=mesh.layers[0].vertices+j;
+                if(v[0].y!=100*128+16 || v[1].y!=v[0].y || v[2].y!=v[0].y || v[3].y!=v[0].y)continue;
+                for(i=0;i<4;++i) {
+                    float x=v[i].x/128.0f-8,z=v[i].z/128.0f-8;
+                    float u=direction==0 ? x : direction==1 ? 1-z : direction==2 ? 1-x : z;
+                    float t=direction==0 ? z : direction==1 ? x : direction==2 ? 1-z : 1-x;
+                    assert(v[i].u==partial_texcoord(tile,u,0,0) && v[i].v==partial_texcoord(tile,t,0,1));
+                }
+                ++top;
+            }
+            assert(top==1);for(i=0;i<3;++i) free(mesh.layers[i].vertices);
+        }
+    }
+    memset(&mesh,0,sizeof(mesh)); emit_low_block(&policy,&w,&mesh,c,8,100,8,70,0);
+    assert(mesh.layers[0].vertex_count==24);
+    for(i=0;i<24;++i) assert(mesh.layers[0].vertices[i].y<=100*128+8);
+    for(i=0;i<3;++i) free(mesh.layers[i].vertices);
+    assert(world_close(&w)==WORLD_OK);
+}
+
 int main(int argc, char **argv)
 {
     World world;
@@ -495,6 +588,7 @@ int main(int argc, char **argv)
     Chunk probe_chunk;
     entity_pick_test();
     chest_mesh_test();
+    mechanism_mesh_test();
     {
         World light_world;
         Chunk *a,*b;
@@ -1013,6 +1107,7 @@ int main(int argc, char **argv)
     pack_upload_test();
     button_texture_test();
     skin_upload_test();
+    fire_cape_tnt_test();
     inventory_preview_test();
     first_person_test();
     sign_render_test();

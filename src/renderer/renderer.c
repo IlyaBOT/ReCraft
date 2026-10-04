@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "../world/redstone.h"
 #include "../world/rail.h"
 #include "../assets/assets.h"
 #include "../world/fluid.h"
@@ -708,7 +709,7 @@ static int visible_face(const Renderer *renderer, uint8_t self, uint8_t neighbor
     if (self == BLOCK_AIR || self == BLOCK_TORCH || self == BETA_BLOCK_SLAB ||
         self==BETA_BLOCK_REDSTONE_TORCH || self==BETA_BLOCK_UNLIT_REDSTONE_TORCH ||
         self==BETA_BLOCK_CACTUS || self==BETA_BLOCK_NETHER_PORTAL || self==BETA_BLOCK_REDSTONE_WIRE ||
-        self==26 || self==93 || self==94 || self==69 || self==77 || self==78 || self==51 ||
+        self==26 || self==93 || self==94 || self==69 || self==77 || self==78 || self==51 || self==70 || self==72 || self==29 || self==33 || self==34 || self==36 ||
         self==BETA_BLOCK_WOOD_DOOR || self==BETA_BLOCK_IRON_DOOR ||
         self==BETA_BLOCK_STANDING_SIGN || self==BETA_BLOCK_WALL_SIGN || self==BETA_BLOCK_WEB ||
         beta_block_cross_plant(self) || rail_is(self))
@@ -1235,7 +1236,7 @@ static void emit_low_block(const Renderer *r,const World *w,ChunkMesh *mesh,cons
     if(id==69) { emit_lever(r,w,mesh,chunk,x,y,z,metadata); return; }
     float lo[3]={0,0,0},hi[3]={1,id==26 ? .5625f : .125f,1};
     int axis,sign;
-    if(id==69 || id==77) {
+    if(id==69 || id==77 || id==70 || id==72) {
         BetaBlockBox box; beta_block_selection_box((BetaBlockState){id,metadata},&box);
         lo[0]=box.min_x; lo[1]=box.min_y; lo[2]=box.min_z;
         hi[0]=box.max_x; hi[1]=box.max_y; hi[2]=box.max_z;
@@ -1249,7 +1250,7 @@ static void emit_low_block(const Renderer *r,const World *w,ChunkMesh *mesh,cons
                 float u=(float)layer->vertices[i].x/VERTEX_COORD_SCALE-x;
                 float v=(float)layer->vertices[i].z/VERTEX_COORD_SCALE-z;
                 int n;
-                for(n=0;n<(metadata&3);++n) { float t=u; u=1-v; v=t; }
+                for(n=0;n<((id==93 || id==94) ? metadata&3 : 0);++n) { float t=u; u=1-v; v=t; }
                 layer->vertices[i].u=partial_texcoord(tile,u,0,0);
                 layer->vertices[i].v=partial_texcoord(tile,v,0,1);
             }
@@ -1273,6 +1274,10 @@ static void emit_repeater(const Renderer *r,const World *w,ChunkMesh *mesh,const
         for(i=first;i<layer->vertex_count;++i) {
             layer->vertices[i].x+=(int16_t)(dx[dir]*offset*VERTEX_COORD_SCALE);
             layer->vertices[i].y-=(int16_t)(.1875f*VERTEX_COORD_SCALE);
+            /* The standard torch mesh is .6 high; Beta's repeater torch is
+             * exactly 10 texture pixels (10/16), with its foot below the slab. */
+            if(layer->vertices[i].y>y*VERTEX_COORD_SCALE)
+                layer->vertices[i].y+=(int16_t)(.025f*VERTEX_COORD_SCALE);
             layer->vertices[i].z+=(int16_t)(dz[dir]*offset*VERTEX_COORD_SCALE);
         }
     }
@@ -1346,6 +1351,58 @@ static void emit_door(const Renderer *r,const World *w,ChunkMesh *mesh,const Chu
     }
 }
 
+static void emit_piston(const Renderer *r,const World *w,ChunkMesh *mesh,const Chunk *chunk,int x,int y,int z,unsigned id,unsigned meta)
+{
+    unsigned first[3],i; int a,s,l; float offset[3]={0,0,0},lo[3]={0,0,0},hi[3]={1,1,1};
+    BetaBlockBox box;
+    if(id==36) {
+        const BlockEntity *e;
+        static const int dx[6]={0,0,0,0,-1,1},dy[6]={-1,1,0,0,0,0},dz[6]={0,0,-1,1,0,0};
+        for(e=chunk->entities;e;e=e->next) if(e->x==chunk->x*16+x && e->y==y && e->z==chunk->z*16+z) break;
+        if(!e || e->kind!=BLOCK_ENTITY_PISTON || e->piston_facing<0 || e->piston_facing>5 || e->piston_id<=0 || e->piston_id>=97) return;
+        id=(unsigned)e->piston_id; meta=(unsigned)e->piston_data;
+        { float t=e->piston_extending ? e->piston_progress-1 : 1-e->piston_progress;
+          offset[0]=t*dx[e->piston_facing]; offset[1]=t*dy[e->piston_facing]; offset[2]=t*dz[e->piston_facing]; }
+        if(e->piston_base && !e->piston_extending && (id==29 || id==33)) {
+            /* On retraction the base stays in its cell; only the head moves. */
+            emit_piston(r,w,mesh,chunk,x,y,z,id,(unsigned)e->piston_facing|8u);
+            for(l=0;l<3;++l) first[l]=mesh->layers[l].vertex_count;
+            emit_piston(r,w,mesh,chunk,x,y,z,34,(unsigned)e->piston_facing|(id==29 ? 8u : 0u));
+            for(l=0;l<3;++l) for(i=first[l];i<mesh->layers[l].vertex_count;++i) {
+                VoxelVertex *v=&mesh->layers[l].vertices[i];
+                v->x+=(int16_t)(offset[0]*VERTEX_COORD_SCALE); v->y+=(int16_t)(offset[1]*VERTEX_COORD_SCALE); v->z+=(int16_t)(offset[2]*VERTEX_COORD_SCALE);
+            }
+            return;
+        }
+    }
+    for(l=0;l<3;++l) first[l]=mesh->layers[l].vertex_count;
+    if(beta_block_selection_box((BetaBlockState){(uint8_t)id,(uint8_t)meta},&box)) {
+        lo[0]=box.min_x; lo[1]=box.min_y; lo[2]=box.min_z;
+        hi[0]=box.max_x; hi[1]=box.max_y; hi[2]=box.max_z;
+    }
+    for(a=0;a<3;++a) for(s=-1;s<=1;s+=2) emit_partial_face(r,w,mesh,chunk,x,y,z,(uint8_t)id,(uint8_t)meta,a,s,lo,hi);
+    if(id==34) {
+        unsigned face=meta&7,axis=face<2 ? 1 : face<4 ? 2 : 0;
+        lo[0]=lo[1]=lo[2]=.375f; hi[0]=hi[1]=hi[2]=.625f;
+        lo[axis]=face&1 ? -.25f : .25f; hi[axis]=face&1 ? .75f : 1.25f;
+        for(a=0;a<3;++a) for(s=-1;s<=1;s+=2) if((unsigned)a!=axis)
+        {
+            MeshLayer *layer=&mesh->layers[0]; unsigned before=layer->vertex_count,j;
+            int width_axis=3-a-(int)axis;
+            emit_partial_face(r,w,mesh,chunk,x,y,z,(uint8_t)id,(uint8_t)meta,a,s,lo,hi);
+            for(j=before;j<layer->vertex_count;++j) {
+                VoxelVertex *v=&layer->vertices[j]; float p[3]={v->x/VERTEX_COORD_SCALE-x,v->y/VERTEX_COORD_SCALE-y,v->z/VERTEX_COORD_SCALE-z};
+                unsigned tile=beta_render_tile(108);
+                v->u=partial_texcoord(tile,p[axis]-lo[axis],0,0);
+                v->v=partial_texcoord(tile,p[width_axis]-.375f,0,1);
+            }
+        }
+    }
+    for(l=0;l<3;++l) for(i=first[l];i<mesh->layers[l].vertex_count;++i) {
+        VoxelVertex *v=&mesh->layers[l].vertices[i];
+        v->x+=(int16_t)(offset[0]*VERTEX_COORD_SCALE); v->y+=(int16_t)(offset[1]*VERTEX_COORD_SCALE); v->z+=(int16_t)(offset[2]*VERTEX_COORD_SCALE);
+    }
+}
 static void emit_decorative_plane(const Renderer *r,ChunkMesh *mesh,int x,int y,int z,unsigned tile,int axis,int power)
 {
     MeshLayer *layer=&mesh->layers[axis==1 ? BLOCK_LAYER_CUTOUT-1 : render_layer(r,BETA_BLOCK_NETHER_PORTAL)-1];
@@ -1365,6 +1422,65 @@ static void emit_decorative_plane(const Renderer *r,ChunkMesh *mesh,int x,int y,
         vertex->r=axis==1 ? (uint8_t)(power>0 ? 100+power*155/15 : 75) : 255;
         vertex->g=axis==1 ? 0 : 255; vertex->b=axis==1 ? 0 : 255;
         vertex->a=axis==1 || r->options.reduced_transparency ? 255 : 180;
+    }
+}
+static void wire_quad(ChunkMesh *mesh,const float p[4][3],int tile,int rotate,
+                      float u0,float v0,float u1,float v1,const uint8_t color[3])
+{
+    MeshLayer *layer=&mesh->layers[BLOCK_LAYER_CUTOUT-1]; int i;
+    if(!layer_reserve(layer,layer->vertex_count+4)) { layer->overflow=1; return; }
+    for(i=0;i<4;++i) {
+        VoxelVertex *v=&layer->vertices[layer->vertex_count++];
+        float u=i==0 || i==1 ? u1 : u0,t=i==0 || i==3 ? v1 : v0;
+        if(rotate) { float tmp=u; u=t; t=tmp; }
+        v->x=(int16_t)floorf(p[i][0]*VERTEX_COORD_SCALE+.5f);
+        v->y=(int16_t)floorf(p[i][1]*VERTEX_COORD_SCALE+.5f);
+        v->z=(int16_t)floorf(p[i][2]*VERTEX_COORD_SCALE+.5f); v->pad=0;
+        v->u=partial_texcoord((unsigned)tile,u,0,0); v->v=partial_texcoord((unsigned)tile,t,0,1);
+        v->r=color[0]; v->g=color[1]; v->b=color[2]; v->a=255;
+    }
+}
+static void emit_wire(const Renderer *r,const World *w,ChunkMesh *mesh,const Chunk *chunk,int x,int y,int z)
+{
+    int wx=chunk->x*16+x,wz=chunk->z*16+z,n,links[4],line,pass;
+    float lo[2]={0,0},hi[2]={1,1},f=chunk_get_metadata(chunk,x,y,z)/15.0f;
+    float light=.06f+r->options.brightness*.0034f;
+    uint8_t colors[2][3]; float p[4][3];
+    light+=(1-light)*light_at(w,chunk,x,y,z)/15.0f;
+    colors[0][0]=clamp_byte((int)(255*light*(f ? f*.6f+.4f : .3f)));
+    colors[0][1]=clamp_byte((int)(255*light*fmaxf(0,f*f*.7f-.5f)));
+    colors[0][2]=clamp_byte((int)(255*light*fmaxf(0,f*f*.6f-.7f)));
+    colors[1][0]=colors[1][1]=colors[1][2]=clamp_byte((int)(255*light));
+    for(n=0;n<4;++n) links[n]=world_wire_connects(w,wx,y,wz,n);
+    line=(links[1] || links[3]) && !links[0] && !links[2] ? 1 :
+         (links[0] || links[2]) && !links[1] && !links[3] ? 2 : 0;
+    if(!line && (links[0] || links[1] || links[2] || links[3])) {
+        if(!links[1]) lo[0]=.3125f;
+        if(!links[3]) hi[0]=.6875f;
+        if(!links[2]) lo[1]=.3125f;
+        if(!links[0]) hi[1]=.6875f;
+    }
+    p[0][0]=p[1][0]=x+hi[0]; p[2][0]=p[3][0]=x+lo[0];
+    p[0][2]=p[3][2]=z+hi[1]; p[1][2]=p[2][2]=z+lo[1];
+    for(n=0;n<4;++n) p[n][1]=y+.015625f;
+    for(pass=0;pass<2;++pass) wire_quad(mesh,p,(int)beta_render_tile(164+(line ? 1 : 0)+pass*16),line==2,
+                                     lo[0],lo[1],hi[0],hi[1],colors[pass]);
+    /* Dust climbing a solid neighbour uses the line and highlight tiles. */
+    if(!world_block_def(world_peek_block(w,wx,y+1,wz))->opaque) for(n=0;n<4;++n) {
+        static const int dx[4]={0,-1,0,1},dz[4]={1,0,-1,0};
+        if(!world_block_def(world_peek_block(w,wx+dx[n],y,wz+dz[n]))->opaque ||
+           world_peek_block(w,wx+dx[n],y+1,wz+dz[n])!=55) continue;
+        for(pass=0;pass<2;++pass) {
+            int i;
+            for(i=0;i<4;++i) {
+                float a=i==0 || i==1 ? 1 : 0,b=i==0 || i==3 ? 1 : 0;
+                p[i][0]=x+(dx[n]<0 ? .015625f : dx[n]>0 ? .984375f : a);
+                p[i][2]=z+(dz[n]<0 ? .015625f : dz[n]>0 ? .984375f : 1-a);
+                p[i][1]=y+b;
+            }
+            if(n==0 || n==1) { float t[3]; memcpy(t,p[0],sizeof(t)); memcpy(p[0],p[3],sizeof(t)); memcpy(p[3],t,sizeof(t)); memcpy(t,p[1],sizeof(t)); memcpy(p[1],p[2],sizeof(t)); memcpy(p[2],t,sizeof(t)); }
+            wire_quad(mesh,p,(int)beta_render_tile(165+pass*16),0,0,0,1,1,colors[pass]);
+        }
     }
 }
 /* Keep the large, level interior of an ocean greedy. Only shorelines, falling
@@ -1581,7 +1697,7 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                         emit_decorative_plane(renderer,mesh,x,y,z,66,
                             block_at(world,chunk,x-1,y,z)==90 || block_at(world,chunk,x+1,y,z)==90 ? 2 : 0,0);
                     else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_REDSTONE_WIRE)
-                        emit_decorative_plane(renderer,mesh,x,y,z,82,1,chunk_get_metadata(chunk,x,y,z));
+                        emit_wire(renderer,world,mesh,chunk,x,y,z);
                     else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_BED)
                         emit_bed(renderer,world,mesh,chunk,x,y,z,chunk_get_metadata(chunk,x,y,z));
                     else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_WOOD_DOOR || chunk_get_block(chunk,x,y,z)==BETA_BLOCK_IRON_DOOR)
@@ -1610,8 +1726,10 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                         emit_rail(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
                     else if(chunk_get_block(chunk,x,y,z)==93 || chunk_get_block(chunk,x,y,z)==94)
                         emit_repeater(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
+                    else if(chunk_get_block(chunk,x,y,z)==29 || chunk_get_block(chunk,x,y,z)==33 || chunk_get_block(chunk,x,y,z)==34 || chunk_get_block(chunk,x,y,z)==36)
+                        emit_piston(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
                     else if(
-                            chunk_get_block(chunk,x,y,z)==69 || chunk_get_block(chunk,x,y,z)==77 || chunk_get_block(chunk,x,y,z)==78)
+                            chunk_get_block(chunk,x,y,z)==69 || chunk_get_block(chunk,x,y,z)==77 || chunk_get_block(chunk,x,y,z)==78 || chunk_get_block(chunk,x,y,z)==70 || chunk_get_block(chunk,x,y,z)==72)
                         emit_low_block(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
     }
     return mesh;

@@ -1,4 +1,5 @@
 #include "account/account_flow.h"
+#include "account/player_textures.h"
 #include "util/json.h"
 #include "util/clock.h"
 #include "util/game_paths.h"
@@ -21,7 +22,7 @@
 /* Dummy tokens, no network or real credentials. Check the request contract as
  * well as responses: device polling, refresh rotation, Xbox and MC audiences. */
 static const char *client="12345678-1234-1234-1234-123456789abc";
-static const char *profile="{\"id\":\"0123456789abcdef0123456789abcdef\",\"name\":\"BetaPlayer\",\"skins\":[{\"id\":\"skin-id\",\"state\":\"ACTIVE\",\"variant\":\"CLASSIC\",\"url\":\"http://textures.minecraft.net/texture/test\"}]}";
+static const char *profile="{\"id\":\"0123456789abcdef0123456789abcdef\",\"name\":\"BetaPlayer\",\"skins\":[{\"id\":\"skin-id\",\"state\":\"ACTIVE\",\"variant\":\"CLASSIC\",\"url\":\"http://textures.minecraft.net/texture/test\"}],\"capes\":[{\"id\":\"cape-test\",\"state\":\"INACTIVE\",\"url\":\"https://textures.minecraft.net/texture/inactive\"},{\"id\":\"active-cape\",\"state\":\"ACTIVE\",\"url\":\"http://textures.minecraft.net/texture/cape\"}]}";
 typedef struct Mock {
     int stage,polls,waits,cancel,fail_stage,reject_refresh,malformed,device_size;
     unsigned interval[4];
@@ -58,6 +59,10 @@ static int mock_request(void *context,const char *url,const char *type,const cha
         stage=4;assert(strstr(body,"rp://api.minecraftservices.com/")&&strstr(body,"xbox-test"));
     } else if(strstr(url,"/launcher/login")) {
         stage=5;assert(strstr(body,"\"xtoken\":\"XBL3.0 x=12345;xsts-test\"")&&strstr(body,"PC_LAUNCHER"));
+    } else if(strstr(url,"/session/minecraft/join")) {
+        assert(type&&!strcmp(type,"application/json")&&!bearer);
+        assert(strstr(body,"\"accessToken\":\"mc-test\"")&&strstr(body,"\"selectedProfile\":\"0123456789abcdef0123456789abcdef\"")&&strstr(body,"\"serverId\":\"-abc123\""));
+        return respond(r,m->fail_stage ? 403 : 204,"");
     } else {
         stage=6;assert(!strcmp(url,"https://api.minecraftservices.com/minecraft/profile"));
         assert(!body&&!type&&bearer&&!strcmp(bearer,"mc-test"));
@@ -101,6 +106,10 @@ static void flows(AccountData *d)
     assert(m.stage==6&&m.waits==3&&m.interval[0]==5&&m.interval[1]==5&&m.interval[2]==10);
     assert(!strcmp(d->name,"BetaPlayer")&&!strcmp(d->refresh,"rotated-refresh"));
     assert(!strcmp(d->skin_url,"https://textures.minecraft.net/texture/test"));
+    assert(!strcmp(d->cape_url,"https://textures.minecraft.net/texture/cape")&&!strcmp(d->cape_id,"active-cape"));
+    assert(account_flow_join(d,&f,"-abc123"));m.fail_stage=1;
+    assert(!account_flow_join(d,&f,"-abc123")&&strstr(f.error,"HTTP 403"));m.fail_stage=0;
+    assert(!account_flow_join(d,&f,"bad/id"));
     assert(d->msa_exp>d->issued&&d->minecraft_exp>d->issued);
     memset(&m,0,sizeof(m));strcpy(d->refresh,"old+refresh");assert(account_flow_run(d,&f,1)&&!m.waits);
     memset(&m,0,sizeof(m));m.reject_refresh=1;strcpy(d->refresh,"old+refresh");assert(account_flow_run(d,&f,1)&&m.waits==3);
@@ -112,12 +121,44 @@ static void flows(AccountData *d)
     assert(!account_flow_run(d,&f,0)&&strstr(f.error,"declined"));
     memset(&m,0,sizeof(m));m.fail_stage=2;m.error_body="{\"error\":\"expired_token\"}";fresh(d);
     assert(!account_flow_run(d,&f,0)&&strstr(f.error,"expired"));
+    memset(&m,0,sizeof(m));m.fail_stage=5;m.error_body="{\"errorMessage\":\"Invalid app registration\"}";fresh(d);
+    assert(!account_flow_run(d,&f,0)&&strstr(f.error,"HTTP 403")&&strstr(f.error,"app registration"));
     memset(&m,0,sizeof(m));m.cancel=1;fresh(d);assert(!account_flow_run(d,&f,0)&&strstr(f.error,"cancelled"));
     memset(&m,0,sizeof(m));m.device_size=1045;fresh(d);assert(account_flow_run(d,&f,0));
     memset(&m,0,sizeof(m));m.device_size=8192;fresh(d);assert(!account_flow_run(d,&f,0)&&strstr(f.error,"oversized"));
     memset(&m,0,sizeof(m));m.fail_stage=1;m.error_body="{\"error\":\"invalid_client\",\"error_codes\":[7000218]}";fresh(d);
     assert(!account_flow_run(d,&f,0)&&strstr(f.error,"AADSTS7000218"));
     memset(&m,0,sizeof(m));fresh(d);assert(account_flow_run(d,&f,0));
+}
+typedef struct TextureMock {char profile[4096];int calls,fail;} TextureMock;
+static int texture_request(void *context,const char *url,HttpsResponse *r)
+{
+    TextureMock *m=context;const char *body="PNG";++m->calls;memset(r,0,sizeof(*r));r->status=200;
+    if(strstr(url,"/users/profiles/"))body="{\"id\":\"0123456789abcdef0123456789abcdef\",\"name\":\"BetaPlayer\"}";
+    else if(strstr(url,"/session/minecraft/profile/"))body=m->profile;
+    else assert(!strncmp(url,"https://textures.minecraft.net/texture/",39));
+    if(m->fail)r->status=404;
+    r->size=strlen(body);r->data=malloc(r->size+1);assert(r->data);memcpy(r->data,body,r->size+1);return 1;
+}
+static void public_textures_test(void)
+{
+    static const char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const char *uuid="0123456789abcdef0123456789abcdef",*hash="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    char payload[2048],encoded[3000],skin[512],cape[512];size_t n,i,w=0;TextureMock m={0};PlayerTextureResult r;PlayerTextures *queue;
+    snprintf(payload,sizeof(payload),"{\"profileId\":\"%s\",\"textures\":{\"SKIN\":{\"url\":\"http://textures.minecraft.net/texture/%s\"},\"CAPE\":{\"url\":\"https://textures.minecraft.net/texture/%s\"}}}",uuid,hash,hash);
+    n=strlen(payload);
+    for(i=0;i<n;i+=3){unsigned bits=(unsigned char)payload[i]<<16;if(i+1<n)bits|=(unsigned char)payload[i+1]<<8;if(i+2<n)bits|=(unsigned char)payload[i+2];
+        encoded[w++]=alphabet[bits>>18];encoded[w++]=alphabet[(bits>>12)&63];encoded[w++]=i+1<n?alphabet[(bits>>6)&63]:'=';encoded[w++]=i+2<n?alphabet[bits&63]:'=';}
+    encoded[w]=0;snprintf(m.profile,sizeof(m.profile),"{\"id\":\"%s\",\"properties\":[{\"name\":\"textures\",\"value\":\"%s\"}]}",uuid,encoded);
+    assert(player_texture_urls(m.profile,strlen(m.profile),uuid,skin,cape) && !strncmp(skin,"https://",8) && !strcmp(skin,cape));
+    assert(!player_texture_urls(m.profile,strlen(m.profile),"ffffffffffffffffffffffffffffffff",skin,cape));
+    assert(player_texture_fetch("BetaPlayer",NULL,texture_request,&m,&r) && m.calls==4 && r.skin_size==3 && r.cape_size==3 && !strcmp(r.id,uuid));player_texture_result_free(&r);
+    m.calls=0;assert(player_texture_fetch(NULL,uuid,texture_request,&m,&r) && m.calls==3);player_texture_result_free(&r);
+    m.calls=0;assert(!player_texture_fetch("bad/name",NULL,texture_request,&m,&r) && !m.calls);
+    m.fail=1;assert(!player_texture_fetch("BetaPlayer",NULL,texture_request,&m,&r));player_texture_result_free(&r);
+    queue=player_textures_create();assert(queue && player_textures_queue(queue,"BetaPlayer",NULL)==0 && player_textures_queue(queue,"BetaPlayer",NULL)==0);
+    assert(player_textures_queue(queue,NULL,uuid)==1 && player_textures_queue(queue,"bad/name",NULL)==-1);player_textures_destroy(queue);
+    puts("Public name/UUID texture resolution, skin/cape payload bounds and queue deduplication passed");
 }
 static void json_tests(void)
 {
@@ -140,6 +181,7 @@ static void store_and_manager(AccountData *d)
     snprintf(config,sizeof(config),"%s/config",root);assert(game_ensure_directory(config));
     snprintf(path,sizeof(path),"%s/accounts.json",config);assert(account_data_save(d,path));assert(account_data_load(loaded,path));
     assert(!strcmp(loaded->refresh,d->refresh)&&!strcmp(loaded->name,d->name)&&!strcmp(loaded->minecraft,d->minecraft));
+    assert(!strcmp(loaded->cape_url,d->cape_url)&&!strcmp(loaded->cape_id,d->cape_id));
 #ifndef _WIN32
     {struct stat s;assert(!stat(path,&s)&&(s.st_mode&0777)==0600);}
 #endif
@@ -163,6 +205,6 @@ int main(void)
 #else
     unsetenv("RECRAFT_MICROSOFT_CLIENT_ID");
 #endif
-    json_tests();flows(d);store_and_manager(d);memset(d,0,sizeof(*d));free(d);
+    json_tests();public_textures_test();flows(d);store_and_manager(d);memset(d,0,sizeof(*d));free(d);
     puts("Device/refresh flow, Xbox/MC contracts, failures, cancellation and private atomic account persistence passed");return 0;
 }

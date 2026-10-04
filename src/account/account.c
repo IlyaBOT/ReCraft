@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <time.h>
 #ifdef RECRAFT_ACCOUNT_USE_BUILD_DEFAULT
 #include "recraft_version.h"
 #else
@@ -33,6 +34,8 @@ struct Account {
     AccountLock lock;AccountView view;AccountData data;
     char path[1024];int cancelled,started;
     unsigned char *skin;size_t skin_size;
+    unsigned char *cape;size_t cape_size;int cape_changed;
+    int joining,join_result;char server_id[65],join_error[160];
 #ifdef _WIN32
     HANDLE thread;
 #else
@@ -54,23 +57,38 @@ static void progress(void *context,const char *status,const char *code,const cha
 }
 static void run(Account *a)
 {
-    AccountData *data=(AccountData *)malloc(sizeof(*data));AccountFlow flow={0};HttpsResponse skin={0};int ok=0;
-    if(!data){progress(a,"Not enough memory for sign-in.","","");goto done;}
-    lock_take(&a->lock);*data=a->data;lock_drop(&a->lock);
+    AccountData *data=(AccountData *)malloc(sizeof(*data));AccountFlow flow={0};HttpsResponse skin={0},cape={0};int ok=0,joining;
+    if(!data){progress(a,"Not enough memory for sign-in.","","");lock_take(&a->lock);if(a->joining){a->join_result=-1;strcpy(a->join_error,"Not enough memory for session join.");}lock_drop(&a->lock);goto done;}
+    lock_take(&a->lock);*data=a->data;joining=a->joining;lock_drop(&a->lock);
     flow.context=a;flow.request=request;flow.wait=wait_code;flow.now=now;flow.progress=progress;
-    ok=account_flow_run(data,&flow,data->refresh[0]!=0);
+    ok=joining && data->minecraft[0] && data->minecraft_exp>(int64_t)time(NULL)+60 ? 1 : account_flow_run(data,&flow,data->refresh[0]!=0);
     if(cancelled(a)){ok=0;snprintf(flow.error,sizeof(flow.error),"Sign-in cancelled.");}
     if(ok&&!account_data_save(data,a->path)){ok=0;snprintf(flow.error,sizeof(flow.error),"Unable to save account. Previous account was kept.");}
+    if(joining) {
+        lock_take(&a->lock);
+        if(ok && (strcmp(data->id,a->data.id) || strcmp(data->name,a->data.name))) {
+            ok=0;snprintf(flow.error,sizeof(flow.error),"Minecraft profile changed. Sign in again before connecting.");
+        }
+        lock_drop(&a->lock);
+        if(ok)ok=account_flow_join(data,&flow,a->server_id);
+        lock_take(&a->lock);a->join_result=ok ? 1 : -1;
+        if(ok) a->data=*data;
+        snprintf(a->join_error,sizeof(a->join_error),"%s",flow.error);lock_drop(&a->lock);
+        memset(data,0,sizeof(*data));free(data);goto done;
+    }
     if(ok && data->skin_url[0]) request(a,data->skin_url,NULL,NULL,NULL,&skin);
+    if(ok && data->cape_url[0]) request(a,data->cape_url,NULL,NULL,NULL,&cape);
     lock_take(&a->lock);
     if(ok) {
         a->data=*data;a->view.signed_in=1;
         snprintf(a->view.name,sizeof(a->view.name),"%s",data->name);snprintf(a->view.id,sizeof(a->view.id),"%s",data->id);
         snprintf(a->view.status,sizeof(a->view.status),"Signed in as %s.%s",data->name,skin.status==200?"":" Skin download unavailable.");
         if(skin.status==200&&skin.size<=65536){free(a->skin);a->skin=skin.data;a->skin_size=skin.size;skin.data=NULL;}
+        free(a->cape);a->cape=NULL;a->cape_size=0;a->cape_changed=1;
+        if(cape.status==200&&cape.size<=65536){a->cape=cape.data;a->cape_size=cape.size;cape.data=NULL;}
     } else snprintf(a->view.status,sizeof(a->view.status),"%s",flow.error);
     a->view.code[0]=a->view.verification_uri[0]=0;++a->view.revision;lock_drop(&a->lock);
-    https_response_free(&skin);memset(data,0,sizeof(*data));free(data);
+    https_response_free(&skin);https_response_free(&cape);memset(data,0,sizeof(*data));free(data);
 done:
     lock_take(&a->lock);a->view.busy=0;++a->view.revision;lock_drop(&a->lock);
 }
@@ -114,13 +132,13 @@ Account *account_create(const char *root)
     a->view.revision=1;return a;
 }
 void account_destroy(Account *a)
-{if(!a)return;account_cancel(a);join(a);free(a->skin);lock_free(&a->lock);memset(a,0,sizeof(*a));free(a);}
+{if(!a)return;account_cancel(a);join(a);free(a->skin);free(a->cape);lock_free(&a->lock);memset(a,0,sizeof(*a));free(a);}
 void account_cancel(Account *a)
 {if(!a)return;lock_take(&a->lock);a->cancelled=1;if(a->view.busy){strcpy(a->view.status,"Cancelling sign-in...");++a->view.revision;}lock_drop(&a->lock);}
 int account_sign_in(Account *a)
 {
     int busy;if(!a)return 0;lock_take(&a->lock);busy=a->view.busy;lock_drop(&a->lock);if(busy)return 0;
-    join(a);lock_take(&a->lock);a->cancelled=0;a->view.busy=1;++a->view.revision;lock_drop(&a->lock);
+    join(a);lock_take(&a->lock);a->cancelled=0;a->joining=0;a->view.busy=1;++a->view.revision;lock_drop(&a->lock);
 #ifdef _WIN32
     a->thread=(HANDLE)_beginthreadex(NULL,0,worker,a,0,NULL);a->started=a->thread!=NULL;
 #else
@@ -138,9 +156,40 @@ int account_sign_out(Account *a)
     {char client[37];strcpy(client,a->data.client_id);memset(&a->data,0,sizeof(a->data));strcpy(a->data.client_id,client);}
     {unsigned revision=a->view.revision+1;memset(&a->view,0,sizeof(a->view));a->view.revision=revision;}
     strcpy(a->view.status,"Signed out. Offline profile is available.");
-    free(a->skin);a->skin=NULL;a->skin_size=0;lock_drop(&a->lock);return 1;
+    free(a->skin);a->skin=NULL;a->skin_size=0;
+    free(a->cape);a->cape=NULL;a->cape_size=0;a->cape_changed=1;a->joining=0;a->join_result=0;lock_drop(&a->lock);return 1;
 }
 void account_view(Account *a,AccountView *view)
 {memset(view,0,sizeof(*view));if(a){lock_take(&a->lock);*view=a->view;lock_drop(&a->lock);}}
 unsigned char *account_take_skin(Account *a,size_t *size)
 {unsigned char *png;*size=0;if(!a)return NULL;lock_take(&a->lock);png=a->skin;*size=a->skin_size;a->skin=NULL;a->skin_size=0;lock_drop(&a->lock);return png;}
+unsigned char *account_take_cape(Account *a,size_t *size,int *changed)
+{unsigned char *png;*size=0;*changed=0;if(!a)return NULL;lock_take(&a->lock);png=a->cape;*size=a->cape_size;*changed=a->cape_changed;a->cape=NULL;a->cape_size=0;a->cape_changed=0;lock_drop(&a->lock);return png;}
+int account_join_server(void *context,const char *server_id,char *out,size_t capacity)
+{
+    Account *a=(Account *)context;int result;
+    if(!a || !server_id || !server_id[0] || strlen(server_id)>64 || strspn(server_id,"-0123456789abcdefABCDEF")!=strlen(server_id)) {snprintf(out,capacity,"Invalid online server id.");return -1;}
+    lock_take(&a->lock);
+    if(a->joining) {
+        result=a->join_result;
+        if(result){snprintf(out,capacity,"%s",a->join_error);a->joining=0;}
+        lock_drop(&a->lock);return result;
+    }
+    if(!a->view.signed_in || a->view.busy){lock_drop(&a->lock);snprintf(out,capacity,"Sign in to a Minecraft Java account before joining an online server.");return -1;}
+    lock_drop(&a->lock);join(a);
+    lock_take(&a->lock);a->joining=1;a->join_result=0;a->cancelled=0;a->view.busy=1;
+    snprintf(a->server_id,sizeof(a->server_id),"%s",server_id);lock_drop(&a->lock);
+#ifdef _WIN32
+    a->thread=(HANDLE)_beginthreadex(NULL,0,worker,a,0,NULL);a->started=a->thread!=NULL;
+#else
+    a->started=pthread_create(&a->thread,NULL,worker,a)==0;
+#endif
+    if(!a->started){lock_take(&a->lock);a->view.busy=0;a->joining=0;lock_drop(&a->lock);snprintf(out,capacity,"Unable to start session join worker.");return -1;}
+    return 0;
+}
+void account_reset_join(Account *a)
+{
+    int joining;if(!a)return;lock_take(&a->lock);joining=a->joining;lock_drop(&a->lock);
+    if(!joining)return;
+    account_cancel(a);join(a);lock_take(&a->lock);a->joining=a->join_result=0;lock_drop(&a->lock);
+}

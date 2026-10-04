@@ -129,19 +129,20 @@ static int button(Ui *ui, int x, int y, int w, int h, const char *caption, int e
     return 0;
 }
 
-static void text_field(Ui *ui, int id, int x, int y, int w, int h,
-                       char *value, size_t capacity, const char *hint)
+static void text_field_enabled(Ui *ui, int id, int x, int y, int w, int h,
+                       char *value, size_t capacity, const char *hint,int enabled)
 {
     int active;
     const char *visible = value;
-    if (layout.clicked && inside(x, y, w, h)) { ui->focus = id; ui->select_all = 0; }
-    active = ui->focus == id;
+    if(!enabled && ui->focus==id) ui->focus=0;
+    if (enabled && layout.clicked && inside(x, y, w, h)) { ui->focus = id; ui->select_all = 0; }
+    active = enabled && ui->focus == id;
     rect(x, y, w, h, col(14, 14, 16, 255));
     linebox(x, y, w, h, active ? col(202, 205, 207, 255) : col(107, 108, 109, 255));
     while (*visible && MeasureMinecraftText(visible, ps(11)) > ps((float)(w-16))) ++visible;
     if (active && ui->select_all && value[0])
         rect(x+4, y+3, w-8, h-6, col(57, 76, 113, 255));
-    if (value[0]) label(visible, x+6, y+5, 11, col(245, 245, 241, 255));
+    if (value[0]) label(visible, x+6, y+5, 11, enabled ? col(245,245,241,255) : col(150,150,150,255));
     else label(hint, x+6, y+5, 11, col(111, 112, 113, 255));
     if (active) {
         int tw = MeasureMinecraftText(visible, ps(11));
@@ -150,6 +151,8 @@ static void text_field(Ui *ui, int id, int x, int y, int w, int h,
     }
     (void)capacity;
 }
+static void text_field(Ui *ui,int id,int x,int y,int w,int h,char *value,size_t capacity,const char *hint)
+{ text_field_enabled(ui,id,x,y,w,h,value,capacity,hint,1); }
 
 static void edit_text(Ui *ui, int id, char *value, size_t capacity)
 {
@@ -359,21 +362,21 @@ static UiAction main_menu(Ui *ui)
     /* Original ReCraft wordmark: pixel geometry with an extruded dark edge. */
     for(i=8;i>=0;--i) centered(RECRAFT_TITLE,320-i/2,54+i,58,col(20,20,20,255));
     centered(RECRAFT_TITLE,320,51,58,col(192,190,187,255));
-    player_inventory_draw(px(100),py(329),ps(73),px(layout.mouse_x),py(layout.mouse_y),width,height);
-    if(button(ui,40,342,120,24,ui->options.player_name,1)) ui_set_screen(ui,UI_SCREEN_PROFILE);
-    if (button(ui, 225, 198, 300, 30, "Singleplayer", 1)) ui_set_screen(ui, UI_SCREEN_WORLDS);
-    if (button(ui, 225, 234, 300, 30, "Multiplayer", 1)) ui_set_screen(ui, UI_SCREEN_MULTIPLAYER);
-    if (button(ui, 225, 320, 145, 30, "Options...", 1)) {
+    player_inventory_draw(px(68),py(329),ps(63),px(layout.mouse_x),py(layout.mouse_y),width,height);
+    if(button(ui,8,342,120,24,ui->options.player_name,1)) ui_set_screen(ui,UI_SCREEN_PROFILE);
+    if (button(ui, 170, 198, 300, 30, "Singleplayer", 1)) ui_set_screen(ui, UI_SCREEN_WORLDS);
+    if (button(ui, 170, 234, 300, 30, "Multiplayer", 1)) ui_set_screen(ui, UI_SCREEN_MULTIPLAYER);
+    if (button(ui, 170, 320, 145, 30, "Options...", 1)) {
         ui->options_parent = UI_SCREEN_MAIN; ui_set_screen(ui, UI_SCREEN_OPTIONS);
     }
-    if (button(ui, 380, 320, 145, 30, "Quit Game", 1)) {
+    if (button(ui, 325, 320, 145, 30, "Quit Game", 1)) {
         ui->pending_confirm = 3; ui_set_screen(ui, UI_SCREEN_CONFIRM);
     }
     {
-        Rectangle src={0,inside(188,320,30,30) ? 126 : 106,20,20};
-        Rectangle dst={(float)px(188),(float)py(320),(float)ps(30),(float)ps(30)}; Vector2 origin={0,0};
+        Rectangle src={0,inside(133,320,30,30) ? 126 : 106,20,20};
+        Rectangle dst={(float)px(133),(float)py(320),(float)ps(30),(float)ps(30)}; Vector2 origin={0,0};
         DrawTexturePro(globe,src,dst,origin,0,WHITE);
-        if(inside(188,320,30,30) && layout.clicked) { ui->click_sound=1; ui->language_parent=UI_SCREEN_MAIN; ui_set_screen(ui,UI_SCREEN_LANGUAGES); }
+        if(inside(133,320,30,30) && layout.clicked) { ui->click_sound=1; ui->language_parent=UI_SCREEN_MAIN; ui_set_screen(ui,UI_SCREEN_LANGUAGES); }
     }
     DrawMinecraftText(RECRAFT_TITLE " " RECRAFT_VERSION,margin,height-margin-small-normal-ps(3),normal,WHITE,1);
     DrawMinecraftText("Build " RECRAFT_BUILD_REVISION " / " RECRAFT_BUILD_DATE " / " RECRAFT_BUILD_PLATFORM,
@@ -792,16 +795,12 @@ static UiAction options_menu(Ui *ui)
     option_slider(ui,4,55,158,&ui->options.fov,70,110,"FOV",0);
     snprintf(text,sizeof(text),"%s: %s",language_caption("Difficulty"),language_caption(difficulties[ui->options.difficulty]));
     if(button(ui,327,158,258,30,text,!ui->network_mode)) ui->options.difficulty=(ui->options.difficulty+1)%4;
-    centered("Player Name",320,202,11,col(219,220,211,255));
-    text_field(ui,1,175,222,290,30,ui->player_name_input,sizeof(ui->player_name_input),"Player");
-    edit_text(ui,1,ui->player_name_input,sizeof(ui->player_name_input));
-    if(settings_player_name_valid(ui->player_name_input)) copy_text(ui->options.player_name,sizeof(ui->options.player_name),ui->player_name_input);
     if(button(ui,55,274,258,30,"Video Settings...",1)) ui_set_screen(ui,UI_SCREEN_VIDEO);
     if(button(ui,327,274,258,30,"Controls...",1)) ui_set_screen(ui,UI_SCREEN_CONTROLS);
     if(button(ui,55,316,258,30,"Language...",1)) { ui->language_parent=UI_SCREEN_OPTIONS; ui_set_screen(ui,UI_SCREEN_LANGUAGES); }
     if(button(ui,327,316,258,30,"Multiplayer Settings...",1)) ui_set_screen(ui,UI_SCREEN_MULTIPLAYER_OPTIONS);
     if(button(ui,55,358,258,30,"Texture Packs",1)) ui_set_screen(ui,UI_SCREEN_PACKS);
-    if (button(ui, 170, 420, 300, 30, "Done", settings_player_name_valid(ui->player_name_input))) ui_set_screen(ui, ui->options_parent);
+    if (button(ui, 170, 420, 300, 30, "Done", 1)) ui_set_screen(ui, ui->options_parent);
     return action;
 }
 static UiAction profile_menu(Ui *ui)
@@ -809,9 +808,11 @@ static UiAction profile_menu(Ui *ui)
     UiAction action=empty_action();draw_background(1);title("Player Profile");
     player_inventory_draw(px(155),py(330),ps(95),px(layout.mouse_x),py(layout.mouse_y),recraft_screen_width(),recraft_screen_height());
     label("Player Name",270,95,12,WHITE);
-    text_field(ui,1,270,120,290,30,ui->player_name_input,sizeof(ui->player_name_input),"Player");
-    edit_text(ui,1,ui->player_name_input,sizeof(ui->player_name_input));
-    if(settings_player_name_valid(ui->player_name_input)) copy_text(ui->options.player_name,sizeof(ui->options.player_name),ui->player_name_input);
+    text_field_enabled(ui,1,270,120,290,30,ui->player_name_input,sizeof(ui->player_name_input),"Player",!ui->auth_signed_in);
+    if(!ui->auth_signed_in) {
+        edit_text(ui,1,ui->player_name_input,sizeof(ui->player_name_input));
+        if(settings_player_name_valid(ui->player_name_input)) copy_text(ui->options.player_name,sizeof(ui->options.player_name),ui->player_name_input);
+    }
     if(button(ui,270,172,290,30,ui->auth_busy?"Cancel Microsoft sign-in":"Sign in with Microsoft",1))
         action.type=ui->auth_busy?UI_ACTION_MICROSOFT_CANCEL:UI_ACTION_MICROSOFT_LOGIN;
     if(button(ui,270,214,140,30,"Pack skin",1)) copy_text(ui->options.skin,sizeof(ui->options.skin),"default");
@@ -1221,6 +1222,13 @@ static void draw_item_icon(int id, int damage, int x, int y, int size)
         return;
     }
     item_tiles(id,damage,&top,&side);
+    if(id==70 || id==72 || id==77 || id==44) {
+        float h=id==44 ? .5f : id==77 ? .25f : .0625f,dy=s*(1-h)*.21f;
+        int i;
+        ly[2]=ly[1]+s*h*.42f; ly[3]=ly[0]+s*h*.42f;
+        ry[2]=ry[1]+s*h*.42f; ry[3]=ry[0]+s*h*.42f;
+        for(i=0;i<4;++i) { ty[i]+=dy; ly[i]+=dy; ry[i]+=dy; }
+    }
     glPushAttrib(GL_ENABLE_BIT|GL_TEXTURE_BIT|GL_CURRENT_BIT|GL_COLOR_BUFFER_BIT);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
@@ -1297,7 +1305,7 @@ void ui_draw_hud(const Ui *ui, int selected_slot, const InventorySlot *hotbar,
     DrawTexturePro(widgets,src,dst,origin,0,WHITE);
     for (i = 0; i < 9; ++i) {
         int x=136+i*42;
-        draw_stack(hotbar ? &hotbar[i] : NULL,x+5,439,29);
+        draw_stack(hotbar ? &hotbar[i] : NULL,x+1,439,29);
     }
     if (labels && selected_slot >= 0 && selected_slot < 9 && labels[selected_slot])
         centered(labels[selected_slot],320,health<0 ? 414 : air<300 ? 371 : 389,12,col(244,241,221,255));
@@ -1350,6 +1358,10 @@ static int container_xy(const ContainerSession *s,int index,int *x,int *y)
         int n=index-46;
         if (n>=s->size) return 0;
         ix=8+(n%9)*18; iy=18+(n/9)*18;
+    } else if (s->kind==CONTAINER_DISPENSER) {
+        int n=index-46;
+        if(n>=9) return 0;
+        ix=62+(n%3)*18; iy=17+(n/3)*18;
     } else if (s->kind==CONTAINER_FURNACE) {
         int n=index-46;
         if (n>2) return 0;
@@ -1379,7 +1391,7 @@ static void container_label(const char *text,int x,int y)
 {
     /* Vanilla foreground captions are eight source pixels tall, without a
      * shadow. Match the atlas's 2x scale instead of shrinking the glyphs. */
-    DrawMinecraftText(text,px((float)x),py((float)y),ps(16),col(64,64,64,255),0);
+    DrawMinecraftText(language_caption(text),px((float)x),py((float)y),ps(16),col(64,64,64,255),0);
 }
 
 void ui_draw_container(const Ui *ui,const ContainerSession *s,const InventorySlot *inventory,
@@ -1388,6 +1400,7 @@ void ui_draw_container(const Ui *ui,const ContainerSession *s,const InventorySlo
     int rows=s->size/9,height=s->kind==CONTAINER_CHEST ? 114+rows*18 : 166;
     int left=144,top=(480-height*2)/2,i,x,y;
     AssetId id=s->kind==CONTAINER_WORKBENCH ? ASSET_GUI_CRAFTING :
+        s->kind==CONTAINER_DISPENSER ? ASSET_GUI_DISPENSER :
         s->kind==CONTAINER_FURNACE ? ASSET_GUI_FURNACE :
         s->kind==CONTAINER_CHEST ? ASSET_GUI_CONTAINER : ASSET_GUI_INVENTORY;
     Texture2D texture=assets_get_texture(id);
@@ -1400,6 +1413,7 @@ void ui_draw_container(const Ui *ui,const ContainerSession *s,const InventorySlo
         container_texture(texture,0,126,176,96,left,top+(rows*18+17)*2);
         container_label(s->size==54 ? "Large Chest" : "Chest",left+16,top+12);
     } else container_texture(texture,0,0,176,166,left,top);
+    if(s->kind==CONTAINER_DISPENSER) container_label("Dispenser",left+120,top+12);
     if (s->kind==CONTAINER_FURNACE) {
         container_label("Furnace",left+120,top+12);
         if (burn>0) {
@@ -1491,9 +1505,8 @@ void ui_draw_creative(const Ui *ui,const InventorySlot *slots,int hotbar)
         InventorySlot item;
         const char *name;
         creative_get(hover,&item);
-        name=beta_item_name(item.id);
-        if (!name && beta_block_find((unsigned)item.id)) name=beta_block_find((unsigned)item.id)->name;
-        snprintf(caption,sizeof(caption),"%s (%d:%d)",name?name:"Block",item.id,item.damage);
+        name=language_item(item.id,item.damage);
+        snprintf(caption,sizeof(caption),"%s",name);
         centered(caption,320,383,12,WHITE);
     }
     centered("Choose a hotbar slot, then an item. Scroll for more.",320,406,10,WHITE);

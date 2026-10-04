@@ -48,6 +48,7 @@ void player_spawn(Player *player, World *world, int creative);
  * unconverted position is clear. Sleeping players wake as in Beta's reader. */
 int player_restore_beta(Player *player,World *world,int allow_legacy_feet);
 float player_clamp_pitch(float pitch);
+void player_piston_move(Player *player,World *world,float dx,float dy,float dz);
 void player_tick(Player *player, World *world, const PlayerInput *input, float dt);
 void player_damage(Player *player,int amount);
 void player_mob_damage(Player *player,const World *world,int amount);

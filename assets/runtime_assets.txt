@@ -7,6 +7,11 @@ gui/panorama.png
 gui/crafting.png
 gui/furnace.png
 gui/container.png
+gui/trap.png
+textures/legacy/repeater_off.png
+textures/legacy/repeater_on.png
+sounds/tile/piston/in.ogg
+sounds/tile/piston/out.ogg
 gui/unknown_server.png
 textures/item/sign.png
 textures/entity/sign.png
@@ -428,3 +433,9 @@ lang/vi_VN.lang
 lang/zh_CN.lang
 lang/zh_TW.lang
 gui/language.png
+
+sounds/note/harp.ogg
+sounds/note/bassattack.ogg
+sounds/note/bd.ogg
+sounds/note/snare.ogg
+sounds/note/hat.ogg

@@ -3,6 +3,9 @@
 #include "entities.h"
 #include "environment.h"
 #include "ticks.h"
+#include "piston.h"
+#include "redstone.h"
+#include <math.h>
 #include "../game/crafting.h"
 #include "../game/sign.h"
 #include "../nbt/nbt.h"
@@ -46,11 +49,11 @@ BlockEntity *block_entity_get(World *world,int x,int y,int z,int create)
     block=world_peek_block(world,x,y,z);
     if (!create || (world->network_mode && !sign_is_block(block)) ||
         (world->beta_format && !chunk->beta_raw)) return NULL;
-    if (block!=54 && block!=61 && block!=62 && block!=84 && !sign_is_block(block)) return NULL;
+    if (block!=54 && block!=61 && block!=62 && block!=84 && block!=23 && block!=36 && block!=25 && !sign_is_block(block)) return NULL;
     e=(BlockEntity *)calloc(1,sizeof(*e));
     if (!e) return NULL;
     e->x=x; e->y=y; e->z=z;
-    e->kind=block==54 ? BLOCK_ENTITY_CHEST : block==84 ? BLOCK_ENTITY_JUKEBOX : sign_is_block(block) ? BLOCK_ENTITY_SIGN : BLOCK_ENTITY_FURNACE;
+    e->kind=block==54 ? BLOCK_ENTITY_CHEST : block==84 ? BLOCK_ENTITY_JUKEBOX : block==23 ? BLOCK_ENTITY_DISPENSER : block==36 ? BLOCK_ENTITY_PISTON : block==25 ? BLOCK_ENTITY_NOTE : sign_is_block(block) ? BLOCK_ENTITY_SIGN : BLOCK_ENTITY_FURNACE;
     for (i=0;i<27;++i) inventory_clear_slot(&e->slots[i]);
     e->next=chunk->entities; chunk->entities=e;
     if (!world->network_mode) {
@@ -58,6 +61,34 @@ BlockEntity *block_entity_get(World *world,int x,int y,int z,int create)
         chunk->dirty_flags|=CHUNK_DIRTY_SAVE|CHUNK_DIRTY_ENTITIES;
     }
     return e;
+}
+int note_block_use(World *w,int x,int y,int z,int tune)
+{
+    BlockEntity *e;unsigned below;const char *sound="note.harp";
+    if(w->network_mode || world_peek_block(w,x,y,z)!=25 || !(e=block_entity_get(w,x,y,z,1)))return 0;
+    if(tune) {e->note=(e->note+1)%25;block_entity_changed(w,e);}
+    if(world_peek_block(w,x,y+1,z)!=0)return 1;
+    below=world_peek_block(w,x,y-1,z);
+    if(beta_material_wood(below))sound="note.bassattack";
+    else if(below==12 || below==13 || below==88)sound="note.snare";
+    else if(below==20)sound="note.hat";
+    else {
+        switch(below) {
+        case 1:case 4:case 7:case 14:case 15:case 16:case 21:case 22:case 23:case 24:
+        case 43:case 44:case 45:case 48:case 49:case 52:case 56:case 61:case 62:case 67:
+        case 70:case 73:case 74:case 87:case 89:sound="note.bd";break;
+        default:break;
+        }
+    }
+    world_sound(w,sound,x+.5f,y+.5f,z+.5f,3,powf(2,(e->note-12)/12.0f));return 1;
+}
+void note_block_changed(World *w,int x,int y,int z)
+{
+    BlockEntity *e;int powered;
+    if(w->network_mode || !(e=block_entity_get(w,x,y,z,1)))return;
+    powered=world_redstone_power(w,x,y,z,x,y,z,1)>0;
+    if(powered && !e->note_powered)note_block_use(w,x,y,z,0);
+    e->note_powered=(unsigned char)powered;
 }
 void block_entity_changed(World *world,BlockEntity *entity)
 {
@@ -101,8 +132,8 @@ void block_entity_remove(World *world,int x,int y,int z,int drop_contents)
             world_sound(world,"records.stop",x+.5f,y+.5f,z+.5f,1,1);
             if(drop_contents) record_drop(world,x,y,z,e->record);
         }
-        if (drop_contents && (e->kind==BLOCK_ENTITY_CHEST || e->kind==BLOCK_ENTITY_FURNACE))
-            for (i=0;i<(e->kind==BLOCK_ENTITY_FURNACE ? 3 : 27);++i)
+        if (drop_contents && (e->kind==BLOCK_ENTITY_CHEST || e->kind==BLOCK_ENTITY_FURNACE || e->kind==BLOCK_ENTITY_DISPENSER))
+            for (i=0;i<(e->kind==BLOCK_ENTITY_FURNACE ? 3 : e->kind==BLOCK_ENTITY_DISPENSER ? 9 : 27);++i)
             if (e->slots[i].id>0 && e->slots[i].count>0)
                 world_drop_stack(world,x,y,z,e->slots[i]);
         *link=e->next; free_entity(e); chunk->entities_modified=1;
@@ -145,6 +176,7 @@ void block_entities_tick(World *world)
             }
         }
     }
+    world_pistons_tick(world);
 }
 
 int block_chest_can_place(World *world,int x,int y,int z)
@@ -213,6 +245,9 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned dept
             else if (text_is(tag->value.bytes,"Furnace")) e->kind=BLOCK_ENTITY_FURNACE;
             else if (text_is(tag->value.bytes,"Sign")) e->kind=BLOCK_ENTITY_SIGN;
             else if (text_is(tag->value.bytes,"RecordPlayer")) e->kind=BLOCK_ENTITY_JUKEBOX;
+            else if (text_is(tag->value.bytes,"Trap")) e->kind=BLOCK_ENTITY_DISPENSER;
+            else if (text_is(tag->value.bytes,"Piston")) e->kind=BLOCK_ENTITY_PISTON;
+            else if (text_is(tag->value.bytes,"Music")) e->kind=BLOCK_ENTITY_NOTE;
         } else if (tag->type==NBT_STRING && tag->name.size==5 &&
                    !memcmp(tag->name.data,"Text",4) && tag->name.data[4]>='1' && tag->name.data[4]<='4') {
             sign_line_read_nbt(e->sign_text[tag->name.data[4]-'1'],tag->value.bytes.data,tag->value.bytes.size);
@@ -221,10 +256,18 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned dept
             if (named(tag,"y")) e->y=tag->value.int_value;
             if (named(tag,"z")) e->z=tag->value.int_value;
             if (named(tag,"Record")) e->record=tag->value.int_value;
+            if (named(tag,"blockId")) e->piston_id=tag->value.int_value;
+            if (named(tag,"blockData")) e->piston_data=tag->value.int_value&15;
+            if (named(tag,"facing")) e->piston_facing=tag->value.int_value;
+        } else if(tag->type==NBT_FLOAT && named(tag,"progress")) {
+            e->piston_progress=e->piston_previous=tag->value.float_value;
+        } else if(tag->type==NBT_BYTE && named(tag,"extending")) {
+            e->piston_extending=tag->value.byte!=0;
         } else if (tag->type==NBT_SHORT) {
             if (named(tag,"BurnTime")) e->burn=tag->value.short_value;
             if (named(tag,"CookTime")) e->cook=tag->value.short_value;
         }
+        if(tag->type==NBT_BYTE && named(tag,"note")) r->current->note=(unsigned char)(tag->value.byte<0 ? 0 : tag->value.byte>24 ? 24 : tag->value.byte);
     }
     if (depth==4 && tag->type==NBT_LIST && named(tag,"Items")) r->items=event==NBT_BEGIN;
     if (r->items && depth==5 && event==NBT_BEGIN) { r->slot=-1; inventory_clear_slot(&r->item); }
@@ -274,7 +317,7 @@ static int scalar(NbtWriter *w,NbtType type,const char *name,int value)
 }
 static int write_items(NbtWriter *w,const BlockEntity *e)
 {
-    NbtTag t={0}; int i,n=e->kind==BLOCK_ENTITY_FURNACE ? 3 : 27;
+    NbtTag t={0}; int i,n=e->kind==BLOCK_ENTITY_FURNACE ? 3 : e->kind==BLOCK_ENTITY_DISPENSER ? 9 : 27;
     t.type=NBT_LIST; t.list_type=NBT_COMPOUND; t.name=nbt_span("Items");
     for (i=0;i<n;++i) if (e->slots[i].id>0 && e->slots[i].count>0) ++t.count;
     if (nbt_writer_tag(w,&t)!=NBT_OK) return 0;
@@ -296,11 +339,24 @@ static int write_sign_line(NbtWriter *w,const BlockEntity *e,unsigned line)
     return nbt_writer_tag(w,&t)==NBT_OK;
 }
 typedef struct EntityWrite { NbtWriter *writer; const BlockEntity *entity; int skip,items,burn,cook; unsigned sign_lines; } EntityWrite;
+static int write_piston(NbtWriter *w,const BlockEntity *e)
+{
+    NbtTag t={0}; t.type=NBT_FLOAT; t.name=nbt_span("progress"); t.value.float_value=e->piston_previous;
+    return scalar(w,NBT_INT,"blockId",e->piston_id) && scalar(w,NBT_INT,"blockData",e->piston_data) &&
+        scalar(w,NBT_INT,"facing",e->piston_facing) && nbt_writer_tag(w,&t)==NBT_OK &&
+        scalar(w,NBT_BYTE,"extending",e->piston_extending);
+}
 static int entity_tag(void *context,NbtEvent event,const NbtTag *tag,unsigned depth)
 {
     EntityWrite *e=(EntityWrite *)context;
     NbtTag t=*tag;
-    if(e->entity->kind==BLOCK_ENTITY_JUKEBOX) {
+    if(e->entity->kind==BLOCK_ENTITY_PISTON) {
+        if(depth==1 && (named(tag,"blockId") || named(tag,"blockData") || named(tag,"facing") || named(tag,"progress") || named(tag,"extending"))) return 1;
+        if(event==NBT_FINISH && depth==0 && !write_piston(e->writer,e->entity)) return 0;
+    } else if(e->entity->kind==BLOCK_ENTITY_NOTE) {
+        if(depth==1 && named(tag,"note"))return 1;
+        if(event==NBT_FINISH && depth==0 && !scalar(e->writer,NBT_BYTE,"note",e->entity->note))return 0;
+    } else if(e->entity->kind==BLOCK_ENTITY_JUKEBOX) {
         if(event==NBT_VALUE && depth==1 && named(tag,"Record") && tag->type==NBT_INT) {
             e->items=1; t.value.int_value=e->entity->record;
         }
@@ -345,12 +401,16 @@ static int write_entity(NbtWriter *w,const BlockEntity *entity)
         NbtTag t={0}; t.type=NBT_COMPOUND;
         if (nbt_writer_tag(w,&t)!=NBT_OK) return 0;
         t.type=NBT_STRING; t.name=nbt_span("id");
-        t.value.bytes=nbt_span(entity->kind==BLOCK_ENTITY_CHEST ? "Chest" : entity->kind==BLOCK_ENTITY_SIGN ? "Sign" : entity->kind==BLOCK_ENTITY_JUKEBOX ? "RecordPlayer" : "Furnace");
+        t.value.bytes=nbt_span(entity->kind==BLOCK_ENTITY_CHEST ? "Chest" : entity->kind==BLOCK_ENTITY_SIGN ? "Sign" : entity->kind==BLOCK_ENTITY_JUKEBOX ? "RecordPlayer" : entity->kind==BLOCK_ENTITY_DISPENSER ? "Trap" : entity->kind==BLOCK_ENTITY_PISTON ? "Piston" : entity->kind==BLOCK_ENTITY_NOTE ? "Music" : "Furnace");
         if (nbt_writer_tag(w,&t)!=NBT_OK || !scalar(w,NBT_INT,"x",entity->x) ||
             !scalar(w,NBT_INT,"y",entity->y) || !scalar(w,NBT_INT,"z",entity->z)) return 0;
-        if(entity->kind==BLOCK_ENTITY_SIGN) {
+        if(entity->kind==BLOCK_ENTITY_PISTON) {
+            if(!write_piston(w,entity)) return 0;
+        } else if(entity->kind==BLOCK_ENTITY_SIGN) {
             unsigned line;
             for(line=0;line<4;++line) if(!write_sign_line(w,entity,line)) return 0;
+        } else if(entity->kind==BLOCK_ENTITY_NOTE) {
+            if(!scalar(w,NBT_BYTE,"note",entity->note))return 0;
         } else if(entity->kind==BLOCK_ENTITY_JUKEBOX) {
             if(entity->record && !scalar(w,NBT_INT,"Record",entity->record)) return 0;
         } else if(!write_items(w,entity)) return 0;

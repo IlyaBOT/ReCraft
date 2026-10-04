@@ -340,8 +340,12 @@ static void mechanisms_tests(void)
     assert(world_set_block(&w,4,64,4,55)); world_set_metadata(&w,4,64,4,15);
     assert(world_set_block(&w,5,64,4,55)); world_set_metadata(&w,5,64,4,14);
     assert(world_set_block(&w,4,64,5,93)); world_set_metadata(&w,4,64,5,2);
+    /* This isolated test probes output geometry at an injected strength;
+     * production dust now correctly clears unsupported power immediately. */
+    chunk_set_metadata(world_get_chunk(&w,0,0),4,64,4,15);
     assert(world_redstone_signal(&w,4,64,4,3,64,4,1)==0);
     world_set_metadata(&w,4,64,5,0);
+    chunk_set_metadata(world_get_chunk(&w,0,0),4,64,4,15);
     assert(world_redstone_signal(&w,4,64,4,3,64,4,1)==15);
     assert(world_redstone_signal(&w,12,64,12,12,64,11,1)==15);
     assert(world_redstone_signal(&w,12,64,12,11,64,12,1)==0);

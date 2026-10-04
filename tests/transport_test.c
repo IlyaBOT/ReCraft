@@ -1,6 +1,7 @@
 #include "world/world.h"
 #include "world/entities.h"
 #include "world/transport.h"
+#include "world/explosion.h"
 #include "world/rail.h"
 #include "world/redstone.h"
 #include "world/environment.h"
@@ -270,9 +271,32 @@ static void boat_test(void)
     assert(!world_transport_visible(&w,(RenderEntity[1]){{0}},1));
     assert(world_close(&w)==WORLD_OK);
 }
+static void falling_tnt_test(void)
+{
+    World w;Player p={0};InventorySlot inv[36]={{0}};RenderEntity visible[4]={{0}};
+    SavedEntity *fall,*tnt;Chunk copy={0};uint8_t bytes[8192];NbtWriter writer;NbtTag tag={0};size_t size;int n;
+    init(&w);p.health=20;p.x=p.z=30;p.y=64;
+    world_set_block(&w,8,75,8,12);ticks(&w,&p,inv,3);
+    fall=world_peek_chunk(&w,0,0)->saved_entities;
+    assert(fall && fall->transport.kind==7 && fall->transport.falling_block==12);
+    assert(!world_peek_block(&w,8,75,8) && !world_peek_block(&w,8,64,8));
+    ticks(&w,&p,inv,1);assert(fall->mob.vy<0 && fall->mob.y<75.5f && fall->mob.y>75);
+    assert(world_tnt_prime(&w,10.5f,66.5f,8.5f,80));tnt=world_peek_chunk(&w,0,0)->saved_entities;
+    assert(tnt->transport.kind==4 && tnt->mob.vy==4);
+    n=world_transport_visible(&w,visible,4);assert(n==2 && visible[0].type==1003 && visible[0].fuse==80 && visible[1].type==1006 && visible[1].color==12);
+    nbt_writer_init(&writer,bytes,sizeof(bytes),NULL);tag.type=NBT_COMPOUND;assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+    tag.name=nbt_span("Level");assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+    assert(world_entities_write_list(world_peek_chunk(&w,0,0),&writer));
+    assert(nbt_writer_end(&writer)==NBT_OK && nbt_writer_end(&writer)==NBT_OK && nbt_writer_finish(&writer,&size)==NBT_OK);
+    assert(world_entities_read(&copy,bytes,size));assert(copy.saved_entities->transport.kind==4 && copy.saved_entities->transport.fuse==80);
+    assert(copy.saved_entities->next->transport.kind==7 && copy.saved_entities->next->transport.falling_block==12);
+    world_entities_free(&copy);ticks(&w,&p,inv,35);assert(world_peek_block(&w,8,64,8)==12 && !world_peek_block(&w,8,75,8));
+    assert(tnt->transport.fuse==45 && tnt->mob.y<65);
+    assert(world_close(&w)==WORLD_OK);
+}
 int main(void)
 {
     lever_test(); jukebox_test(); arrow_test(); arrow_lifetime_test(); rail_test(); rail_forms_test();
-    cart_use_test(); entity_roundtrip(); boat_test(); bed_test();
+    cart_use_test(); entity_roundtrip(); boat_test(); bed_test(); falling_tnt_test();
     puts("Beta lever, jukebox, arrow, rail topology, minecart NBT and sleeping eyes passed"); return 0;
 }

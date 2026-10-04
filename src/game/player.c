@@ -4,6 +4,7 @@
 #include "../world/entities.h"
 #include "../world/rail.h"
 #include "../world/block_entity.h"
+#include "../world/piston.h"
 #include "../world/fluid.h"
 #include "bed.h"
 #include "sign.h"
@@ -47,15 +48,14 @@ static int body_collides(const Player *player, World *world)
     int z0 = (int)floorf(player->z - PLAYER_RADIUS + 0.0001f);
     int z1 = (int)floorf(player->z + PLAYER_RADIUS - 0.0001f);
     int x, y, z;
-    for (y = y0; y <= y1; ++y)
-        for (z = z0; z <= z1; ++z)
-            for (x = x0; x <= x1; ++x) {
-                uint8_t id = world_get_block(world, x, y, z);
-                if (world_block_def(id)->solid) {
-                    BetaBlockBox box;
-                    collision_box((BetaBlockState){id,world_get_metadata(world,x,y,z)}, &box);
-                    if (body_intersects_block(player, x, y, z, &box)) return 1;
-                }
+    for (y = y0-1; y <= y1+1; ++y)
+        for (z = z0-1; z <= z1+1; ++z)
+            for (x = x0-1; x <= x1+1; ++x) {
+                BetaBlockBox boxes[2]; int n,i;
+                if(x>=x0 && x<=x1 && y>=y0 && y<=y1 && z>=z0 && z<=z1) world_get_block(world,x,y,z);
+                else if(world_peek_block(world,x,y,z)!=36) continue;
+                n=world_block_collision_boxes(world,x,y,z,boxes);
+                for(i=0;i<n;++i) if(body_intersects_block(player,x,y,z,&boxes[i])) return 1;
             }
     {
         size_t i;
@@ -100,6 +100,8 @@ static int move_axis(Player *player, World *world, int axis, float delta)
     }
     return 0;
 }
+void player_piston_move(Player *p,World *w,float dx,float dy,float dz)
+{ move_axis(p,w,0,dx); move_axis(p,w,1,dy); move_axis(p,w,2,dz); }
 
 int player_restore_beta(Player *player,World *world,int allow_legacy_feet)
 {
@@ -337,7 +339,7 @@ static BlockHit raycast(const Player *player, World *world, float reach,int sour
                 id == BETA_BLOCK_TORCH ||
                 id == BETA_BLOCK_UNLIT_REDSTONE_TORCH ||
                 id == BETA_BLOCK_REDSTONE_TORCH || id==BETA_BLOCK_CACTUS || id==BETA_BLOCK_NETHER_PORTAL ||
-                id==26 || id==93 || id==94 || id==69 || id==77 || id==78 || sign_is_block(id) || rail_is(id) ||
+                id==26 || id==93 || id==94 || id==69 || id==77 || id==78 || id==55 || id==70 || id==72 || id==29 || id==33 || id==34 || sign_is_block(id) || rail_is(id) ||
                 id==BETA_BLOCK_WOOD_DOOR || id==BETA_BLOCK_IRON_DOOR) {
                 BetaBlockState state = { id, world_get_metadata(world, x, y, z) };
                 float end = fminf(reach, fminf(tx, fminf(ty, tz)));
@@ -475,6 +477,19 @@ int player_place_block_state(Player *player, World *world, BetaBlockState state)
         else state.metadata=4;
     }
     if(state.id==BETA_BLOCK_REDSTONE_WIRE && !world_block_def(world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z))->opaque) return 0;
+    if(state.id==70 || state.id==72) {
+        if(!world_block_def(world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z))->opaque) return 0;
+        state.metadata=0;
+    }
+    if(state.id==23 || state.id==29 || state.id==33) {
+        static const unsigned char facing[4]={2,5,3,4};
+        unsigned dir=(unsigned)(int)floorf(player->yaw*.63661977236f+2.5f)&3;
+        state.metadata=facing[dir];
+        if(state.id!=23 && fabsf(player->x-hit.place_x)<2 && fabsf(player->z-hit.place_z)<2) {
+            if(player->y+PLAYER_EYE-hit.place_y>2) state.metadata=1;
+            else if(hit.place_y-player->y-PLAYER_EYE>0) state.metadata=0;
+        }
+    }
     if(state.id==93 || state.id==94) {
         if(!world_block_def(world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z))->opaque) return 0;
         state.metadata=(uint8_t)((int)floorf(player->yaw*.63661977236f+2.5f)+2)&3;
@@ -518,7 +533,7 @@ int player_place_block_state(Player *player, World *world, BetaBlockState state)
                                   hit.place_z, &box)) return 0;
     }
     if (!world_set_state(world,hit.place_x,hit.place_y,hit.place_z,state)) return 0;
-    if (state.id==54 || state.id==61 || state.id==62)
+    if (state.id==54 || state.id==61 || state.id==62 || state.id==23 || state.id==25)
         block_entity_get(world,hit.place_x,hit.place_y,hit.place_z,1);
     return world_set_metadata(world,hit.place_x,hit.place_y,hit.place_z,state.metadata);
 }

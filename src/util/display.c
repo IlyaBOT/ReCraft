@@ -6,8 +6,17 @@
 #include "GLFW/glfw3native.h"
 #include <windows.h>
 #elif defined(__APPLE__)
+#include <ApplicationServices/ApplicationServices.h>
+#include <objc/runtime.h>
+#include <objc/message.h>
 #include <OpenGL/gl.h>
+/* glfw3native.h's C-only void* id conflicts with the Objective-C runtime id. */
+extern id glfwGetCocoaWindow(GLFWwindow *window);
 #else
+#define GLFW_EXPOSE_NATIVE_X11
+#define GLFW_EXPOSE_NATIVE_GLX
+#include "GLFW/glfw3native.h"
+#include <X11/Xutil.h>
 #include <GL/gl.h>
 #endif
 #ifdef _WIN32
@@ -16,6 +25,20 @@
 
 #include <string.h>
 #include <stdio.h>
+
+#ifdef _WIN32
+static WNDPROC original_proc;
+static LRESULT CALLBACK minimum_proc(HWND window,UINT message,WPARAM wp,LPARAM lp)
+{
+    LRESULT result=CallWindowProc(original_proc,window,message,wp,lp);
+    if(message==WM_GETMINMAXINFO) {
+        RECT r={0,0,640,480}; MINMAXINFO *info=(MINMAXINFO *)lp;
+        AdjustWindowRectEx(&r,(DWORD)GetWindowLongPtr(window,GWL_STYLE),FALSE,(DWORD)GetWindowLongPtr(window,GWL_EXSTYLE));
+        info->ptMinTrackSize.x=r.right-r.left; info->ptMinTrackSize.y=r.bottom-r.top;
+    }
+    return result;
+}
+#endif
 
 int recraft_screen_width(void)
 {
@@ -76,6 +99,11 @@ int recraft_display_check_resize(void)
 #ifdef _WIN32
     {
         HWND hwnd=glfwGetWin32Window(window);
+        MINMAXINFO minimum; RECT client_min={0,0,640,480};
+        memset(&minimum,0,sizeof(minimum)); SendMessage(hwnd,WM_GETMINMAXINFO,0,(LPARAM)&minimum);
+        AdjustWindowRectEx(&client_min,(DWORD)GetWindowLongPtr(hwnd,GWL_STYLE),FALSE,(DWORD)GetWindowLongPtr(hwnd,GWL_EXSTYLE));
+        if(minimum.ptMinTrackSize.x<client_min.right-client_min.left || minimum.ptMinTrackSize.y<client_min.bottom-client_min.top) ok=0;
+        fprintf(stderr,"Window check: minimum client 640x480, native limit %ldx%ld\n",minimum.ptMinTrackSize.x,minimum.ptMinTrackSize.y);
         if(!(GetWindowLongPtr(hwnd,GWL_STYLE)&WS_MAXIMIZEBOX)) ok=0;
         ShowWindow(hwnd,SW_MAXIMIZE); glfwPollEvents();
         fprintf(stderr,"Window check: maximized %d, framebuffer %dx%d\n",IsZoomed(hwnd)!=0,recraft_screen_width(),recraft_screen_height());
@@ -92,6 +120,26 @@ void recraft_display_init(RecraftDisplay *display)
 {
     memset(display,0,sizeof(*display));
     display->window=glfwGetCurrentContext();
+    if(!display->window) return;
+    /* GLFW 3.1 predates glfwSetWindowSizeLimits. Apply native content limits
+     * without replacing GLFW's resize callback or recreating the GL context. */
+#ifdef _WIN32
+    {
+        HWND window=glfwGetWin32Window(display->window);
+        original_proc=(WNDPROC)GetWindowLongPtr(window,GWLP_WNDPROC);
+        SetWindowLongPtr(window,GWLP_WNDPROC,(LONG_PTR)minimum_proc);
+    }
+#elif defined(__APPLE__)
+    ((void (*)(id,SEL,CGSize))objc_msgSend)(glfwGetCocoaWindow(display->window),sel_registerName("setContentMinSize:"),CGSizeMake(640,480));
+#else
+    {
+        Display *native=glfwGetX11Display(); Window window=glfwGetX11Window(display->window);
+        XSizeHints hints; long supplied=0;
+        memset(&hints,0,sizeof(hints)); XGetWMNormalHints(native,window,&hints,&supplied);
+        hints.flags|=PMinSize; hints.min_width=640; hints.min_height=480;
+        XSetWMNormalHints(native,window,&hints); XFlush(native);
+    }
+#endif
 }
 
 void recraft_display_fullscreen(RecraftDisplay *display, int enable)

@@ -1,5 +1,6 @@
 #include "../src/world/world.h"
 #include "../src/game/player.h"
+#include "../src/world/transport.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -119,7 +120,10 @@ int main(void)
      * untouched until a player edit exposes a falling or fluid block. */
     assert(world_init(&a,42,1,8)==WORLD_OK);
     assert(world_set_block(&a,2,67,2,BLOCK_SAND));
-    for (i=0;i<32;++i) world_step_physics(&a,64);
+    for (i=0;i<32;++i) {
+        Player player={0};InventorySlot inventory[36]={{0}};
+        world_step_physics(&a,64);world_transport_tick(&a,&player,inventory);
+    }
     assert(world_get_block(&a,2,64,2)==BLOCK_SAND);
     assert(world_get_block(&a,2,67,2)==BLOCK_AIR);
     assert(world_set_block(&a,5,64,5,BLOCK_STONE));

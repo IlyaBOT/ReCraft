@@ -10,13 +10,16 @@ GitHub Actions builds Windows/Linux and macOS on the local Vesper runner.
 See [CI, artifacts and host build instructions](docs/CI.md).
 
 The game has 16 x 16 x 128 chunk columns, deterministic terrain for ReCraft saves, walking and flying controls, block interaction, crafting and chest/furnace inventories, survival health and mining, menus, video settings, a debug overlay, and reproducible benchmark scenes. Chunk block bytes use the Beta 1.7.3 ID range 0..96 with separate metadata nibbles; native `.rcg` version 1 saves are migrated on load to version 2. Minecraft Beta 1.7.3 `level.dat` and existing McRegion `.mcr` chunks can also be opened for play. Edits to loaded Beta chunks are written back in McRegion format. Missing Beta chunks are not generated yet. Some Beta blocks still use proxy geometry and behavior, and ReCraft's own terrain generator is not Beta-compatible. The per-block status is in the [Beta compatibility matrix](docs/BETA_COMPATIBILITY_MATRIX.md).
-The offline Minecraft Beta 1.7.3 protocol 14 client is experimental. It needs testing against a real compatible server; it does not authenticate to online servers. The server list queries modern status (protocol 47) for MOTD, favicon, population and ping; modern gameplay is not implemented. Beta entries show TCP reachability only. See [network support and limits](docs/NETWORK_PROTOCOLS.md).
+The Minecraft Beta 1.7.3 protocol 14 client is experimental. Offline joining and optional Microsoft session joining for online challenges are implemented; both still need testing against a real compatible server. The server list queries modern status (protocol 47) for MOTD, favicon, population and ping; modern gameplay is not implemented. Beta entries show TCP reachability only. See [network support and limits](docs/NETWORK_PROTOCOLS.md).
 The interface uses selected user-provided CoterieCraft Beta textures and an original bitmap font atlas. Effects and music use original OGG assets with Beta sound keys and a non-looping music schedule. See [asset sources](docs/ASSET_SOURCES.md).
 
 The current [mechanics audit](docs/BETA_MECHANICS_AUDIT.md) distinguishes working,
 partial and missing features. Day/night, weather, beds and saved mobs have a
-local implementation; full Beta terrain generation, pistons, armor and lightning
-remain unfinished. Hostile spawning/pathfinding, skeleton arrows, creeper/TNT
+local implementation; full Beta terrain generation, armor and lightning
+remain unfinished. Pistons, plates, dispensers and note blocks now have local
+simulation and vanilla metadata/NBT. Creative uses the 1.5.2 catalogue filtered
+to Beta IDs/variants. TNT/falling sand and burning entities use textured
+fixed-function rendering. See [mechanisms, effects and account changes](docs/BETA_MECHANISMS_AND_EFFECTS.md). Hostile spawning/pathfinding, skeleton arrows, creeper/TNT
 explosions, leaf decay, fire and Q item dropping now have local simulation.
 Instant Beta bows/projectile
 arrows, jukebox discs 13/cat, legacy rails and three minecart variants now have

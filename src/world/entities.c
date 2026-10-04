@@ -40,6 +40,9 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
             if(t->value.bytes.size==8 && !memcmp(t->value.bytes.data,"Minecart",8)) r->current->transport.kind=2;
             if(t->value.bytes.size==4 && !memcmp(t->value.bytes.data,"Boat",4)) r->current->transport.kind=3;
             if(t->value.bytes.size==9 && !memcmp(t->value.bytes.data,"PrimedTnt",9)) r->current->transport.kind=4;
+            if(t->value.bytes.size==8 && !memcmp(t->value.bytes.data,"Snowball",8)) r->current->transport.kind=5;
+            if(t->value.bytes.size==3 && !memcmp(t->value.bytes.data,"Egg",3)) r->current->transport.kind=6;
+            if(t->value.bytes.size==11 && !memcmp(t->value.bytes.data,"FallingSand",11)) r->current->transport.kind=7;
             r->current->mob.type=mob_type(t->value.bytes.data,t->value.bytes.size);
             if(!r->health_seen) r->current->mob.health=mob_default_health(r->current->mob.type);
         }
@@ -61,6 +64,7 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
             }
             if(t->type==NBT_BYTE) {
                 if(named(t,"Fuse")) s->fuse=(uint8_t)t->value.byte;
+                if(named(t,"Tile")) s->falling_block=(uint8_t)t->value.byte;
                 if(named(t,"inTile")) s->in_tile=(uint8_t)t->value.byte;
                 if(named(t,"inData")) s->in_data=(uint8_t)t->value.byte;
                 if(named(t,"shake")) s->shake=(uint8_t)t->value.byte;
@@ -123,7 +127,7 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
         e->item.active=e->item_entity && e->item.id>0 && e->item.count>0;
         e->mob.x=e->item.x; e->mob.y=e->item.y; e->mob.z=e->item.z;
         e->mob.vx=e->item.vx; e->mob.vy=e->item.vy; e->mob.vz=e->item.vz;
-        if(e->transport.kind==1) e->mob.yaw=180-e->mob.yaw;
+        if(e->transport.kind==1 || e->transport.kind==5 || e->transport.kind==6) e->mob.yaw=180-e->mob.yaw;
         if(e->transport.kind) {
             if(fabsf(e->mob.vx)>200) e->mob.vx=0;
             if(fabsf(e->mob.vy)>200) e->mob.vy=0;

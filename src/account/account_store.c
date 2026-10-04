@@ -40,6 +40,8 @@ int account_data_load(AccountData *d,const char *path)
     object=json_member(j,selected,"xrp-mc");text(j,object,"token",loaded->xsts,sizeof(loaded->xsts));text(j,json_member(j,object,"extra"),"uhs",loaded->uhs,sizeof(loaded->uhs));
     object=json_member(j,selected,"profile");
     if(!text(j,object,"name",loaded->name,sizeof(loaded->name))||!settings_player_name_valid(loaded->name)||!text(j,object,"id",loaded->id,sizeof(loaded->id))||strlen(loaded->id)!=32||strspn(loaded->id,"0123456789abcdefABCDEF")!=32||!loaded->refresh[0])goto done;
+    {int cape=json_element(j,json_member(j,object,"capes"),0);
+     text(j,cape,"id",loaded->cape_id,sizeof(loaded->cape_id));text(j,cape,"url",loaded->cape_url,sizeof(loaded->cape_url));}
     object=json_member(j,object,"skin");text(j,object,"id",loaded->skin_id,sizeof(loaded->skin_id));text(j,object,"url",loaded->skin_url,sizeof(loaded->skin_url));text(j,object,"variant",loaded->skin_variant,sizeof(loaded->skin_variant));
     *d=*loaded;ok=1;
 done:
@@ -91,7 +93,10 @@ int account_data_save(const AccountData *d,const char *path)
        !token(f,"ygg",d->minecraft,NULL,d->issued,d->minecraft_exp,NULL,q,32768)||fputs(",\"profile\":{",f)<0||
        !string(f,"id",d->id,q,32768)||fputc(',',f)==EOF||!string(f,"name",d->name,q,32768)||fputs(",\"skin\":{",f)<0||
        !string(f,"id",d->skin_id,q,32768)||fputc(',',f)==EOF||!string(f,"url",d->skin_url,q,32768)||fputc(',',f)==EOF||
-       !string(f,"variant",d->skin_variant,q,32768)||fputs("},\"capes\":[]}}]}\n",f)<0||fflush(f))goto done;
+       !string(f,"variant",d->skin_variant,q,32768)||fputs("},\"capes\":[",f)<0)goto done;
+    if(d->cape_url[0] && (fputc('{',f)==EOF || !string(f,"id",d->cape_id,q,32768) || fputc(',',f)==EOF ||
+       !string(f,"url",d->cape_url,q,32768) || fputs(",\"state\":\"ACTIVE\"}",f)<0))goto done;
+    if(fputs("]}}]}\n",f)<0 || fflush(f))goto done;
 #ifdef _WIN32
     if(_commit(_fileno(f)))goto done;
 #else

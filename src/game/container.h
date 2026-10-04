@@ -2,7 +2,7 @@
 #define RECRAFT_CONTAINER_H
 #include "inventory.h"
 typedef enum ContainerKind { CONTAINER_PLAYER, CONTAINER_WORKBENCH, CONTAINER_CHEST,
-    CONTAINER_FURNACE, CONTAINER_CREATIVE } ContainerKind;
+    CONTAINER_FURNACE, CONTAINER_CREATIVE, CONTAINER_DISPENSER } ContainerKind;
 typedef struct ContainerSession {
     ContainerKind kind;
     int x,y,z,size;

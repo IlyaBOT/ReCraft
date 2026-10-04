@@ -2,6 +2,7 @@
 #include "resource_pack.h"
 #include "server_icon_png.h"
 #include "../util/game_paths.h"
+#include "../renderer/texture_animation.h"
 
 #if defined(__APPLE__)
 #include <OpenGL/gl.h>
@@ -31,13 +32,18 @@ static const char *const files[ASSET_COUNT] = {
     "assets/textures/mob/cow.png","assets/textures/mob/chicken.png","assets/textures/mob/zombie.png",
     "assets/textures/mob/skeleton.png","assets/textures/mob/spider.png","assets/textures/mob/creeper.png",
     "assets/textures/item/sign.png","assets/gui/unknown_server.png",
-    "assets/textures/entity/arrows.png","assets/textures/entity/cart.png","assets/textures/entity/boat.png","assets/gui/language.png"
+    "assets/textures/entity/arrows.png","assets/textures/entity/cart.png","assets/textures/entity/boat.png","assets/gui/language.png","assets/gui/trap.png"
 };
 static char root[512];
 static Texture2D textures[ASSET_COUNT];
 static unsigned char attempted[ASSET_COUNT];
 static Texture2D fallback;
 static Image player_skin;
+static Texture2D player_cape;
+static Texture2D remote_textures[64][2];
+static Texture2D fire_texture;
+static TextureAnimation fire_animation;
+static uint64_t fire_tick;
 static struct { Texture2D texture; unsigned page,age; } unicode_pages[16];
 static unsigned unicode_age;
 static struct { char id[300]; Texture2D texture; unsigned age; } pack_icons[16];
@@ -50,12 +56,13 @@ static const char *const legacy[ASSET_COUNT]={
     "mob/char.png","environment/rain.png","environment/snow.png","terrain/sun.png","terrain/moon.png",
     "mob/pig.png","mob/sheep.png","mob/sheep_fur.png","mob/cow.png","mob/chicken.png",
     "mob/zombie.png","mob/skeleton.png","mob/spider.png","mob/creeper.png",
-    "item/sign.png",NULL,"item/arrows.png","item/cart.png","item/boat.png",NULL
+    "item/sign.png",NULL,"item/arrows.png","item/cart.png","item/boat.png",NULL,"gui/trap.png"
 };
 static const char *const modern[ASSET_COUNT]={
     "gui/widgets.png","gui/options_background.png","gui/icons.png",NULL,NULL,"font/ascii.png",
     "gui/container/inventory.png",NULL,"gui/container/crafting_table.png","gui/container/furnace.png","gui/container/generic_54.png",
-    "entity/steve.png","environment/rain.png","environment/snow.png","environment/sun.png","environment/moon_phases.png"
+    "entity/steve.png","environment/rain.png","environment/snow.png","environment/sun.png","environment/moon_phases.png",
+    [ASSET_GUI_DISPENSER]="gui/container/dispenser.png"
 };
 void *assets_read_file(const char *relative,size_t *size)
 {
@@ -143,7 +150,20 @@ static void terrain_overrides(Image *image)
         {8,"tnt_side"},{9,"tnt_top"},{10,"tnt_bottom"},{31,"fire_layer_0"},{47,"fire_layer_1"}
     };
     unsigned i; int x,y;
-    if(!image->data || !resource_pack_current()[0]) return;
+    if(!image->data) return;
+    if(!resource_pack_current()[0]) {
+        /* This pack's terrain layout predates the final repeater artwork.
+         * Correct only these two default tiles with the original Beta atlas. */
+        const char *names[2]={"textures/legacy/repeater_off.png","textures/legacy/repeater_on.png"};
+        int n;point_resize(image,256,256);if(image->format!=UNCOMPRESSED_R8G8B8A8)ImageFormat(image,UNCOMPRESSED_R8G8B8A8);
+        for(n=0;n<2;++n) {
+            size_t size;void *bytes=assets_read_file(names[n],&size);Image tile=image_memory(bytes,size);int target=n ? 147 : 131;free(bytes);
+            if(tile.data && tile.width==16 && tile.height==16)
+                for(y=0;y<16;++y)memcpy((unsigned char *)image->data+((target/16*16+y)*256+target%16*16)*4,(unsigned char *)tile.data+y*16*4,16*4);
+            if(tile.data)UnloadImage(tile);
+        }
+        return;
+    }
     point_resize(image,256,256); if(image->format!=UNCOMPRESSED_R8G8B8A8) ImageFormat(image,UNCOMPRESSED_R8G8B8A8);
     for(i=0;i<sizeof(tiles)/sizeof(tiles[0]);++i) {
         Image tile=block_image(tiles[i].name);
@@ -313,6 +333,60 @@ int assets_set_player_skin(const unsigned char *png,size_t size)
     if(textures[ASSET_PLAYER_SKIN].id) UnloadTexture(textures[ASSET_PLAYER_SKIN]);
     textures[ASSET_PLAYER_SKIN]=(Texture2D){0};attempted[ASSET_PLAYER_SKIN]=0;return 1;
 }
+int assets_set_player_cape(const unsigned char *png,size_t size)
+{
+    Texture2D next={0};Image image={0};int w,h,c;
+    if(size) {
+        if(!png || size<33 || size>65536 || !stbi_info_from_memory(png,(int)size,&w,&h,&c) || w!=64 || h!=32) return 0;
+        image=image_memory(png,size);if(!image.data)return 0;
+        next=LoadTextureFromImage(image);UnloadImage(image);if(!next.id)return 0;nearest(next,0);
+    }
+    if(player_cape.id)UnloadTexture(player_cape);
+    player_cape=next;return 1;
+}
+Texture2D assets_player_cape(void) { return player_cape; }
+int assets_set_remote_texture(unsigned slot,int cape,const unsigned char *png,size_t size)
+{
+    Image image;Texture2D next={0};int w,h,c;
+    if(slot>=64 || cape<0 || cape>1)return 0;
+    if(size) {
+        if(!png || size<33 || size>65536 || !stbi_info_from_memory(png,(int)size,&w,&h,&c) || w!=64 || (h!=32 && (cape || h!=64)))return 0;
+        image=image_memory(png,size);if(!image.data)return 0;
+        if(!cape)skin_alpha(&image);
+        next=LoadTextureFromImage(image);UnloadImage(image);if(!next.id)return 0;nearest(next,0);
+    }
+    if(remote_textures[slot][cape].id)UnloadTexture(remote_textures[slot][cape]);
+    remote_textures[slot][cape]=next;return 1;
+}
+Texture2D assets_remote_texture(unsigned slot,int cape)
+{ Texture2D empty={0};return slot<64 && cape>=0 && cape<=1 ? remote_textures[slot][cape] : empty; }
+void assets_clear_remote_textures(void)
+{ unsigned i;int c;for(i=0;i<64;++i)for(c=0;c<2;++c)assets_set_remote_texture(i,c,NULL,0); }
+Texture2D assets_fire_texture(void) { return fire_texture; }
+void assets_animate_fire(unsigned long long tick)
+{
+    unsigned char pixels[2048];int i;GLint bound;
+    if(fire_texture.id && (fire_tick==(uint64_t)tick || !(assets_animation_mask()&8)))return;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D,&bound);
+    if(!fire_texture.id) {
+        Image image={0};image.data=pixels;image.width=16;image.height=32;image.mipmaps=1;image.format=UNCOMPRESSED_R8G8B8A8;
+        memset(pixels,0,sizeof(pixels));fire_texture=LoadTextureFromImage(image);nearest(fire_texture,0);
+        texture_animation_init(&fire_animation);for(i=0;i<20;++i)texture_animation_step(&fire_animation);
+    }
+    fire_tick=(uint64_t)tick;
+    if(assets_animation_mask()&8) {
+        texture_animation_step(&fire_animation);
+        memcpy(pixels,fire_animation.fire_pixels,1024);memcpy(pixels+1024,fire_animation.fire_pixels,1024);
+    } else {
+        Image image=assets_load_image(ASSET_TERRAIN);int x,y;
+        if(!image.data){glBindTexture(GL_TEXTURE_2D,(GLuint)bound);return;}
+        if(image.format!=UNCOMPRESSED_R8G8B8A8)ImageFormat(&image,UNCOMPRESSED_R8G8B8A8);
+        for(y=0;y<32;++y)for(x=0;x<16;++x)memcpy(pixels+(y*16+x)*4,(unsigned char *)image.data+((y+16)*256+240+x)*4,4);
+        UnloadImage(image);
+    }
+    glBindTexture(GL_TEXTURE_2D,fire_texture.id);glTexSubImage2D(GL_TEXTURE_2D,0,0,0,16,32,GL_RGBA,GL_UNSIGNED_BYTE,pixels);
+    glBindTexture(GL_TEXTURE_2D,(GLuint)bound);
+}
 
 Image assets_load_image(AssetId id)
 {
@@ -333,7 +407,7 @@ Image assets_load_image(AssetId id)
             skin_alpha(&image);
         } else if(id==ASSET_BOAT || id==ASSET_MINECART || id==ASSET_SIGN) point_resize(&image,64,32);
         else if(id==ASSET_TERRAIN || id==ASSET_GUI_WIDGETS || id==ASSET_GUI_ICONS || id==ASSET_GUI_ITEMS ||
-            id==ASSET_GUI_INVENTORY || id==ASSET_GUI_CRAFTING || id==ASSET_GUI_FURNACE || id==ASSET_GUI_CONTAINER || id==ASSET_GUI_LANGUAGE)
+            id==ASSET_GUI_INVENTORY || id==ASSET_GUI_CRAFTING || id==ASSET_GUI_FURNACE || id==ASSET_GUI_CONTAINER || id==ASSET_GUI_LANGUAGE || id==ASSET_GUI_DISPENSER)
             point_resize(&image,256,256);
         if(id==ASSET_TERRAIN) terrain_overrides(&image);
     }
@@ -363,6 +437,10 @@ void assets_release_sounds(void)
 void assets_shutdown(void)
 {
     int i;
+    assets_set_player_cape(NULL,0);
+    assets_clear_remote_textures();
+    if(fire_texture.id)UnloadTexture(fire_texture);
+    memset(&fire_texture,0,sizeof(fire_texture));
     if(player_skin.data) UnloadImage(player_skin);
     memset(&player_skin,0,sizeof(player_skin));
     assets_clear_server_icons();

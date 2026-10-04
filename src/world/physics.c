@@ -10,6 +10,10 @@
 #include "fire.h"
 #include "foliage.h"
 #include "explosion.h"
+#include "mechanisms.h"
+#include "piston.h"
+#include "transport.h"
+#include "block_entity.h"
 #include "../game/mining.h"
 #include <stdio.h>
 #include <string.h>
@@ -105,6 +109,16 @@ static void notify_cell(World *w,int x,int y,int z)
     Chunk *c=loaded(w,x,y,z); unsigned id;
     if (!c) return;
     id=world_peek_block(w,x,y,z);
+    if(id==25) {note_block_changed(w,x,y,z);return;}
+    if(id==29 || id==33 || id==34) { world_piston_changed(w,x,y,z); return; }
+    if(id==23) {
+        if(world_dispenser_powered(w,x,y,z)) world_schedule_tick(w,x,y,z,23,4);
+        return;
+    }
+    if(id==70 || id==72) {
+        if(!world_block_def(world_peek_block(w,x,y-1,z))->opaque) world_plate_update(w,x,y,z);
+        return;
+    }
     if (id==9 || id==11) {
         chunk_set_block(c,x-c->x*16,y,z-c->z*16,(uint8_t)(id-1)); --id;
     }
@@ -118,7 +132,8 @@ static void notify_cell(World *w,int x,int y,int z)
     }
     else if (id==12 || id==13) world_schedule_tick(w,x,y,z,(uint8_t)id,3);
     else if (id==75 || id==76) world_schedule_tick(w,x,y,z,(uint8_t)id,2);
-    else if (id==50 || id==81 || id==55 || id==26 || id==64 || id==71 || sign_is_block(id) || rail_is(id)) world_schedule_tick(w,x,y,z,(uint8_t)id,id==55 || rail_is(id) ? 0 : 1);
+    else if(id==55) world_wire_update(w,x,y,z);
+    else if (id==50 || id==81 || id==26 || id==64 || id==71 || sign_is_block(id) || rail_is(id)) world_schedule_tick(w,x,y,z,(uint8_t)id,rail_is(id) ? 0 : 1);
     else if(id==93 || id==94) {
         unsigned meta=world_peek_metadata(w,x,y,z);
         int input=world_repeater_input(w,x,y,z,meta);
@@ -177,9 +192,9 @@ void world_redstone_notify(World *w,int x,int y,int z)
     for (i=0;i<6;++i) for (j=0;j<6;++j) {
         int nx=x+dx[i]+dx[j],ny=y+dy[i]+dy[j],nz=z+dz[i]+dz[j];
         unsigned id=world_peek_block(w,nx,ny,nz);
-        if (id==75 || id==76 || id==55 || id==93 || id==94 || rail_is(id)) notify_cell(w,nx,ny,nz);
+        if (id==75 || id==76 || id==55 || id==93 || id==94 || id==23 || id==29 || id==33 || id==70 || id==72 || rail_is(id)) notify_cell(w,nx,ny,nz);
         if(id==64 || id==71) door_power_changed(w,nx,ny,nz);
-        if(id==46) notify_cell(w,nx,ny,nz);
+        if(id==46 || id==25) notify_cell(w,nx,ny,nz);
     }
 }
 static int burned_out(const World *w,int x,int y,int z)
@@ -201,6 +216,8 @@ static void step(World *w,WorldPhysicsCell c)
     int x=c.x,y=c.y,z=c.z,sx,sy,sz;
     unsigned id=world_peek_block(w,x,y,z),meta=world_peek_metadata(w,x,y,z);
     if (id!=c.id || !loaded(w,x,y,z)) return;
+    if(id==23) { world_dispenser_tick(w,x,y,z); return; }
+    if(id==70 || id==72) { world_plate_update(w,x,y,z); return; }
     if(id==51) { world_fire_tick(w,x,y,z); return; }
     if(sign_is_block(id)) { sign_neighbor_tick(w,x,y,z); return; }
     if(rail_is(id)) { rail_update(w,x,y,z); return; }
@@ -227,15 +244,10 @@ static void step(World *w,WorldPhysicsCell c)
     }
     if (id==8 || id==10) { fluid_tick(w,x,y,z,id); return; }
     if (id==12 || id==13) {
-        int bottom=y;
-        while (bottom>0 && loaded(w,x,bottom-1,z)) {
-            unsigned b=world_peek_block(w,x,bottom-1,z);
-            if (b && b!=51 && !fluid_kind(b)) break;
-            --bottom;
+        unsigned below=world_peek_block(w,x,y-1,z);
+        if(y>0 && loaded(w,x,y-1,z) && (!below || below==51 || fluid_kind(below))) {
+            world_falling_spawn(w,x,y,z,id);return;
         }
-        /* Resolve the destination atomically; do not duplicate a sand block
-         * or move it one cell per frame. Entity animation is rendered separately. */
-        if (bottom<y) { world_set_block(w,x,y,z,0); if (bottom>0) world_set_block(w,x,bottom,z,(uint8_t)id); }
         return;
     }
     if (id==81) {
@@ -266,20 +278,7 @@ static void step(World *w,WorldPhysicsCell c)
         return;
     }
     if (id==55) {
-        int i,power=world_redstone_power(w,x,y,z,x,y,z,0)>0 ? 15 : 0;
-        if (!world_block_def(world_peek_block(w,x,y-1,z))->opaque) {
-            world_drop_stack(w,x,y,z,(InventorySlot){331,1,0}); world_set_block(w,x,y,z,0); return;
-        }
-        for (i=0;i<6;++i) if (!dy[i]) {
-            int nx=x+dx[i],nz=z+dz[i],ny=y,n;
-            if(world_block_def(world_peek_block(w,nx,y,nz))->opaque) {
-                if(world_block_def(world_peek_block(w,x,y+1,z))->opaque) continue;
-                ++ny;
-            } else if(world_peek_block(w,nx,y,nz)!=55) --ny;
-            n=world_peek_metadata(w,nx,ny,nz);
-            if(world_peek_block(w,nx,ny,nz)==55 && n-1>power) power=n-1;
-        }
-        if (power!=(int)meta) { world_set_metadata(w,x,y,z,(uint8_t)power); world_redstone_notify(w,x,y,z); }
+        world_wire_update(w,x,y,z);
     }
 }
 static void random_cactus(World *w)
@@ -323,5 +322,6 @@ void world_step_physics(World *w,unsigned max_updates)
         for (i=0;i<w->cache_count;++i) world_physics_loaded(w,w->cache[i]);
     }
     random_cactus(w);
+    world_piston_events(w);
     w->physics_processing=0; world_finish_light_updates(w);
 }

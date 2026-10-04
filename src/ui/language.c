@@ -1,5 +1,7 @@
 #include "language.h"
 #include "../assets/assets.h"
+#include "../game/creative.h"
+#include "../world/beta_blocks.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -69,6 +71,17 @@ int language_select(const char *code)
 const char *language_text(const char *key,const char *fallback)
 {
     const char *s=find(&selected,key); if(!s) s=find(&english,key); return s ? s : fallback;
+}
+const char *language_item(int id,int damage)
+{
+    const char *key=beta_item_translation_key(id,damage),*name=beta_item_variant_name(id,damage);
+    if(!name)name=beta_item_name(id);
+    if(!name){const BetaBlockDef *block=beta_block_find((unsigned)id);if(block)name=block->name;}
+    if(!name)name="";
+    if(id==2256 || id==2257) {
+        static char record[128];snprintf(record,sizeof(record),"%s (%s)",language_text("item.record.name","Music Disc"),id==2256 ? "13" : "cat");return record;
+    }
+    return key ? language_text(key,name) : language_caption(name);
 }
 const char *language_caption(const char *caption)
 {

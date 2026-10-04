@@ -8,4 +8,5 @@ const LanguageEntry *language_at(int index);
 int language_select(const char *code);
 const char *language_text(const char *key,const char *fallback);
 const char *language_caption(const char *english);
+const char *language_item(int id,int damage);
 #endif

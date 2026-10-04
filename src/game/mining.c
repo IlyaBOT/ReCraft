@@ -34,7 +34,7 @@ InventorySlot mining_drop(BetaBlockState b,int item,uint32_t random)
     case 1: d.id=4; break;
     case 2: case 60: d.id=3; break;
     case 7: case 8: case 9: case 10: case 11: case 20: case 51: case 52:
-    case 79: case 90: d.id=-1; d.count=0; break;
+    case 34: case 36: case 79: case 90: d.id=-1; d.count=0; break;
     case 13: if (random%10==0) d.id=318; break;
     case 16: d.id=263; break;
     case 17: d.damage=b.metadata&3; break;

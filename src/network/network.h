@@ -33,7 +33,8 @@ typedef enum NetworkEventType {
     NETWORK_EVENT_HEALTH,
     NETWORK_EVENT_WINDOW_OPEN,NETWORK_EVENT_WINDOW_CLOSE,NETWORK_EVENT_WINDOW_PROPERTY,
     NETWORK_EVENT_WINDOW_TRANSACTION,NETWORK_EVENT_WINDOW_SYNC,
-    NETWORK_EVENT_RESPAWN,NETWORK_EVENT_SIGN
+    NETWORK_EVENT_RESPAWN,NETWORK_EVENT_SIGN,NETWORK_EVENT_ENTITY_FLAGS,
+    NETWORK_EVENT_NOTE
 } NetworkEventType;
 
 typedef struct NetworkEvent {
@@ -59,7 +60,10 @@ typedef void (*NetworkEventFn)(void *user, const NetworkEvent *event);
 NetworkClient *network_create(World *world, NetworkEventFn callback, void *user);
 void network_destroy(NetworkClient *client);
 
-/* Starts a bounded TCP connection; protocol 14 and offline-mode servers only. */
+/* Starts a bounded protocol 14 TCP connection. Optional authentication is
+ * polled without blocking the render thread; 0 pending, 1 success, -1 error. */
+typedef int (*NetworkJoinFn)(void *,const char *server_id,char *error,size_t capacity);
+void network_set_auth(NetworkClient *client,NetworkJoinFn join,void *context);
 int network_connect(NetworkClient *client, const char *host, uint16_t port,
                     const char *username);
 void network_disconnect(NetworkClient *client);
