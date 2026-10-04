@@ -24,7 +24,7 @@
 static const char *client="12345678-1234-1234-1234-123456789abc";
 static const char *profile="{\"id\":\"0123456789abcdef0123456789abcdef\",\"name\":\"BetaPlayer\",\"skins\":[{\"id\":\"skin-id\",\"state\":\"ACTIVE\",\"variant\":\"CLASSIC\",\"url\":\"http://textures.minecraft.net/texture/test\"}],\"capes\":[{\"id\":\"cape-test\",\"state\":\"INACTIVE\",\"url\":\"https://textures.minecraft.net/texture/inactive\"},{\"id\":\"active-cape\",\"state\":\"ACTIVE\",\"url\":\"http://textures.minecraft.net/texture/cape\"}]}";
 typedef struct Mock {
-    int stage,polls,waits,cancel,fail_stage,reject_refresh,malformed,device_size;
+    int stage,polls,waits,cancel,fail_stage,reject_refresh,malformed,device_size,fail_status;
     unsigned interval[4];
     const char *error_body;
 } Mock;
@@ -68,7 +68,7 @@ static int mock_request(void *context,const char *url,const char *type,const cha
         assert(!body&&!type&&bearer&&!strcmp(bearer,"mc-test"));
     }
     m->stage=stage;
-    if(m->fail_stage==stage)return respond(r,stage==2?400:403,m->error_body?m->error_body:"{}");
+    if(m->fail_stage==stage)return respond(r,m->fail_status?m->fail_status:stage==2?400:403,m->error_body?m->error_body:"{}");
     if(m->malformed==stage)return respond(r,200,"{invalid");
     switch(stage) {
     case 1:
@@ -123,6 +123,29 @@ static void flows(AccountData *d)
     assert(!account_flow_run(d,&f,0)&&strstr(f.error,"expired"));
     memset(&m,0,sizeof(m));m.fail_stage=5;m.error_body="{\"errorMessage\":\"Invalid app registration\"}";fresh(d);
     assert(!account_flow_run(d,&f,0)&&strstr(f.error,"HTTP 403")&&strstr(f.error,"app registration"));
+    assert(strstr(f.error,"aka.ms/mce-reviewappid")&&m.stage==5);
+    memset(&m,0,sizeof(m));m.fail_stage=5;m.error_body="{\"message\":\"INVALID APP REGISTRATION\"}";fresh(d);
+    assert(!account_flow_run(d,&f,0)&&strstr(f.error,"app registration"));
+    memset(&m,0,sizeof(m));m.fail_stage=5;m.error_body="{\"errorMessage\":\"App registration is valid; access denied\"}";fresh(d);
+    assert(!account_flow_run(d,&f,0)&&strstr(f.error,"cause not identified")&&!strstr(f.error,"app registration"));
+    /* A bare 403 at token exchange cannot diagnose game ownership or app approval. */
+    memset(&m,0,sizeof(m));m.fail_stage=5;m.error_body="{\"error\":\"FORBIDDEN\",\"access_token\":\"secret-token\"}";fresh(d);
+    assert(!account_flow_run(d,&f,0)&&strstr(f.error,"login HTTP 403")&&strstr(f.error,"cause not identified"));
+    assert(!strstr(f.error,"entitlement")&&!strstr(f.error,"app registration")&&!strstr(f.error,"secret-token")&&m.stage==5);
+    memset(&m,0,sizeof(m));m.fail_stage=5;m.error_body="{\"error\":\"secret-token\",\"errorMessage\":\"secret-refresh\"}";fresh(d);
+    assert(!account_flow_run(d,&f,0)&&!strstr(f.error,"secret-"));
+    memset(&m,0,sizeof(m));m.fail_stage=5;m.error_body="<html>403 Forbidden</html>";fresh(d);
+    assert(!account_flow_run(d,&f,0)&&strstr(f.error,"login HTTP 403"));
+    memset(&m,0,sizeof(m));m.fail_stage=5;m.fail_status=503;m.error_body="{\"errorMessage\":\"Invalid app registration\"}";fresh(d);
+    assert(!account_flow_run(d,&f,0)&&strstr(f.error,"HTTP 503")&&strstr(f.error,"service unavailable"));
+    memset(&m,0,sizeof(m));m.fail_stage=6;m.fail_status=404;fresh(d);
+    assert(!account_flow_run(d,&f,0)&&strstr(f.error,"profile HTTP 404")&&strstr(f.error,"no Java profile"));
+    memset(&m,0,sizeof(m));m.fail_stage=6;m.fail_status=401;fresh(d);
+    assert(!account_flow_run(d,&f,0)&&strstr(f.error,"profile HTTP 401")&&strstr(f.error,"token expired"));
+    memset(&m,0,sizeof(m));m.fail_stage=6;fresh(d);
+    assert(!account_flow_run(d,&f,0)&&strstr(f.error,"profile HTTP 403")&&!strstr(f.error,"ownership"));
+    memset(&m,0,sizeof(m));m.malformed=6;fresh(d);
+    assert(!account_flow_run(d,&f,0)&&strstr(f.error,"invalid Java profile response"));
     memset(&m,0,sizeof(m));m.cancel=1;fresh(d);assert(!account_flow_run(d,&f,0)&&strstr(f.error,"cancelled"));
     memset(&m,0,sizeof(m));m.device_size=1045;fresh(d);assert(account_flow_run(d,&f,0));
     memset(&m,0,sizeof(m));m.device_size=8192;fresh(d);assert(!account_flow_run(d,&f,0)&&strstr(f.error,"oversized"));

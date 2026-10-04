@@ -32,17 +32,51 @@ static int text(RecraftJson *j,int object,const char *key,char *out,size_t size)
 {return json_string(j,json_member(j,object,key),out,size)&&out[0]!=0;}
 static int error(AccountFlow *f,const char *message)
 {snprintf(f->error,sizeof(f->error),"%s",message);return 0;}
-static int services_rejection(AccountFlow *f,RecraftJson *j,long status)
+static int contains_ascii_case(const char *text,const char *word)
 {
-    char message[256]={0};
+    const char *start;size_t i;
+    for(start=text;*start;++start) {
+        for(i=0;word[i]&&start[i];++i) {
+            unsigned a=(unsigned char)start[i],b=(unsigned char)word[i];
+            if(a>='A'&&a<='Z')a+='a'-'A';
+            if(b>='A'&&b<='Z')b+='a'-'A';
+            if(a!=b)break;
+        }
+        if(!word[i])return 1;
+    }
+    return 0;
+}
+static int services_rejection(AccountFlow *f,RecraftJson *j,long status,int profile)
+{
+    static const char *known_errors[]={"FORBIDDEN","UNAUTHORIZED","ForbiddenOperationException","UnauthorizedOperationException","NotFoundException"};
+    char message[1024]={0},kind[64]={0};const char *stage=profile?"profile":"login",*diagnosis="unspecified",*known="unspecified";unsigned i;int app_rejected;
     text(j,0,"errorMessage",message,sizeof(message));
-    /* Show a bounded diagnosis, never dump a response containing credentials. */
-    if(strstr(message,"app registration") || strstr(message,"App registration"))
-        snprintf(f->error,sizeof(f->error),"Minecraft HTTP %ld: app registration rejected. Request Minecraft API access for this client_id.",status);
-    else if(status==429 || status>=500)
-        snprintf(f->error,sizeof(f->error),"Minecraft HTTP %ld: service unavailable. Retry sign-in later.",status);
-    else if(status==200) error(f,"Minecraft returned an invalid access token response.");
-    else snprintf(f->error,sizeof(f->error),"Minecraft HTTP %ld: sign-in rejected. Check app API access and Java account entitlement.",status);
+    if(!message[0])text(j,0,"message",message,sizeof(message));
+    text(j,0,"error",kind,sizeof(kind));
+    for(i=0;i<sizeof(known_errors)/sizeof(known_errors[0]);++i)if(!strcmp(kind,known_errors[i])){known=known_errors[i];break;}
+    app_rejected=status>=400&&status<500&&status!=429&&contains_ascii_case(message,"invalid app registration");
+    /* Only fixed classifications and allowlisted error names leave the worker.
+     * Never print the response, tokens, names, UUIDs or free-form server text. */
+    if(status==429 || status>=500) {
+        diagnosis="service_unavailable";
+        snprintf(f->error,sizeof(f->error),"Minecraft %s HTTP %ld: service unavailable. Retry sign-in later.",stage,status);
+    } else if(app_rejected) {
+        diagnosis="app_registration_rejected";
+        snprintf(f->error,sizeof(f->error),"Minecraft %s HTTP %ld: app registration rejected. Apply at aka.ms/mce-reviewappid.",stage,status);
+    } else if(status==401) {
+        diagnosis="token_rejected";
+        snprintf(f->error,sizeof(f->error),"Minecraft %s HTTP 401: token expired or rejected. Sign in again.",stage);
+    } else if(profile&&status==404) {
+        diagnosis="java_profile_missing";
+        error(f,"Minecraft profile HTTP 404: no Java profile. Check ownership and create a Java profile on minecraft.net.");
+    } else if(status==200) {
+        diagnosis="invalid_response";
+        error(f,profile?"Minecraft returned an invalid Java profile response.":"Minecraft returned an invalid access token response.");
+    } else if(status==403) {
+        snprintf(f->error,sizeof(f->error),"Minecraft %s HTTP 403: access denied; cause not identified. See docs/MICROSOFT_ACCOUNT.md.",stage);
+    } else snprintf(f->error,sizeof(f->error),"Minecraft %s HTTP %ld: request rejected. See docs/MICROSOFT_ACCOUNT.md.",stage,status);
+    fprintf(stderr,"ReCraft account: stage=minecraft_%s http=%ld response=%s service_error=%s diagnosis=%s\n",stage,status,j?"json":"non_json",known,diagnosis);
+    memset(message,0,sizeof(message));memset(kind,0,sizeof(kind));
     return 0;
 }
 static int texture_url(char *out,size_t capacity,const char *url)
@@ -131,14 +165,15 @@ int account_flow_run(AccountData *d,AccountFlow *f,int refresh)
     object=json_element(j,json_member(j,json_member(j,0,"DisplayClaims"),"xui"),0);
     if(!j||r.status!=200||!text(j,0,"Token",d->xsts,sizeof(d->xsts))||!text(j,object,"uhs",other_uhs,sizeof(other_uhs))||strcmp(other_uhs,d->uhs)) {error(f,"Xbox authorization failed. Check Xbox profile, family restrictions and app access.");goto done;}
     json_free(j);j=NULL;https_response_free(&r);
-    f->progress(f->context,"Fetching the Minecraft profile...","","");
+    f->progress(f->context,"Getting a Minecraft access token...","","");
     snprintf(ticket,sizeof(ticket),"XBL3.0 x=%s;%s",d->uhs,d->xsts);if(!json_quote(quoted,cap,ticket))goto done;
     snprintf(body,cap,"{\"xtoken\":%s,\"platform\":\"PC_LAUNCHER\"}",quoted);
     j=request(f,"https://api.minecraftservices.com/launcher/login","application/json",body,NULL,&r);
-    if(!j||r.status!=200||!text(j,0,"access_token",d->minecraft,sizeof(d->minecraft))||!json_integer(j,json_member(j,0,"expires_in"),&expires)||expires<=0||expires>172800) {if(r.status)services_rejection(f,j,r.status);goto done;}
+    if(!j||r.status!=200||!text(j,0,"access_token",d->minecraft,sizeof(d->minecraft))||!json_integer(j,json_member(j,0,"expires_in"),&expires)||expires<=0||expires>172800) {if(r.status)services_rejection(f,j,r.status,0);goto done;}
     d->minecraft_exp=(int64_t)time(NULL)+expires;json_free(j);j=NULL;https_response_free(&r);
+    f->progress(f->context,"Fetching the Minecraft Java profile...","","");
     j=request(f,"https://api.minecraftservices.com/minecraft/profile",NULL,NULL,d->minecraft,&r);
-    if(!j||r.status!=200||!text(j,0,"name",d->name,sizeof(d->name))||!settings_player_name_valid(d->name)||!text(j,0,"id",d->id,sizeof(d->id))||!uuid32(d->id)) {error(f,"No playable Minecraft Java profile. Check game ownership and profile creation.");goto done;}
+    if(!j||r.status!=200||!text(j,0,"name",d->name,sizeof(d->name))||!settings_player_name_valid(d->name)||!text(j,0,"id",d->id,sizeof(d->id))||!uuid32(d->id)) {if(r.status)services_rejection(f,j,r.status,1);goto done;}
     d->skin_url[0]=d->skin_id[0]=0;strcpy(d->skin_variant,"CLASSIC");
     object=json_member(j,0,"skins");
     {int n;for(n=0;n<16;++n){int skin=json_element(j,object,n);char state[24],url[512];if(skin<0)break;

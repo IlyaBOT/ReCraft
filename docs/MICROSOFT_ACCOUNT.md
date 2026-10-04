@@ -58,6 +58,38 @@ Microsoft/Xbox/Minecraft may reject an application that has not received the
 required service approval. ReCraft reports that rejection. Another launcher's
 client ID or saved account file is not used as a workaround.
 
+### Request Minecraft Services access
+
+Registering the Entra application is only the OAuth step. Use Microsoft's
+[AppID review link](https://aka.ms/mce-reviewappid) for the separate Minecraft
+Services application-access request. On 4 October 2026 this link redirected
+to a Microsoft Forms page. The form's fields and availability are controlled
+by Microsoft; approval cannot be granted by ReCraft.
+
+For the ReCraft application, prepare:
+
+- Application name: `ReCraft`.
+- Application/client ID: `9da281e5-3c38-4e92-a792-a819af4b28ec`.
+- Directory/tenant ID: copy **Directory (tenant) ID** from the application's
+  Overview in your own Entra directory if the form asks for it. It is a different
+  value from the client ID; do not create another application to obtain it.
+- Project website/source: `https://github.com/IlyaBOT/ReCraft`.
+- An honest description of the client and the requested service access.
+
+If offered a request type, choose the new AppID approval request. Suggested
+description (adapt it to the actual form):
+
+> ReCraft is an open-source experimental legacy Minecraft-compatible client
+> with its own C engine. We request Minecraft Services access for our own
+> public application ID so Java Edition players can obtain their official
+> profile and authenticate compatible multiplayer sessions. Sign-in uses
+> Microsoft's device-code flow; the client does not collect account passwords.
+> Account tokens are stored locally in the player's game directory.
+
+Submit the request yourself and retain the approval response. A pending request
+does not enable service access. After approval for this same client ID, retry
+sign-in in ReCraft. If it still fails, use the stage/status diagnostic below.
+
 Official builds include the public application ID from the source-root
 `MICROSOFT_CLIENT_ID` file. It is not a secret and is built by both CMake and
 the Snow Leopard Makefile. Changing that file changes subsequent builds.
@@ -148,19 +180,42 @@ multi-account selection and modern gameplay remain follow-up work.
 
 ## Minecraft Services rejection after browser authorization
 
-Browser authorization confirms the Microsoft OAuth step only. The client now
-reports the service HTTP status, distinguishes an invalid app registration from
-service outages, and avoids printing raw credential-bearing responses.
+Browser authorization confirms the Microsoft OAuth step only. The client reports
+the service HTTP status and the failing stage, distinguishes an explicit
+invalid-app-registration response from service outages, and avoids printing raw
+credential-bearing responses.
 The `/launcher/login` body was checked against the current
 [Prism implementation](https://github.com/PrismLauncher/PrismLauncher/blob/develop/launcher/minecraft/auth/steps/LauncherLoginStep.cpp).
 
-If the new message says **HTTP 403: app registration rejected**, the application
-owner needs Minecraft Services approval for the public Client ID. Entra public
-client settings alone are not that approval. Consult
-[Minecraft's application access support page](https://help.minecraft.net/hc/en-us/articles/16254801392141)
-or Minecraft Support, include the ReCraft repository and public Client ID, and
-request the current third-party application access process. Approval and the
-current availability of an application form cannot be granted by ReCraft.
-For other statuses, use the specific message; do not assume every rejection is
-an app-registration error. No private account response was inspected to diagnose
-the reported generic failure.
+If the message says **app registration rejected**, the server explicitly named
+application registration; request/check approval for the public client ID through
+[AppID review](https://aka.ms/mce-reviewappid). Entra public-client settings
+alone are not that approval. An unclassified **Minecraft login HTTP 403** does
+not prove that the account lacks Java Edition or that the app was rejected:
+the failure occurred before fetching the Java profile. If approval has not been
+requested, complete that step first. If approval is already confirmed, collect
+the bounded diagnostic to distinguish service denial from another failure.
+
+Profile failures are separate: **profile HTTP 404** means a Java profile was not
+found (check ownership and profile creation); **HTTP 401** means the service
+rejected the token; **HTTP 429/5xx** means rate limiting/service failure. Invalid
+HTTP-200 token/profile responses are parsing errors, not ownership diagnoses.
+
+From PowerShell in the extracted Windows game directory:
+
+```powershell
+.\ReCraft.exe 2> .\account-diagnostic.txt
+```
+
+Try sign-in, exit the client, and inspect only lines starting `ReCraft account:`.
+They contain fixed stage/status classifications, JSON/non-JSON response type and
+an allowlisted service error name; no raw replies, tokens, player UUIDs or names
+are printed. For example `stage=minecraft_login http=403 diagnosis=unspecified`
+preserves uncertainty, whereas `diagnosis=app_registration_rejected` records an
+explicit provider explanation. Do not share `config/accounts.json`.
+
+The reported 4 October 2026 screenshot showed the old generic token-exchange
+HTTP 403. Its private service response was not inspected. The current
+`/launcher/login` request matches Prism's `xtoken`/`PC_LAUNCHER` request; matching
+that contract and passing mock tests do not prove this application's approval
+or a successful live account login.
