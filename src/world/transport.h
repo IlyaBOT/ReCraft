@@ -5,7 +5,7 @@
 struct Player; struct SavedEntity; struct RenderEntity;
 typedef struct TransportState {
     int kind,dead; /* 1 Arrow, 2 Minecart, 3 Boat, 4 TNT, 5 Snowball, 6 Egg, 7 FallingSand. */
-    int falling_block,fall_time;
+    int falling_block,fall_data,fall_time,source_removed;
     int x_tile,y_tile,z_tile,in_tile,in_data,in_ground,shake,player,ground_ticks,air_ticks;
     int type,fuel,ridden,damage,hit_ticks;
     int fuse,owner_id;

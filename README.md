@@ -155,7 +155,10 @@ working directory. See [runtime layout](docs/RUNTIME_LAYOUT.md) and
 - Place cart items on rails. Right click a normal cart to ride; Shift exits.
   Chest carts open 27 slots; right click a furnace cart with coal to fuel it.
 
-The local simulation runs at 20 Hz and interpolates the camera between ticks.
+The local simulation runs at 20 Hz and interpolates the camera and transport
+entities between ticks. Sand/gravel use falling entities with collision and
+stacked landing; [render/physics regression checks](docs/ENTITY_RENDER_REGRESSIONS.md)
+describe the 1.5.2 reference rules and retained Beta save format.
 Creative placement leaves stack counts unchanged; survival placement consumes a
 block. Survival mining uses Beta hardness, tool speed, harvest and durability
 rules, with visible cracks, durability bars and collectible drops. The item-break

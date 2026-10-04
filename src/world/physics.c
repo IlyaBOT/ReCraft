@@ -130,7 +130,7 @@ static void notify_cell(World *w,int x,int y,int z)
     else if(id==46 && world_redstone_power(w,x,y,z,x,y,z,1)>0) {
         if(world_tnt_prime(w,x+.5f,y+.5f,z+.5f,80)) world_set_block(w,x,y,z,0);
     }
-    else if (id==12 || id==13) world_schedule_tick(w,x,y,z,(uint8_t)id,3);
+    else if (id==12 || id==13) world_schedule_tick(w,x,y,z,(uint8_t)id,2);
     else if (id==75 || id==76) world_schedule_tick(w,x,y,z,(uint8_t)id,2);
     else if(id==55) world_wire_update(w,x,y,z);
     else if (id==50 || id==81 || id==26 || id==64 || id==71 || sign_is_block(id) || rail_is(id)) world_schedule_tick(w,x,y,z,(uint8_t)id,rail_is(id) ? 0 : 1);
@@ -173,7 +173,7 @@ void world_physics_loaded(World *w,Chunk *c)
             world_peek_block(w,x,y-1,z)!=0 && world_peek_block(w,x,y-1,z)!=51) continue;
         if (id==8 || id==10 || id==75 || id==76 || id==81 || id==50 || id==12 || id==13 || id==55 || id==51)
             world_schedule_tick(w,x,y,z,(uint8_t)id,
-                id==8 ? 5 : id==10 ? 30 : id==51 ? 40 : id==12 || id==13 ? 3 : id==75 || id==76 ? 2 : 1);
+                id==8 ? 5 : id==10 ? 30 : id==51 ? 40 : id==12 || id==13 ? 2 : id==75 || id==76 ? 2 : 1);
     }
 }
 static void support(int x,int y,int z,int meta,int *sx,int *sy,int *sz)

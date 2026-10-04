@@ -276,11 +276,13 @@ static void falling_tnt_test(void)
     World w;Player p={0};InventorySlot inv[36]={{0}};RenderEntity visible[4]={{0}};
     SavedEntity *fall,*tnt;Chunk copy={0};uint8_t bytes[8192];NbtWriter writer;NbtTag tag={0};size_t size;int n;
     init(&w);p.health=20;p.x=p.z=30;p.y=64;
-    world_set_block(&w,8,75,8,12);ticks(&w,&p,inv,3);
+    world_set_block(&w,8,75,8,12);ticks(&w,&p,inv,2);
     fall=world_peek_chunk(&w,0,0)->saved_entities;
     assert(fall && fall->transport.kind==7 && fall->transport.falling_block==12);
-    assert(!world_peek_block(&w,8,75,8) && !world_peek_block(&w,8,64,8));
+    assert(!world_falling_spawn(&w,8,75,8,12));
+    assert(world_peek_block(&w,8,75,8)==12 && !world_peek_block(&w,8,64,8));
     ticks(&w,&p,inv,1);assert(fall->mob.vy<0 && fall->mob.y<75.5f && fall->mob.y>75);
+    assert(!world_peek_block(&w,8,75,8) && fall->transport.source_removed && fall->transport.fall_time==1);
     assert(world_tnt_prime(&w,10.5f,66.5f,8.5f,80));tnt=world_peek_chunk(&w,0,0)->saved_entities;
     assert(tnt->transport.kind==4 && tnt->mob.vy==4);
     n=world_transport_visible(&w,visible,4);assert(n==2 && visible[0].type==1003 && visible[0].fuse==80 && visible[1].type==1006 && visible[1].color==12);
@@ -290,13 +292,79 @@ static void falling_tnt_test(void)
     assert(nbt_writer_end(&writer)==NBT_OK && nbt_writer_end(&writer)==NBT_OK && nbt_writer_finish(&writer,&size)==NBT_OK);
     assert(world_entities_read(&copy,bytes,size));assert(copy.saved_entities->transport.kind==4 && copy.saved_entities->transport.fuse==80);
     assert(copy.saved_entities->next->transport.kind==7 && copy.saved_entities->next->transport.falling_block==12);
+    assert(copy.saved_entities->next->transport.source_removed && copy.saved_entities->next->transport.fall_time==1);
     world_entities_free(&copy);ticks(&w,&p,inv,35);assert(world_peek_block(&w,8,64,8)==12 && !world_peek_block(&w,8,75,8));
     assert(tnt->transport.fuse==45 && tnt->mob.y<65);
     assert(world_close(&w)==WORLD_OK);
 }
+static void falling_column_test(void)
+{
+    World w; Player p={0}; InventorySlot inv[36]={{0}}; int y,blocks=0,items=0,id; SavedEntity *e;
+    for(id=12;id<=13;++id) {
+        init(&w); p.health=20; p.x=p.z=30; p.y=64;
+        blocks=items=0;
+        assert(world_set_block(&w,8,79,8,1));
+        for(y=80;y<96;++y) assert(world_set_block(&w,8,y,8,(uint8_t)id));
+        assert(world_set_block(&w,8,79,8,0));
+        ticks(&w,&p,inv,200);
+        for(y=64;y<96;++y) if(world_peek_block(&w,8,y,8)==id) ++blocks;
+        for(e=world_peek_chunk(&w,0,0)->saved_entities;e;e=e->next) {
+            if(e->item_entity && e->item.id==id) items+=e->item.count;
+            assert(e->transport.kind!=7);
+        }
+        printf("Falling column (ID %d): %d blocks, %d dropped items\n",id,blocks,items);
+        assert(blocks==16 && items==0);
+        assert(world_close(&w)==WORLD_OK);
+    }
+}
+static void falling_long_test(void)
+{
+    World w; Player p={0}; InventorySlot inv[36]={{0}}; SavedEntity *e; int y,i; float position=126.5f,velocity=0;
+    init(&w);p.health=20;p.x=p.z=30;p.y=64;
+    for(y=2;y<64;++y) world_set_block(&w,8,y,8,0);
+    world_set_block(&w,8,1,8,1); world_set_block(&w,8,126,8,12);
+    assert(world_falling_spawn(&w,8,126,8,12)); e=world_peek_chunk(&w,0,0)->saved_entities;
+    /* Reference trace: gravity .04 blocks/tick, then motion, then .98 drag. */
+    for(i=0;i<10;++i) {
+        float previous=position; velocity-=.04f; position+=velocity; velocity*=.98f;
+        ticks(&w,&p,inv,1);
+        assert(fabsf(e->mob.y-position)<.0001f && fabsf(e->mob.vy/20-velocity)<.0001f);
+        assert(fabsf(e->transport.previous_y-previous)<.0001f);
+    }
+    ticks(&w,&p,inv,91);
+    assert(e->transport.fall_time==101 && !e->transport.dead && e->mob.y>2.49f);
+    ticks(&w,&p,inv,30); assert(world_peek_block(&w,8,2,8)==12);
+    assert(world_close(&w)==WORLD_OK);
+}
+static void falling_save_test(void)
+{
+    int elapsed;
+    for(elapsed=0;elapsed<=10;elapsed+=10) {
+        World w; Player p={0}; InventorySlot inv[36]={{0}}; Chunk copy={0},*c;
+        uint8_t bytes[8192]; NbtWriter writer; NbtTag tag={0}; size_t size; SavedEntity *e;
+        init(&w);p.health=20;p.x=p.z=30;p.y=64;
+        world_set_state(&w,8,90,8,(BetaBlockState){12,3});
+        assert(world_falling_spawn(&w,8,90,8,12)); ticks(&w,&p,inv,elapsed);
+        c=world_peek_chunk(&w,0,0); e=c->saved_entities; assert(e && e->transport.fall_data==3);
+        nbt_writer_init(&writer,bytes,sizeof(bytes),NULL);tag.type=NBT_COMPOUND;assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+        tag.name=nbt_span("Level");assert(nbt_writer_tag(&writer,&tag)==NBT_OK);
+        assert(world_entities_write_list(c,&writer));
+        assert(nbt_writer_end(&writer)==NBT_OK && nbt_writer_end(&writer)==NBT_OK && nbt_writer_finish(&writer,&size)==NBT_OK);
+        assert(world_entities_read(&copy,bytes,size));
+        assert(copy.saved_entities->transport.fall_time==elapsed && copy.saved_entities->transport.fall_data==3);
+        assert(copy.saved_entities->transport.source_removed==(elapsed!=0));
+        assert(copy.saved_entities->transport.previous_y==copy.saved_entities->mob.y);
+        world_entities_free(c); c->saved_entities=copy.saved_entities; copy.saved_entities=NULL;
+        ticks(&w,&p,inv,100);
+        assert(world_peek_block(&w,8,64,8)==12 && world_peek_metadata(&w,8,64,8)==3);
+        assert(!world_peek_block(&w,8,90,8) && !c->saved_entities);
+        assert(world_close(&w)==WORLD_OK);
+    }
+}
 int main(void)
 {
     lever_test(); jukebox_test(); arrow_test(); arrow_lifetime_test(); rail_test(); rail_forms_test();
-    cart_use_test(); entity_roundtrip(); boat_test(); bed_test(); falling_tnt_test();
+    cart_use_test(); entity_roundtrip(); boat_test(); bed_test(); falling_tnt_test(); falling_column_test();
+    falling_long_test(); falling_save_test();
     puts("Beta lever, jukebox, arrow, rail topology, minecart NBT and sleeping eyes passed"); return 0;
 }

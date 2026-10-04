@@ -4,21 +4,28 @@
 static const int dx[6]={-1,1,0,0,0,0},dy[6]={0,0,-1,1,0,0},dz[6]={0,0,0,0,-1,1};
 static const int bx[4]={0,-1,0,1},bz[4]={1,0,-1,0};
 static int opaque(const World *w,int x,int y,int z) { return world_block_def(world_peek_block(w,x,y,z))->opaque; }
-static int connected(const World *w,int x,int y,int z,int direction)
+static int connected(const World *w,int x,int y,int z,int direction,int visual)
 {
     unsigned id=world_peek_block(w,x,y,z);
-    /* ModelBed.footInvisibleFaceRemap: wire's neighbour direction is the
-     * opposite of the repeater metadata direction, including idle repeaters. */
-    if(id==93 || id==94) return direction>=0 && (int)(world_peek_metadata(w,x,y,z)&3)==((direction+2)&3);
-    return id==55 || id==69 || id==77 || id==75 || id==76 || id==28 || id==70 || id==72;
+    if(!visual) {
+        /* Retain the existing Beta signal geometry for saved circuits. */
+        if(id==93 || id==94) return direction>=0 && (int)(world_peek_metadata(w,x,y,z)&3)==((direction+2)&3);
+        return id==55 || id==69 || id==77 || id==75 || id==76 || id==28 || id==70 || id==72;
+    }
+    /* 1.5.2 BlockRedstoneWire: both input and output connect, never the sides,
+     * for either repeater state. Vertical step connections are dust only. */
+    if(id==93 || id==94) return direction>=0 && (world_peek_metadata(w,x,y,z)&1)==(direction&1);
+    return id==55 || (direction>=0 && (id==69 || id==77 || id==75 || id==76 || id==28 || id==70 || id==72));
 }
-int world_wire_connects(const World *w,int x,int y,int z,int n)
+static int wire_connects(const World *w,int x,int y,int z,int n,int visual)
 {
     int nx=x+bx[n],nz=z+bz[n],solid=opaque(w,nx,y,nz);
-    if(connected(w,nx,y,nz,n)) return 1;
-    if(!solid && connected(w,nx,y-1,nz,-1)) return 1;
-    return solid && !opaque(w,x,y+1,z) && connected(w,nx,y+1,nz,-1);
+    if(connected(w,nx,y,nz,n,visual)) return 1;
+    if(!solid && connected(w,nx,y-1,nz,-1,visual)) return 1;
+    return solid && !opaque(w,x,y+1,z) && connected(w,nx,y+1,nz,-1,visual);
 }
+int world_wire_connects(const World *w,int x,int y,int z,int n) { return wire_connects(w,x,y,z,n,0); }
+int world_wire_visual_connects(const World *w,int x,int y,int z,int n) { return wire_connects(w,x,y,z,n,1); }
 static int emit(const World *w,int x,int y,int z,int tx,int ty,int tz,int wire,int strong)
 {
     unsigned id=world_peek_block(w,x,y,z),meta=world_peek_metadata(w,x,y,z);

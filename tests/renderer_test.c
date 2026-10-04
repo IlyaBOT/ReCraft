@@ -200,6 +200,73 @@ static void fire_cape_tnt_test(void)
     cape=assets_remote_texture(3,1);assets_clear_remote_textures();assert(!glIsTexture(cape.id));
     assets_shutdown();puts("Fire tick cache/HUD, nearest cape upload, burning entity and textured TNT flash passed");
 }
+static void transport_pixels_test(void)
+{
+    static const int kinds[]={1000,1001,1002,1003,1006};
+    static GLubyte pixels[320*240*3];
+    RenderEntity entities[69]={{0}},e={0}; RendererCamera camera={0,.1f,3,0,0,70};
+    GLubyte a[3],b[3]; GLfloat depth; int k,i,visible;
+    assets_init(RECRAFT_TEST_ASSET_ROOT);
+    assert(assets_get_texture(ASSET_ARROW).width==32);
+    assert(assets_get_texture(ASSET_BOAT).width==64 && assets_get_texture(ASSET_MINECART).width==64);
+    glDisable(GL_SCISSOR_TEST); glDepthMask(GL_TRUE); glClearDepth(1);
+    for(k=0;k<5;++k) {
+        e=(RenderEntity){0}; e.active=1; e.type=kinds[k]; e.color=12; e.fuse=75;
+        glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        assert(entity_render_draw(&e,1,&camera,320,240,4,0)==1);
+        glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,pixels);
+        visible=0; for(i=0;i<(int)sizeof(pixels);i+=3) if(pixels[i] || pixels[i+1] || pixels[i+2]) ++visible;
+        assert(visible>20); /* Counted entities must actually produce pixels. */
+        if(e.type==1003 || e.type==1006) {
+            glReadPixels(160,120,1,1,GL_RGB,GL_UNSIGNED_BYTE,a);
+            glReadPixels(160,120,1,1,GL_DEPTH_COMPONENT,GL_FLOAT,&depth); assert(depth<1);
+            glClearColor(0,1,0,1); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+            entity_render_draw(&e,1,&camera,320,240,4,0);
+            glReadPixels(160,120,1,1,GL_RGB,GL_UNSIGNED_BYTE,b);
+            assert(!memcmp(a,b,3)); /* Opaque base: background cannot tint it. */
+        }
+    }
+    for(i=0;i<69;++i) { entities[i].active=1; entities[i].type=i<64 ? 54 : kinds[i-64]; entities[i].color=12; entities[i].fuse=75; }
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+    assert(entity_render_draw(entities,69,&camera,320,240,4,0)==69);
+    e=(RenderEntity){0};e.active=1;e.type=1000;e.x=20;
+    assert(!entity_render_draw(&e,1,&camera,320,240,4,0));
+    e.x=0;e.z=10;assert(!entity_render_draw(&e,1,&camera,320,240,4,0));
+    e=(RenderEntity){0}; e.active=1;e.type=1006;e.color=12;e.local_interpolation=1;
+    e.y=1;e.previous_y=0;
+    entity_render_tick_fraction(&e,1,.25f); entity_render_draw(&e,1,&camera,320,240,4,.2f); assert(e.draw_y==.25f);
+    entity_render_tick_fraction(&e,1,.75f); entity_render_draw(&e,1,&camera,320,240,4,0); assert(e.draw_y==.75f);
+    assert(glGetError()==GL_NO_ERROR); assets_shutdown();
+    puts("Arrow/cart/boat/TNT/sand pixels, opaque bases, >64 models and fixed-tick interpolation passed");
+}
+static void transport_world_pixels_test(void)
+{
+    static const int kinds[]={1000,1001,1002,1003,1006};
+    static GLubyte terrain[320*240*3],combined[320*240*3];
+    World w; Chunk *c; Renderer *r; RenderEntity e={0}; RendererCamera camera={8.5f,65.3f,12.5f,0,0,70};
+    int x,y,i,k,changed;
+    assets_init(RECRAFT_TEST_ASSET_ROOT); r=renderer_init(); assert(r);
+    assert(world_init(&w,42,1,4)==WORLD_OK); c=world_get_chunk(&w,0,0); assert(c);
+    memset(c->blocks,0,sizeof(c->blocks)); memset(c->sky_light,255,sizeof(c->sky_light));
+    for(x=7;x<=9;++x) for(y=64;y<=66;++y) chunk_set_block(c,x,y,8,1);
+    assert(renderer_rebuild_budget(r,&w,0,0,1));
+    for(k=0;k<5;++k) {
+        renderer_draw(r,&w,&camera,320,240,4);
+        glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,terrain);
+        e=(RenderEntity){0}; e.active=1; e.type=kinds[k]; e.fuse=75; e.color=12;
+        e.x=8.5f;e.y=65.3f;e.z=10;
+        assert(entity_render_draw(&e,1,&camera,320,240,4,0)==1);
+        glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,combined);
+        changed=0;for(i=0;i<(int)sizeof(terrain);i+=3) if(memcmp(terrain+i,combined+i,3))++changed;
+        assert(changed>20); /* Visible after the real terrain pass. */
+        renderer_draw(r,&w,&camera,320,240,4);
+        e.z=7.5f;e.positioned=0;entity_render_draw(&e,1,&camera,320,240,4,0);
+        glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,combined);
+        assert(!memcmp(terrain,combined,sizeof(terrain))); /* Wall occludes all five models. */
+    }
+    assert(glGetError()==GL_NO_ERROR);renderer_shutdown(r); assert(world_close(&w)==WORLD_OK); assets_shutdown();
+    puts("Terrain + arrow/cart/boat/TNT/sand: visible in front, depth-occluded behind wall passed");
+}
 
 static void pixel_text_test(void)
 {
@@ -517,7 +584,7 @@ static void mechanism_mesh_test(void)
         int nx=(v[1].z-v[0].z)*(v[2].x-v[0].x)-(v[1].x-v[0].x)*(v[2].z-v[0].z);
         assert(nx>0); /* Front face points upwards, so culling retains dust. */
         assert(v[0].y==100*128+2);
-        assert(v[0].u==partial_texcoord(beta_render_tile(i ? 180 : 164),1,0,0));
+        assert(v[0].u==partial_texcoord(beta_render_tile(i ? 180 : 164),.6875f,0,0));
         assert(v[0].r>0 && v[0].a==255);
     }
     assert(beta_block_selection_box((BetaBlockState){55,0},&b) && b.max_y==.0625f);
@@ -530,20 +597,33 @@ static void mechanism_mesh_test(void)
       assert((zmin+zmax)/2==8*128+64+8); assert(ymax==100*128+56); }
     for(i=0;i<3;++i) free(mesh.layers[i].vertices);
     {
-        int direction,on,j;
-        for(direction=0;direction<4;++direction) for(on=0;on<2;++on) {
+        int direction,on,j,delay;
+        for(direction=0;direction<4;++direction) for(on=0;on<2;++on) for(delay=0;delay<4;++delay) {
             unsigned tile=beta_render_tile(on ? 147 : 131);int top=0;
-            memset(&mesh,0,sizeof(mesh));emit_repeater(&policy,&w,&mesh,c,8,100,8,(uint8_t)(on ? 94 : 93),(uint8_t)(direction|4));
+            memset(&mesh,0,sizeof(mesh));emit_repeater(&policy,&w,&mesh,c,8,100,8,(uint8_t)(on ? 94 : 93),(uint8_t)(direction|delay*4));
             for(j=0;j<(int)mesh.layers[0].vertex_count;j+=4) {
                 const VoxelVertex *v=mesh.layers[0].vertices+j;
                 if(v[0].y!=100*128+16 || v[1].y!=v[0].y || v[2].y!=v[0].y || v[3].y!=v[0].y)continue;
                 for(i=0;i<4;++i) {
                     float x=v[i].x/128.0f-8,z=v[i].z/128.0f-8;
-                    float u=direction==0 ? x : direction==1 ? 1-z : direction==2 ? 1-x : z;
-                    float t=direction==0 ? z : direction==1 ? x : direction==2 ? 1-z : 1-x;
+                    /* Vanilla RenderBlocks vertex table, independent of the
+                     * mesh rotation loop: horizontal directions turn CW. */
+                    float u=direction==0 ? x : direction==1 ? z : direction==2 ? 1-x : 1-z;
+                    float t=direction==0 ? z : direction==1 ? 1-x : direction==2 ? 1-z : x;
                     assert(v[i].u==partial_texcoord(tile,u,0,0) && v[i].v==partial_texcoord(tile,t,0,1));
                 }
                 ++top;
+            }
+            for(j=0;j<2;++j) {
+                static const int dx[4]={0,-1,0,1},dz[4]={1,0,-1,0},offset[4]={-8,8,24,40};
+                int xmin=32767,xmax=-32768,zmin=32767,zmax=-32768;
+                for(i=j*20;i<j*20+20;++i) {
+                    const VoxelVertex *v=mesh.layers[1].vertices+i;
+                    if(v->x<xmin)xmin=v->x; if(v->x>xmax)xmax=v->x;
+                    if(v->z<zmin)zmin=v->z; if(v->z>zmax)zmax=v->z;
+                }
+                assert((xmin+xmax)/2==8*128+64+dx[direction]*(j ? -40 : offset[delay]));
+                assert((zmin+zmax)/2==8*128+64+dz[direction]*(j ? -40 : offset[delay]));
             }
             assert(top==1);for(i=0;i<3;++i) free(mesh.layers[i].vertices);
         }
@@ -553,6 +633,57 @@ static void mechanism_mesh_test(void)
     for(i=0;i<24;++i) assert(mesh.layers[0].vertices[i].y<=100*128+8);
     for(i=0;i<3;++i) free(mesh.layers[i].vertices);
     assert(world_close(&w)==WORLD_OK);
+}
+static void wire_shapes_test(void)
+{
+    /* Vanilla RenderBlocks' pixel crops: X min/max, Z min/max (1 block=128). */
+    static const int bounds[16][4]={
+        {40,88,40,88},{0,128,0,128},{0,128,0,128},{0,88,40,128},
+        {0,128,0,128},{0,128,0,128},{0,88,0,88},{0,88,0,128},
+        {0,128,0,128},{40,128,40,128},{0,128,0,128},{0,128,40,128},
+        {40,128,0,88},{40,128,0,128},{0,128,0,88},{0,128,0,128}};
+    static const int tiles[16]={164,165,165,164,165,165,164,164,165,164,165,164,164,164,164,164};
+    static const int dx[4]={0,-1,0,1},dz[4]={1,0,-1,0};
+    World w; Renderer policy={0}; Chunk *c; int mask,on,end,n,i,pass;
+    assert(world_init(&w,42,1,4)==WORLD_OK); c=world_get_chunk(&w,0,0); assert(c);
+    chunk_set_block(c,8,100,8,55);
+    for(mask=0;mask<16;++mask) for(on=0;on<2;++on) for(end=0;end<2;++end) {
+        ChunkMesh mesh={0};
+        for(n=0;n<4;++n) {
+            chunk_set_block(c,8+dx[n],100,8+dz[n],mask&(1<<n) ? (uint8_t)(93+on) : 0);
+            chunk_set_metadata(c,8+dx[n],100,8+dz[n],(uint8_t)((n+end*2)&3));
+            assert(world_wire_visual_connects(&w,8,100,8,n)==!!(mask&(1<<n)));
+        }
+        emit_wire(&policy,&w,&mesh,c,8,100,8); assert(mesh.layers[1].vertex_count==8);
+        for(pass=0;pass<2;++pass) {
+            const VoxelVertex *v=mesh.layers[1].vertices+pass*4;
+            int xmin=32767,xmax=-32768,zmin=32767,zmax=-32768;
+            unsigned tile=beta_render_tile(tiles[mask]+pass*16);
+            for(i=0;i<4;++i) {
+                if(v[i].x<xmin)xmin=v[i].x; if(v[i].x>xmax)xmax=v[i].x;
+                if(v[i].z<zmin)zmin=v[i].z; if(v[i].z>zmax)zmax=v[i].z;
+                assert(v[i].y==100*128+2 && v[i].a==255);
+                assert(v[i].u>=partial_texcoord(tile,0,0,0) && v[i].u<=partial_texcoord(tile,1,0,0));
+                assert(v[i].v>=partial_texcoord(tile,0,0,1) && v[i].v<=partial_texcoord(tile,1,0,1));
+            }
+            assert(xmin==8*128+bounds[mask][0] && xmax==8*128+bounds[mask][1]);
+            assert(zmin==8*128+bounds[mask][2] && zmax==8*128+bounds[mask][3]);
+        }
+        free(mesh.layers[1].vertices);
+    }
+    /* Perpendicular repeaters do not join; vertical providers aren't dust. */
+    for(n=0;n<4;++n) {
+        chunk_set_block(c,8+dx[n],100,8+dz[n],94);
+        chunk_set_metadata(c,8+dx[n],100,8+dz[n],(uint8_t)((n+1)&3));
+        assert(!world_wire_visual_connects(&w,8,100,8,n));
+        chunk_set_block(c,8+dx[n],100,8+dz[n],0);
+        chunk_set_block(c,8+dx[n],99,8+dz[n],76);
+        assert(!world_wire_visual_connects(&w,8,100,8,n));
+        chunk_set_block(c,8+dx[n],99,8+dz[n],55);
+        assert(world_wire_visual_connects(&w,8,100,8,n));
+    }
+    assert(world_close(&w)==WORLD_OK);
+    puts("Dust: all 16 connection masks, both repeater ends/states, UV crops and steps passed");
 }
 
 int main(int argc, char **argv)
@@ -589,6 +720,7 @@ int main(int argc, char **argv)
     entity_pick_test();
     chest_mesh_test();
     mechanism_mesh_test();
+    wire_shapes_test();
     {
         World light_world;
         Chunk *a,*b;
@@ -1108,6 +1240,8 @@ int main(int argc, char **argv)
     button_texture_test();
     skin_upload_test();
     fire_cape_tnt_test();
+    transport_pixels_test();
+    transport_world_pixels_test();
     inventory_preview_test();
     first_person_test();
     sign_render_test();

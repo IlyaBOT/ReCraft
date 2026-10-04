@@ -46,7 +46,7 @@ static void box(float x, float y, float z, float half, float height)
 
 static GLint scene_begin(const RendererCamera *camera,int width,int height,float far_plane)
 {
-    GLint mode; float top=.05f*tanf(camera->fov_y*.00872664625997f),aspect=(float)width/height;
+    GLint mode; float top=.05f*tanf(fmaxf(30,fminf(110,camera->fov_y))*.00872664625997f),aspect=(float)width/height;
     glGetIntegerv(GL_MATRIX_MODE,&mode); glPushAttrib(GL_ALL_ATTRIB_BITS);
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
     glFrustum(-top*aspect,top*aspect,-top,top,.05,far_plane);
@@ -316,22 +316,34 @@ static void transport_model(const RenderEntity *e)
     }
     glPopMatrix();
 }
+void entity_render_tick_fraction(RenderEntity *entities,int count,float fraction)
+{
+    int i; fraction=fmaxf(0,fminf(1,fraction));
+    for(i=0;i<count;++i) if(entities[i].active && entities[i].local_interpolation) entities[i].phase=fraction;
+}
 int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *camera,
                        int width,int height,int distance,float dt)
 {
     GLint mode; int i,rendered=0; float far_plane=(float)(distance*16+32),far2=far_plane*far_plane;
+    float cy,sy,cp,sp,tx,ty,rx,ry;
     Texture2D skin;
     if (!entities || count<=0 || !camera || width<=0 || height<=0) return 0;
     /* No GL state queries or texture upload when no tracked entities exist. */
     for (i=0;i<count && !entities[i].active;++i) { }
     if (i==count) return 0;
+    cy=cosf(camera->yaw); sy=sinf(camera->yaw); cp=cosf(camera->pitch); sp=sinf(camera->pitch);
+    ty=tanf(fmaxf(30,fminf(110,camera->fov_y))*.00872664625997f); tx=ty*width/height;
+    /* Conservative two-block sphere includes heads, boat hulls and arrow fins.
+     * Cull off-screen models cheaply instead of imposing a shared draw quota. */
+    rx=2*sqrtf(1+tx*tx); ry=2*sqrtf(1+ty*ty);
     skin=assets_get_texture(ASSET_PLAYER_SKIN); mode=scene_begin(camera,width,height,far_plane);
-    for (i=0;i<count && rendered<64;++i) {
+    /* The caller already bounds the entity list. A shared 64-model budget
+     * hid every projectile/vehicle following a populated mob list. */
+    for (i=0;i<count;++i) {
         RenderEntity *e=&entities[i]; float dx,dy,dz,a=dt*10,move;
         if (!e->active) continue;
         dx=e->x-e->draw_x; dy=e->y-e->draw_y; dz=e->z-e->draw_z;
         if(e->local_interpolation) {
-            e->phase+=dt*20; if(e->phase>1) e->phase=1;
             e->draw_x=e->previous_x+(e->x-e->previous_x)*e->phase;
             e->draw_y=e->previous_y+(e->y-e->previous_y)*e->phase;
             e->draw_z=e->previous_z+(e->z-e->previous_z)*e->phase; e->positioned=1;
@@ -344,18 +356,23 @@ int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *ca
         }
         dx=e->draw_x-camera->x; dy=e->draw_y-camera->y; dz=e->draw_z-camera->z;
         if(dx*dx+dy*dy+dz*dz>far2) continue;
+        {
+            float horizontal=dx*sy-dz*cy,depth=horizontal*cp+dy*sp;
+            if(depth< -2 || fabsf(dx*cy+dz*sy)>depth*tx+rx || fabsf(dy*cp-horizontal*sp)>depth*ty+ry) continue;
+        }
         if(e->type==1003 || e->type==1006) {
             float swell=1;
             InventorySlot tnt={e->type==1003 ? 46 : e->color,1,0};glPushMatrix();glTranslatef(e->draw_x,e->draw_y,e->draw_z);
-            glEnable(GL_TEXTURE_2D);glDisable(GL_BLEND);glDepthMask(GL_TRUE);
+            glEnable(GL_TEXTURE_2D);glDisable(GL_BLEND);glDisable(GL_ALPHA_TEST);glDepthMask(GL_TRUE);
             if(e->type==1003 && e->fuse<10){float phase=1-(e->fuse-e->phase+1)/10;if(phase<0)phase=0;phase*=phase;phase*=phase;swell+=phase*.3f;}
-            glScalef(.98f*swell,.98f*swell,.98f*swell);held_cube(&tnt);
+            glScalef(.98f*swell,.98f*swell,.98f*swell);glColor4f(1,1,1,1);held_cube(&tnt);
             if(e->type==1003 && (e->fuse/5)%2==0) {
                 glDisable(GL_TEXTURE_2D);glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
                 glDepthFunc(GL_LEQUAL);glDepthMask(GL_FALSE);glColor4f(1,1,1,(1-(e->fuse-e->phase+1)/100)*.8f);
                 glBegin(GL_QUADS);box(0,-.5f,0,.5f,1);glEnd();
                 glDepthFunc(GL_LEQUAL);glDepthMask(GL_TRUE);glDisable(GL_BLEND);glEnable(GL_TEXTURE_2D);
             }
+            glColor4f(1,1,1,1);glEnable(GL_ALPHA_TEST);
             glPopMatrix();
         }
         else if(e->type==1000 || e->type==1001 || e->type==1002) transport_model(e);

@@ -1250,7 +1250,7 @@ static void emit_low_block(const Renderer *r,const World *w,ChunkMesh *mesh,cons
                 float u=(float)layer->vertices[i].x/VERTEX_COORD_SCALE-x;
                 float v=(float)layer->vertices[i].z/VERTEX_COORD_SCALE-z;
                 int n;
-                for(n=0;n<((id==93 || id==94) ? metadata&3 : 0);++n) { float t=u; u=1-v; v=t; }
+                for(n=0;n<((id==93 || id==94) ? metadata&3 : 0);++n) { float t=u; u=v; v=1-t; }
                 layer->vertices[i].u=partial_texcoord(tile,u,0,0);
                 layer->vertices[i].v=partial_texcoord(tile,v,0,1);
             }
@@ -1451,10 +1451,12 @@ static void emit_wire(const Renderer *r,const World *w,ChunkMesh *mesh,const Chu
     colors[0][1]=clamp_byte((int)(255*light*fmaxf(0,f*f*.7f-.5f)));
     colors[0][2]=clamp_byte((int)(255*light*fmaxf(0,f*f*.6f-.7f)));
     colors[1][0]=colors[1][1]=colors[1][2]=clamp_byte((int)(255*light));
-    for(n=0;n<4;++n) links[n]=world_wire_connects(w,wx,y,wz,n);
+    for(n=0;n<4;++n) links[n]=world_wire_visual_connects(w,wx,y,wz,n);
     line=(links[1] || links[3]) && !links[0] && !links[2] ? 1 :
          (links[0] || links[2]) && !links[1] && !links[3] ? 2 : 0;
-    if(!line && (links[0] || links[1] || links[2] || links[3])) {
+    /* Disconnected dust also crops the cross to its central 6x6 pixels, as
+     * RenderBlocks 1.5.2 does; one link uses a full straight line. */
+    if(!line) {
         if(!links[1]) lo[0]=.3125f;
         if(!links[3]) hi[0]=.6875f;
         if(!links[2]) lo[1]=.3125f;

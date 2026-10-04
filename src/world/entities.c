@@ -15,7 +15,7 @@ void world_entities_free(Chunk *chunk)
 { SavedEntity *e,*next; for(e=chunk->saved_entities;e;e=next) { next=e->next; free_one(e); } chunk->saved_entities=NULL; }
 typedef struct Read {
     SavedEntity **tail,*current; NbtWriter writer; uint8_t *scratch; size_t size;
-    int list,pos,motion,index,item,records,rotation,health_seen,pos_seen,items,slot;
+    int list,pos,motion,index,item,records,rotation,health_seen,pos_seen,items,slot,fall_time_seen;
     InventorySlot cargo_item;
 } Read;
 static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
@@ -27,7 +27,7 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
         if(++r->records>4096) return 0;
         r->current=(SavedEntity *)calloc(1,sizeof(*r->current)); if(!r->current) return 0;
         r->current->item.id=-1; r->current->item.health=5;
-        r->health_seen=r->pos_seen=0; r->current->mob.health=10;r->current->mob.air=300;
+        r->health_seen=r->pos_seen=r->fall_time_seen=0; r->current->mob.health=10;r->current->mob.air=300;
         r->current->transport.x_tile=r->current->transport.y_tile=r->current->transport.z_tile=-1;
         nbt_writer_init(&r->writer,r->scratch,r->size,NULL);
     }
@@ -65,6 +65,8 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
             if(t->type==NBT_BYTE) {
                 if(named(t,"Fuse")) s->fuse=(uint8_t)t->value.byte;
                 if(named(t,"Tile")) s->falling_block=(uint8_t)t->value.byte;
+                if(named(t,"Data")) s->fall_data=t->value.byte&15;
+                if(named(t,"Time")) { s->fall_time=(uint8_t)t->value.byte; r->fall_time_seen=1; }
                 if(named(t,"inTile")) s->in_tile=(uint8_t)t->value.byte;
                 if(named(t,"inData")) s->in_data=(uint8_t)t->value.byte;
                 if(named(t,"shake")) s->shake=(uint8_t)t->value.byte;
@@ -129,6 +131,11 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
         e->mob.vx=e->item.vx; e->mob.vy=e->item.vy; e->mob.vz=e->item.vz;
         if(e->transport.kind==1 || e->transport.kind==5 || e->transport.kind==6) e->mob.yaw=180-e->mob.yaw;
         if(e->transport.kind) {
+            /* Beta FallingSand NBT has only Tile. Its source was already
+             * removed before saving; never require/re-delete it after load. */
+            e->transport.source_removed=e->transport.kind!=7 || !r->fall_time_seen || e->transport.fall_time>0;
+            if(e->transport.kind==7 && !r->fall_time_seen) e->transport.fall_time=1;
+            e->transport.previous_x=e->mob.x; e->transport.previous_y=e->mob.y; e->transport.previous_z=e->mob.z;
             if(fabsf(e->mob.vx)>200) e->mob.vx=0;
             if(fabsf(e->mob.vy)>200) e->mob.vy=0;
             if(fabsf(e->mob.vz)>200) e->mob.vz=0;

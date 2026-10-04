@@ -25,6 +25,8 @@ int entity_pick(const RenderEntity *entities,int count,const RendererCamera *cam
 int entity_render_draw(RenderEntity *entities, int count,
                        const RendererCamera *camera, int width, int height,
                        int render_distance_chunks,float dt);
+/* Local entity poses use the same 20 Hz remainder as the player camera. */
+void entity_render_tick_fraction(RenderEntity *entities,int count,float fraction);
 int item_drop_draw(const ItemDrop *drops, int count, const RendererCamera *camera,
                    int width, int height, int render_distance_chunks);
 void first_person_draw(const InventorySlot *item,int width,int height,float swing,int hurt);

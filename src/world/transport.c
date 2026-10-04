@@ -4,6 +4,7 @@
 #include "fluid.h"
 #include "environment.h"
 #include "explosion.h"
+#include "piston.h"
 #include "../game/player.h"
 #include "../game/entity_render.h"
 #include <math.h>
@@ -47,12 +48,18 @@ int world_boat_use(World *w,Player *p,InventorySlot *held)
 static float random_float(World *w) { return (float)world_random(w,16777216)/16777216; }
 int world_falling_spawn(World *w,int x,int y,int z,int id)
 {
-    SavedEntity *e=spawn(w,x+.5f,y+.5f,z+.5f,7);
+    SavedEntity *e; Chunk *c=owner(w,(float)x,(float)z);
+    if(!c || world_peek_block(w,x,y,z)!=id || (id!=12 && id!=13)) return 0;
+    /* A scheduled neighbour update may run before the entity's first tick. */
+    for(e=c->saved_entities;e;e=e->next)
+        if(e->transport.kind==7 && !e->transport.dead && !e->transport.source_removed &&
+           (int)floorf(e->mob.x)==x && (int)floorf(e->mob.y)==y && (int)floorf(e->mob.z)==z) return 0;
+    e=spawn(w,x+.5f,y+.5f,z+.5f,7);
     if(!e)return 0;
     e->transport.falling_block=id;
-    /* Remove the source once, atomically with spawning. Scheduled duplicate
-     * updates now see air; the persistent entity owns the block until landing. */
-    world_set_block(w,x,y,z,0);return 1;
+    e->transport.fall_data=world_peek_metadata(w,x,y,z);
+    /* EntityFallingSand removes its source on its first simulation tick. */
+    return 1;
 }
 int world_tnt_prime(World *w,float x,float y,float z,int fuse)
 {
@@ -334,6 +341,76 @@ static int vehicle_move_axis(const World *w,MobState *m,int axis,float delta,flo
 }
 static int cart_move_axis(const World *w,MobState *m,int axis,float delta)
 { return vehicle_move_axis(w,m,axis,delta,.49f,.35f); }
+/* Entity.moveEntity / AxisAlignedBB.calculate*Offset: clip Y, then X, then Z.
+ * No stepping, epsilon penetration, or collision with other falling entities.
+ * In particular, landing must use the full block collision boxes, not a
+ * sampled "is blocked" test that can start inside a freshly settled column. */
+static float falling_axis(const World *w,MobState *m,int axis,float delta)
+{
+    double lo[3]={m->x-.49,m->y-.49,m->z-.49},hi[3]={m->x+.49,m->y+.49,m->z+.49};
+    double clipped=delta; int x,y,z,i,k;
+    int min[3],max[3];
+    for(k=0;k<3;++k) {
+        min[k]=(int)floor(lo[k]+(k==axis && delta<0 ? delta : 0))-1;
+        max[k]=(int)floor(hi[k]+(k==axis && delta>0 ? delta : 0))+1;
+    }
+    for(x=min[0];x<=max[0];++x) for(y=min[1];y<=max[1];++y) for(z=min[2];z<=max[2];++z) {
+        BetaBlockBox boxes[2]; int n=world_block_collision_boxes(w,x,y,z,boxes);
+        Chunk *c=owner(w,(float)x,(float)z);
+        if(!c || (w->beta_format && !c->beta_raw)) { boxes[0]=(BetaBlockBox){0,0,0,1,1,1}; n=1; }
+        for(i=0;i<n;++i) {
+            double bl[3]={x+boxes[i].min_x,y+boxes[i].min_y,z+boxes[i].min_z};
+            double bh[3]={x+boxes[i].max_x,y+boxes[i].max_y,z+boxes[i].max_z};
+            for(k=0;k<3;++k) if(k!=axis && (hi[k]<=bl[k] || lo[k]>=bh[k])) break;
+            if(k!=3) continue;
+            if(clipped>0 && hi[axis]<=bl[axis]) clipped=fmin(clipped,bl[axis]-hi[axis]);
+            else if(clipped<0 && lo[axis]>=bh[axis]) clipped=fmax(clipped,bh[axis]-lo[axis]);
+        }
+    }
+    {
+        float *position=axis==0 ? &m->x : axis==1 ? &m->y : &m->z;
+        *position=(float)((double)*position+clipped);
+        /* MobState uses floats rather than Java's double positions. Round a
+         * clipped contact outwards so the next tick cannot start in a block. */
+        if(clipped!=delta) *position=nextafterf(*position,delta<0 ? INFINITY : -INFINITY);
+    }
+    return (float)clipped;
+}
+static void falling_move(const World *w,MobState *m)
+{
+    float dx=m->vx*.05f,dy=m->vy*.05f,dz=m->vz*.05f,move;
+    move=falling_axis(w,m,1,dy); m->on_ground=dy<0 && move!=dy;
+    if(move!=dy) m->vy=0;
+    if(falling_axis(w,m,0,dx)!=dx) m->vx=0;
+    if(falling_axis(w,m,2,dz)!=dz) m->vz=0;
+}
+static int sand_passes(unsigned id) { return !id || id==51 || fluid_kind(id); }
+/* 1.5.2 Material.vine / Material.snow are replaceable; flowers are not. */
+static int sand_replaces(unsigned id) { return sand_passes(id) || id==31 || id==32 || id==78; }
+static void falling_tick(World *w,SavedEntity *e)
+{
+    TransportState *s=&e->transport; MobState *m=&e->mob; int x,y,z;
+    if(!s->falling_block) { s->dead=1; return; }
+    ++s->fall_time; m->vy-=.8f; falling_move(w,m);
+    m->vx*=.98f; m->vy*=.98f; m->vz*=.98f;
+    x=(int)floorf(m->x); y=(int)floorf(m->y); z=(int)floorf(m->z);
+    if(!s->source_removed) {
+        s->source_removed=1;
+        if(world_peek_block(w,x,y,z)!=s->falling_block) { s->dead=1; return; }
+        world_set_block(w,x,y,z,0);
+    }
+    if(m->on_ground) {
+        unsigned at=world_peek_block(w,x,y,z);
+        m->vx*=.7f; m->vz*=.7f; m->vy*= -.5f;
+        if(at==36) return; /* Wait for the moving piston to finish. */
+        s->dead=1;
+        if(y<0 || y>=WORLD_HEIGHT || !sand_replaces(at) || sand_passes(world_peek_block(w,x,y-1,z)) ||
+           !world_set_state(w,x,y,z,(BetaBlockState){(uint8_t)s->falling_block,(uint8_t)s->fall_data}))
+            world_item_spawn_at(w,m->x,m->y,m->z,(InventorySlot){s->falling_block,1,s->fall_data});
+    } else if((s->fall_time>100 && (y<1 || y>=WORLD_HEIGHT)) || s->fall_time>600) {
+        world_item_spawn_at(w,m->x,m->y,m->z,(InventorySlot){s->falling_block,1,s->fall_data}); s->dead=1;
+    }
+}
 static void cart_collisions(World *w,SavedEntity *e,Player *p)
 {
     size_t i; MobState *m=&e->mob;
@@ -515,24 +592,13 @@ void world_transport_tick(World *w,Player *p,InventorySlot *inventory)
             e->transport.previous_x=e->mob.x; e->transport.previous_y=e->mob.y; e->transport.previous_z=e->mob.z;
             if(e->transport.kind==1 || e->transport.kind==5 || e->transport.kind==6) arrow_tick(w,e,p,inventory);
             else if(e->transport.kind==3) boat_tick(w,e,p);
-            else if(e->transport.kind==4 || e->transport.kind==7) {
+            else if(e->transport.kind==7) falling_tick(w,e);
+            else if(e->transport.kind==4) {
                 MobState *m=&e->mob;m->vy-=.8f;m->on_ground=0;
-                if(!vehicle_move_axis(w,m,1,m->vy*.05f,.49f,.49f)) { if(m->vy<0)m->on_ground=1;m->vy*= -.5f; }
-                vehicle_move_axis(w,m,0,m->vx*.05f,.49f,.49f);vehicle_move_axis(w,m,2,m->vz*.05f,.49f,.49f);
+                falling_move(w,m);
                 m->vx*=.98f;m->vy*=.98f;m->vz*=.98f;
-                if(m->on_ground) {m->vx*=.7f;m->vz*=.7f;}
-                if(e->transport.kind==4) {
-                    if(e->transport.fuse--<=0) {e->transport.dead=1;world_explode(w,p,m->x,m->y,m->z,4,0);}
-                } else {
-                    int x=(int)floorf(m->x),y=(int)floorf(m->y),z=(int)floorf(m->z);
-                    if(m->on_ground || ++e->transport.fall_time>100) {
-                        unsigned at=world_peek_block(w,x,y,z),below=world_peek_block(w,x,y-1,z);
-                        e->transport.dead=1;
-                        if(!m->on_ground || y<=0 || (at && at!=51 && !fluid_kind(at)) || !below || below==51 || fluid_kind(below) ||
-                           !world_set_block(w,x,y,z,(uint8_t)e->transport.falling_block))
-                            world_item_spawn_at(w,m->x,m->y,m->z,(InventorySlot){e->transport.falling_block,1,0});
-                    }
-                }
+                if(m->on_ground) {m->vx*=.7f;m->vz*=.7f;m->vy*= -.5f;}
+                if(e->transport.fuse--<=0) {e->transport.dead=1;world_explode(w,p,m->x,m->y,m->z,4,0);}
             } else cart_tick(w,e,p);
             dirty(c);
             if(e->transport.dead) {
@@ -595,7 +661,8 @@ static int fields(NbtWriter *w,const SavedEntity *e)
        !list(w,"Rotation",NBT_FLOAT,s->kind==1 || s->kind==5 || s->kind==6 ? 180-m->yaw : m->yaw,m->pitch,0,2) ||
        !number(w,NBT_FLOAT,"FallDistance",0) || !number(w,NBT_SHORT,"Fire",m->fire) ||
        !number(w,NBT_SHORT,"Air",300) || !number(w,NBT_BYTE,"OnGround",m->on_ground)) return 0;
-    if(s->kind==7)return number(w,NBT_BYTE,"Tile",s->falling_block);
+    if(s->kind==7)return number(w,NBT_BYTE,"Tile",s->falling_block) &&
+        number(w,NBT_BYTE,"Data",s->fall_data) && number(w,NBT_BYTE,"Time",s->fall_time);
     if(s->kind==1 || s->kind==5 || s->kind==6) return number(w,NBT_SHORT,"xTile",s->x_tile) && number(w,NBT_SHORT,"yTile",s->y_tile) &&
         number(w,NBT_SHORT,"zTile",s->z_tile) && number(w,NBT_BYTE,"inTile",s->in_tile) && (s->kind!=1 || number(w,NBT_BYTE,"inData",s->in_data)) &&
         number(w,NBT_BYTE,"shake",s->shake) && number(w,NBT_BYTE,"inGround",s->in_ground) && (s->kind!=1 || number(w,NBT_BYTE,"player",s->player));
@@ -615,9 +682,10 @@ static int fields(NbtWriter *w,const SavedEntity *e)
     return nbt_writer_end(w)==NBT_OK;
 }
 typedef struct Rewrite { NbtWriter *w; const SavedEntity *e; int skip; unsigned skip_depth; } Rewrite;
-static int known(NbtSpan name)
+static int known(NbtSpan name,int kind)
 {
     static const char *names[]={"id","Pos","Motion","Rotation","FallDistance","Fire","Air","OnGround","xTile","yTile","zTile","inTile","inData","shake","inGround","player","Type","PushX","PushZ","Fuel","Items","Fuse","Tile"};
+    if(kind==7 && ((name.size==4 && !memcmp(name.data,"Data",4)) || (name.size==4 && !memcmp(name.data,"Time",4)))) return 1;
     unsigned i; for(i=0;i<sizeof(names)/sizeof(names[0]);++i) if(name.size==strlen(names[i]) && !memcmp(name.data,names[i],name.size)) return 1;
     return 0;
 }
@@ -625,7 +693,7 @@ static int rewrite(void *ctx,NbtEvent event,const NbtTag *tag,unsigned depth)
 {
     Rewrite *r=(Rewrite *)ctx;
     if(r->skip) { if(event==NBT_FINISH && depth==r->skip_depth) r->skip=0; return 1; }
-    if(depth==1 && known(tag->name)) { if(event==NBT_BEGIN) { r->skip=1; r->skip_depth=depth; } return 1; }
+    if(depth==1 && known(tag->name,r->e->transport.kind)) { if(event==NBT_BEGIN) { r->skip=1; r->skip_depth=depth; } return 1; }
     if(event==NBT_FINISH && depth==0 && !fields(r->w,r->e)) return 0;
     return (event==NBT_FINISH ? nbt_writer_end(r->w) : nbt_writer_tag(r->w,tag))==NBT_OK;
 }

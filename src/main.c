@@ -2159,6 +2159,8 @@ int main(int argc, char **argv)
                     for(entity=0;!burning && entity<ENTITY_LIMIT;++entity)burning=app.entities[entity].active && app.entities[entity].fire>0;
                     if(burning)assets_animate_fire(app.animation_tick);
                 }
+                entity_render_tick_fraction(app.entities,ENTITY_LIMIT,
+                    run.benchmark || app.ui.world_background ? 1 : (float)(accumulator/RECRAFT_TICK_SECONDS));
                 app.rendered_entities = entity_render_draw(app.entities,ENTITY_LIMIT,&camera,
                     scene_width,scene_height,app.ui.options.render_distance,(float)elapsed);
                 app.rendered_entities += item_drop_draw(app.drops,128,&camera,
