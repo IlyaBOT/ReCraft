@@ -1185,6 +1185,25 @@ static void item_tiles(int id, int damage, int *top, int *side)
     }
 }
 
+static void item_box_icon(const BetaBlockBox *b,int top,int side,float x,float y,float size)
+{
+    float points[8][3],sx[4],sy[4]; int i,f;
+    static const int faces[3][4]={{3,2,6,7},{4,5,6,7},{1,5,6,2}};
+    for(i=0;i<8;++i) {
+        points[i][0]=(i==1 || i==2 || i==5 || i==6) ? b->max_x : b->min_x;
+        points[i][1]=i==2 || i==3 || i==6 || i==7 ? b->max_y : b->min_y;
+        points[i][2]=i>=4 ? b->max_z : b->min_z;
+    }
+    for(f=0;f<3;++f) {
+        for(i=0;i<4;++i) {
+            const float *p=points[faces[f][i]];
+            sx[i]=x+size*(.5f+(p[0]-p[2])*.41f);
+            sy[i]=y+size*(.06f+(p[0]+p[2])*.22f+(1-p[1])*.42f);
+        }
+        tile_quad(f ? side : top,sx,sy,f==0 ? 255 : f==1 ? 175 : 135);
+    }
+}
+
 static void draw_item_icon(int id, int damage, int x, int y, int size)
 {
     Texture2D terrain=assets_get_texture(ASSET_TERRAIN);
@@ -1222,13 +1241,6 @@ static void draw_item_icon(int id, int damage, int x, int y, int size)
         return;
     }
     item_tiles(id,damage,&top,&side);
-    if(id==70 || id==72 || id==77 || id==44) {
-        float h=id==44 ? .5f : id==77 ? .25f : .0625f,dy=s*(1-h)*.21f;
-        int i;
-        ly[2]=ly[1]+s*h*.42f; ly[3]=ly[0]+s*h*.42f;
-        ry[2]=ry[1]+s*h*.42f; ry[3]=ry[0]+s*h*.42f;
-        for(i=0;i<4;++i) { ty[i]+=dy; ly[i]+=dy; ry[i]+=dy; }
-    }
     glPushAttrib(GL_ENABLE_BIT|GL_TEXTURE_BIT|GL_CURRENT_BIT|GL_COLOR_BUFFER_BIT);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
@@ -1237,9 +1249,14 @@ static void draw_item_icon(int id, int damage, int x, int y, int size)
     glAlphaFunc(GL_GREATER,0.5f);
     glBindTexture(GL_TEXTURE_2D,terrain.id);
     glBegin(GL_QUADS);
-    tile_quad(top,tx,ty,255);
-    tile_quad(side,lx,ly,175);
-    tile_quad(side,rx,ry,135);
+    if(id==53 || id==67 || id==85 || id==96 || id==77 || id==70 || id==72 || id==44 || id==78 || id==92 || id==60) {
+        BetaBlockBox boxes[5]; int i,n=beta_block_item_boxes((BetaBlockState){(uint8_t)id,(uint8_t)damage},boxes);
+        for(i=0;i<n;++i) item_box_icon(&boxes[i],top,side,fx,fy,s);
+    } else {
+        tile_quad(top,tx,ty,255);
+        tile_quad(side,lx,ly,175);
+        tile_quad(side,rx,ry,135);
+    }
     glEnd();
     glPopAttrib();
 }

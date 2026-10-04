@@ -27,6 +27,66 @@ malformed lengths end the connection with an error instead of losing framing.
 Small action packets use TCP_NODELAY. macOS sockets use SO_NOSIGPIPE, and status
 query deadlines use the monotonic `mach_absolute_time()` available on 10.6.
 
+## Teleports, login plugins and commands
+
+The Beta packet order was checked against the installed, read-only b1.7.3
+client's `Packet13PlayerLookMove`, `EntityClientPlayerMP` and `NetClientHandler`.
+Previously the movement writer reversed feet Y and stance, and the mock server
+expected the same mistake. On goldenage.keii.dev this prevented the server from
+accepting the teleport acknowledgement and streaming terrain. The corrected
+client loaded the room with signs and the public chest as IlyaBOT on 2026-10-04.
+The automated test sent no password, chat command, block interaction or inventory
+action. The user then entered the password manually and the server reported
+successful login, but the player stayed in the room. Captured position events
+still pointed to the room; return to the former house/mine is unresolved and
+needs comparison with the original client. Later server teleports use the same
+corrected path; the loopback test also covers a second teleport and its ACK.
+Position-only `0x0B` and look-only `0x0C` corrections are now handled as well
+as combined `0x0D`, using the corresponding packet type for acknowledgement.
+An event's position/rotation bits prevent a partial correction from resetting
+the omitted fields. Their loopback cases use a distant negative-Z destination;
+this is protocol coverage, not proof that the live server uses a partial packet.
+
+Teleport handling resets velocity, fall distance and the previous interpolation
+pose. Simulation waits for received map data under the player's footprint;
+an empty chunk allocated by a block update or a partial map update is insufficient. This readiness flag
+is runtime-only and never changes a save format. Teleport acknowledgements are
+sent immediately, independently of terrain readiness, to avoid a deadlock.
+
+Received network chunks are kept until the server sends PreChunk Unload. Unload
+removes the chunk, render data and tile entities instead of retaining an empty
+cache slot. If all cache entries contain received terrain, the network cache
+grows within the existing 4096-chunk limit instead of silently evicting terrain
+that the server will not resend. Empty speculative entries can still be evicted.
+The offline cache and persistent saves retain their existing policy. A regression
+test fills a two-entry cache, checks growth and stable chunks, then checks server
+unload and mesh destruction; network_test exercises the actual unload packet.
+
+T opens chat in singleplayer or multiplayer; `/` opens it with a slash already
+entered. Multiplayer sends commands unchanged in packet `0x03`, including
+plugin commands such as `/login`. They are not parsed or executed locally and
+are not logged. Server permissions and command syntax remain authoritative;
+the client does not grant creative mode or implement a server plugin by itself.
+
+Singleplayer has a separate compact command handler in `game/commands.c`:
+`/tp [name] x y z`, `/gamemode survival|creative|s|c|0|1 [name]`,
+`/time set day|night|ticks`, `/time add ticks`, `/timeset day|night|ticks`,
+`/weather clear|rain|thunder [seconds]`, `/seed` and `/help`.
+Only the local player can be targeted. Inventory contents are preserved when
+changing modes. Time and weather update existing world fields and use the
+existing save path. Game mode persists in native ReCraft worlds; imported Beta
+worlds retain it only for the current session, since vanilla Beta level.dat
+does not have a creative game-mode field. No newer block IDs, adventure mode or protocol
+framing are added. These local convenience commands are an extension to Beta;
+the mode/time/coordinate rules were compared with the installed 1.5.2 client
+command classes. Day/night aliases set 0/12500 ticks; weather duration uses
+20 ticks per second; relative coordinates and absolute X/Z block centering are
+supported. Local teleport Y is bounded to -4096..4096 for the legacy simulator.
+
+Regression checks cover acknowledgement before chunk delivery, teleport feet
+Y, readiness at chunk edges, raw forwarding of several server/plugin commands,
+local command validation, mode changes, clock overflow and weather state.
+
 ## Server list and latency
 
 The server editor stores protocol `14` (Beta gameplay) or `47` (modern status).
@@ -71,7 +131,7 @@ Implemented traffic:
 
 | Direction | Packet IDs | Use |
 | --- | --- | --- |
-| Both | `0x00`, `0x02`, `0x01`, `0x03`, `0x0D` | Keepalive, offline handshake, login, chat, position/rotation |
+| Both | `0x00`, `0x02`, `0x01`, `0x03`, `0x0A`-`0x0D` | Keepalive, offline handshake, login, chat, position/rotation corrections |
 | Client to server | `0x0E`, `0x0F`, `0x10` | Mining, placement, selected hotbar slot |
 | Client to server | `0x07`, `0x12`, `0x13` | Entity interaction/attack, arm swing and player-action APIs (sneak/leave bed) |
 | Both | `0x09`, `0x65`, `0x6A` | Same-dimension respawn, close window, transaction |
@@ -94,8 +154,10 @@ the renderer does not yet draw all entity types. This is not a complete Beta
 gameplay client.
 
 `network_send_position()` accepts **feet Y** and Beta yaw/pitch in **degrees**.
-The serverbound wire order is X, camera Y (`feet Y + 1.62`), feet Y, Z. A
-clientbound `NETWORK_EVENT_POSITION` returns feet Y and Beta degrees. Local
+The serverbound wire order is X, feet Y, stance (`feet Y + 1.62`), Z.
+The clientbound teleport assigns the first Y to the original player's
+`Entity.posY`, which includes the 1.62 eye offset. The adapter subtracts it;
+`NETWORK_EVENT_POSITION` returns feet Y and Beta degrees. Local
 `Player` angles use radians and different axes: when sending,
 `BetaYaw = LocalYaw * 180/pi + 180`, `BetaPitch = -LocalPitch * 180/pi`.
 The reverse conversion applies to a received position. Inventory events carry

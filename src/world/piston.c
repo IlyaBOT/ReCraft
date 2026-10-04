@@ -164,8 +164,19 @@ int world_block_collision_boxes(const World *w,int x,int y,int z,BetaBlockBox bo
         boxes[0].min_y+=off*dy[face]; boxes[0].max_y+=off*dy[face];
         boxes[0].min_z+=off*dz[face]; boxes[0].max_z+=off*dz[face]; return 1;
     }
+    if(id==78) {
+        if((meta&7)<3) return 0;
+        boxes[0]=(BetaBlockBox){0,0,0,1,.5f,1}; return 1;
+    }
+    if(beta_block_stair_boxes((BetaBlockState){(uint8_t)id,(uint8_t)meta},boxes)) return 2;
     if(!world_block_def((uint8_t)id)->solid) return 0;
-    if(id==44 || id==81 || id==26 || id==64 || id==71 || id==29 || id==33 || id==34) {
+    if(id==85) { boxes[0]=(BetaBlockBox){0,0,0,1,1.5f,1}; return 1; }
+    if(id==88) { boxes[0]=(BetaBlockBox){0,0,0,1,.875f,1}; return 1; }
+    if(id==92) {
+        beta_block_selection_box((BetaBlockState){(uint8_t)id,(uint8_t)meta},boxes);
+        boxes[0].max_y=.4375f; return 1;
+    }
+    if(id==44 || id==81 || id==26 || id==64 || id==71 || id==29 || id==33 || id==34 || id==96 || id==65 || id==92) {
         if(!beta_block_selection_box((BetaBlockState){(uint8_t)id,(uint8_t)meta},boxes)) return 0;
     } else boxes[0]=(BetaBlockBox){0,0,0,1,1,1};
     if(id==34) {

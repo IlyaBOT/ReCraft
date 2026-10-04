@@ -710,6 +710,7 @@ static int visible_face(const Renderer *renderer, uint8_t self, uint8_t neighbor
         self==BETA_BLOCK_REDSTONE_TORCH || self==BETA_BLOCK_UNLIT_REDSTONE_TORCH ||
         self==BETA_BLOCK_CACTUS || self==BETA_BLOCK_NETHER_PORTAL || self==BETA_BLOCK_REDSTONE_WIRE ||
         self==26 || self==93 || self==94 || self==69 || self==77 || self==78 || self==51 || self==70 || self==72 || self==29 || self==33 || self==34 || self==36 ||
+        self==53 || self==67 || self==85 || self==96 || self==60 || self==65 || self==92 || self==59 ||
         self==BETA_BLOCK_WOOD_DOOR || self==BETA_BLOCK_IRON_DOOR ||
         self==BETA_BLOCK_STANDING_SIGN || self==BETA_BLOCK_WALL_SIGN || self==BETA_BLOCK_WEB ||
         beta_block_cross_plant(self) || rail_is(self))
@@ -1001,6 +1002,7 @@ static unsigned cross_slot(uint8_t id, uint8_t metadata)
     case BETA_BLOCK_REEDS: return 59u;
     case BETA_BLOCK_WEB: return (unsigned)beta_render_tile(11);
     case BETA_BLOCK_FIRE: return beta_render_tile(31);
+    case BETA_BLOCK_CROPS: return beta_render_tile(88+(metadata&7));
     default: return 0u;
     }
 }
@@ -1021,6 +1023,7 @@ static void emit_cross_plant(const Renderer *renderer, const World *world,
     int plane, side, corner;
     if(id==51) { box=(BetaBlockBox){0,0,0,1,1,1}; color=255; }
     else if (!slot || !beta_block_selection_box(state, &box)) return;
+    if(id==59) box=(BetaBlockBox){0,0,0,1,1,1};
     if (!layer_reserve(layer, layer->vertex_count + 16u)) {
         layer->overflow = 1;
         return;
@@ -1153,6 +1156,55 @@ static void emit_slab(const Renderer *renderer, const World *world,
     }
 }
 
+static void emit_box(const Renderer *r,const World *w,ChunkMesh *mesh,const Chunk *c,
+                     int x,int y,int z,uint8_t id,uint8_t meta,const BetaBlockBox *b)
+{
+    float lo[3]={b->min_x,b->min_y,b->min_z},hi[3]={b->max_x,b->max_y,b->max_z};
+    int a,s;
+    for(a=0;a<3;++a) for(s=-1;s<=1;s+=2)
+        emit_partial_face(r,w,mesh,c,x,y,z,id,meta,a,s,lo,hi);
+}
+static void emit_stairs(const Renderer *r,const World *w,ChunkMesh *mesh,const Chunk *c,
+                        int x,int y,int z,uint8_t id,uint8_t meta)
+{
+    BetaBlockBox b[2]; int i,a,s,join_axis=(meta&3)<2 ? 0 : 2;
+    beta_block_stair_boxes((BetaBlockState){id,meta},b);
+    for(i=0;i<2;++i) for(a=0;a<3;++a) for(s=-1;s<=1;s+=2) {
+        float lo[3]={b[i].min_x,b[i].min_y,b[i].min_z};
+        float hi[3]={b[i].max_x,b[i].max_y,b[i].max_z};
+        int join_sign=(meta&1) ? -1 : 1;
+        if(a==join_axis && s==(i ? -join_sign : join_sign)) {
+            if(!i) continue; /* Internal lower half is invisible. */
+            lo[1]=.5f;      /* Only the vertical riser remains exposed. */
+        }
+        emit_partial_face(r,w,mesh,c,x,y,z,id,meta,a,s,lo,hi);
+    }
+}
+static void emit_fence(const Renderer *r,const World *w,ChunkMesh *mesh,const Chunk *c,
+                       int x,int y,int z)
+{
+    BetaBlockBox b={.375f,0,.375f,.625f,1,.625f};
+    int west=block_at(w,c,x-1,y,z)==85,east=block_at(w,c,x+1,y,z)==85;
+    int north=block_at(w,c,x,y,z-1)==85,south=block_at(w,c,x,y,z+1)==85,axis,j;
+    emit_box(r,w,mesh,c,x,y,z,85,0,&b);
+    /* Beta fences only join other fences, not arbitrary solid blocks. */
+    for(axis=0;axis<2;++axis) {
+        if(axis==0 ? !(west || east || (!north && !south)) : !(north || south)) continue;
+        for(j=0;j<2;++j) {
+            b=(BetaBlockBox){.4375f,j ? .75f : .375f,.4375f,.5625f,j ? .9375f : .5625f,.5625f};
+            if(!axis) { b.min_x=west ? 0 : .4375f; b.max_x=east ? 1 : .5625f; }
+            else { b.min_z=north ? 0 : .4375f; b.max_z=south ? 1 : .5625f; }
+            emit_box(r,w,mesh,c,x,y,z,85,0,&b);
+        }
+    }
+}
+static void emit_shaped_block(const Renderer *r,const World *w,ChunkMesh *mesh,const Chunk *c,
+                              int x,int y,int z,uint8_t id,uint8_t meta)
+{
+    BetaBlockBox b;
+    if(beta_block_selection_box((BetaBlockState){id,meta},&b)) emit_box(r,w,mesh,c,x,y,z,id,meta,&b);
+}
+
 static void emit_cactus(const Renderer *renderer,const World *world,ChunkMesh *mesh,
                         const Chunk *chunk,int x,int y,int z)
 {
@@ -1236,7 +1288,7 @@ static void emit_low_block(const Renderer *r,const World *w,ChunkMesh *mesh,cons
     if(id==69) { emit_lever(r,w,mesh,chunk,x,y,z,metadata); return; }
     float lo[3]={0,0,0},hi[3]={1,id==26 ? .5625f : .125f,1};
     int axis,sign;
-    if(id==69 || id==77 || id==70 || id==72) {
+    if(id==69 || id==77 || id==70 || id==72 || id==78) {
         BetaBlockBox box; beta_block_selection_box((BetaBlockState){id,metadata},&box);
         lo[0]=box.min_x; lo[1]=box.min_y; lo[2]=box.min_z;
         hi[0]=box.max_x; hi[1]=box.max_y; hi[2]=box.max_z;
@@ -1697,6 +1749,14 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                         emit_torch_kind(mesh,x,y,z,chunk_get_metadata(chunk,x,y,z),chunk_get_block(chunk,x,y,z));
                     else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_CACTUS)
                         emit_cactus(renderer,world,mesh,chunk,x,y,z);
+                    else if(chunk_get_block(chunk,x,y,z)==53 || chunk_get_block(chunk,x,y,z)==67)
+                        emit_stairs(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
+                    else if(chunk_get_block(chunk,x,y,z)==85)
+                        emit_fence(renderer,world,mesh,chunk,x,y,z);
+                    else if(chunk_get_block(chunk,x,y,z)==96 || chunk_get_block(chunk,x,y,z)==60 || chunk_get_block(chunk,x,y,z)==92 || chunk_get_block(chunk,x,y,z)==65)
+                        emit_shaped_block(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
+                    else if(chunk_get_block(chunk,x,y,z)==59)
+                        emit_cross_plant(renderer,world,mesh,chunk,x,y,z,59,chunk_get_metadata(chunk,x,y,z));
                     else if (chunk_get_block(chunk,x,y,z)==BETA_BLOCK_NETHER_PORTAL)
                         emit_decorative_plane(renderer,mesh,x,y,z,66,
                             block_at(world,chunk,x-1,y,z)==90 || block_at(world,chunk,x+1,y,z)==90 ? 2 : 0,0);

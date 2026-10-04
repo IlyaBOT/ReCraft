@@ -29,21 +29,25 @@ int door_place(World *w,int x,int y,int z,unsigned id,float yaw)
 static void set_open(World *w,int x,int y,int z,int open)
 {
     unsigned id=world_peek_block(w,x,y,z),meta=world_peek_metadata(w,x,y,z);
-    if(!is_door(id) || !!(meta&4)==!!open) return;
+    if((!is_door(id) && id!=96) || !!(meta&4)==!!open) return;
     meta^=4; world_set_metadata(w,x,y,z,(uint8_t)meta);
-    if(world_peek_block(w,x,y+1,z)==id) world_set_metadata(w,x,y+1,z,(uint8_t)(meta|8));
+    if(is_door(id) && world_peek_block(w,x,y+1,z)==id) world_set_metadata(w,x,y+1,z,(uint8_t)(meta|8));
     world_sound(w,(open ? "random.door_open" : "random.door_close"),x+.5f,y+.5f,z+.5f,1,1);
 }
 int door_activate(World *w,int x,int y,int z)
 {
     unsigned id=world_peek_block(w,x,y,z);
-    if(w->network_mode || !is_door(id)) return 0;
+    if(w->network_mode || (!is_door(id) && id!=96)) return 0;
+    if(id==96) { set_open(w,x,y,z,!(world_peek_metadata(w,x,y,z)&4)); return 1; }
     if(id==71) return 1;
     if(world_peek_metadata(w,x,y,z)&8) --y;
     set_open(w,x,y,z,!(world_peek_metadata(w,x,y,z)&4)); return 1;
 }
 void door_power_changed(World *w,int x,int y,int z)
 {
+    if(world_peek_block(w,x,y,z)==96) {
+        set_open(w,x,y,z,world_redstone_power(w,x,y,z,x,y,z,1)>0); return;
+    }
     if(!is_door(world_peek_block(w,x,y,z))) return;
     if(world_peek_metadata(w,x,y,z)&8) --y;
     if(is_door(world_peek_block(w,x,y,z)) && world_peek_block(w,x,y+1,z)==world_peek_block(w,x,y,z))
@@ -52,6 +56,14 @@ void door_power_changed(World *w,int x,int y,int z)
 void door_neighbor_tick(World *w,int x,int y,int z)
 {
     unsigned id=world_peek_block(w,x,y,z),meta=world_peek_metadata(w,x,y,z);
+    if(id==96) {
+        static const int sx[4]={0,0,1,-1},sz[4]={1,-1,0,0};
+        if(!world_block_def(world_peek_block(w,x+sx[meta&3],y,z+sz[meta&3]))->opaque) {
+            world_set_block(w,x,y,z,0);
+            world_drop_stack(w,x,y,z,(InventorySlot){96,1,0});
+        }
+        return;
+    }
     if(!is_door(id)) return;
     if(meta&8) { if(world_peek_block(w,x,y-1,z)!=id) world_set_block(w,x,y,z,0); }
     else if(world_peek_block(w,x,y+1,z)!=id || !world_block_def(world_peek_block(w,x,y-1,z))->opaque) {

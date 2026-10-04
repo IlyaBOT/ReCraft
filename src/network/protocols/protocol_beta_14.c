@@ -193,8 +193,8 @@ size_t beta14_movement(uint8_t *out,size_t cap,double x,double y,double z,float 
 {
     if(!out || cap<42 || !isfinite(x)||!isfinite(y)||!isfinite(y+1.62)||
        !isfinite(z)||!isfinite(yaw)||!isfinite(pitch)) return 0;
-    /* Beta 14 serverbound field order is camera Y, then feet Y. */
-    out[0]=13; putf64(out+1,x); putf64(out+9,y+1.62); putf64(out+17,y); putf64(out+25,z);
+    /* EntityClientPlayerMP: boundingBox.minY, then Entity.posY (stance). */
+    out[0]=13; putf64(out+1,x); putf64(out+9,y); putf64(out+17,y+1.62); putf64(out+25,z);
     putf32(out+33,yaw); putf32(out+37,pitch); out[41]=(uint8_t)(ground!=0); return 42;
 }
 size_t beta14_mine(uint8_t *out,size_t cap,int status,int x,int y,int z,int face)

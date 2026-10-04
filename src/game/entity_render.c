@@ -440,10 +440,16 @@ int item_drop_draw(const ItemDrop *drops,int count,const RendererCamera *camera,
 static void held_cube(const InventorySlot *item)
 {
     static const int faces[6][4]={{4,5,1,0},{3,2,6,7},{1,5,6,2},{4,0,3,7},{0,1,2,3},{5,4,7,6}};
-    static const float points[8][3]={{-.5f,-.5f,-.5f},{.5f,-.5f,-.5f},{.5f,.5f,-.5f},{-.5f,.5f,-.5f},
-        {-.5f,-.5f,.5f},{.5f,-.5f,.5f},{.5f,.5f,.5f},{-.5f,.5f,.5f}};
-    int f,c; Texture2D terrain=assets_get_texture(ASSET_TERRAIN);
+    float points[8][3]; BetaBlockBox boxes[5];
+    int f,c,n,i; Texture2D terrain=assets_get_texture(ASSET_TERRAIN);
+    n=beta_block_item_boxes((BetaBlockState){(uint8_t)item->id,(uint8_t)item->damage},boxes);
     glBindTexture(GL_TEXTURE_2D,terrain.id); glBegin(GL_QUADS);
+    for(i=0;i<n;++i) {
+    for(c=0;c<8;++c) {
+        points[c][0]=((c==1 || c==2 || c==5 || c==6) ? boxes[i].max_x : boxes[i].min_x)-.5f;
+        points[c][1]=((c==2 || c==3 || c==6 || c==7) ? boxes[i].max_y : boxes[i].min_y)-.5f;
+        points[c][2]=(c>=4 ? boxes[i].max_z : boxes[i].min_z)-.5f;
+    }
     for (f=0;f<6;++f) {
         int tile=beta_block_terrain_tile((BetaBlockState){(uint8_t)item->id,(uint8_t)item->damage},(unsigned)f);
         float u0,u1,v0,v1; if(tile<0) tile=1;
@@ -453,6 +459,7 @@ static void held_cube(const InventorySlot *item)
         for(c=0;c<4;++c) {
             glTexCoord2f(c==0 || c==3 ? u0 : u1,c<2 ? v1 : v0); glVertex3fv(points[faces[f][c]]);
         }
+    }
     }
     glEnd();
 }

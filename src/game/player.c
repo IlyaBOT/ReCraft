@@ -34,7 +34,7 @@ static void collision_box(BetaBlockState state, BetaBlockBox *box)
 {
     unsigned id=state.id;
     if ((id==BETA_BLOCK_SLAB || id==BETA_BLOCK_CACTUS || id==26 || id==93 || id==94 ||
-         id==BETA_BLOCK_WOOD_DOOR || id==BETA_BLOCK_IRON_DOOR) && beta_block_selection_box(state,box)) return;
+         id==96 || id==65 || id==92 || id==BETA_BLOCK_WOOD_DOOR || id==BETA_BLOCK_IRON_DOOR) && beta_block_selection_box(state,box)) return;
     box->min_x = box->min_y = box->min_z = 0.0f;
     box->max_x = box->max_y = box->max_z = 1.0f;
 }
@@ -53,7 +53,7 @@ static int body_collides(const Player *player, World *world)
             for (x = x0-1; x <= x1+1; ++x) {
                 BetaBlockBox boxes[2]; int n,i;
                 if(x>=x0 && x<=x1 && y>=y0 && y<=y1 && z>=z0 && z<=z1) world_get_block(world,x,y,z);
-                else if(world_peek_block(world,x,y,z)!=36) continue;
+                else if(world_peek_block(world,x,y,z)!=36 && world_peek_block(world,x,y,z)!=85) continue;
                 n=world_block_collision_boxes(world,x,y,z,boxes);
                 for(i=0;i<n;++i) if(body_intersects_block(player,x,y,z,&boxes[i])) return 1;
             }
@@ -98,6 +98,22 @@ static int move_axis(Player *player, World *world, int axis, float delta)
         }
         return 1;
     }
+    return 0;
+}
+static int move_horizontal(Player *p,World *w,int axis,float delta)
+{
+    Player start=*p,stepped;
+    int blocked=move_axis(p,w,axis,delta);
+    if(!blocked || !start.on_ground || start.vy>0) return blocked;
+    /* Entity.stepHeight is 0.5 in Beta. Compare the stepped path with the
+     * unstepped path, and reject it under a ceiling or against a full wall. */
+    stepped=start;
+    if(move_axis(&stepped,w,1,.5f)) return blocked;
+    move_axis(&stepped,w,axis,delta);
+    if(fabsf(axis==0 ? stepped.x-start.x : stepped.z-start.z)<=
+       fabsf(axis==0 ? p->x-start.x : p->z-start.z)) return blocked;
+    move_axis(&stepped,w,1,-.5f);
+    p->x=stepped.x; p->y=stepped.y; p->z=stepped.z;
     return 0;
 }
 void player_piston_move(Player *p,World *w,float dx,float dy,float dz)
@@ -295,8 +311,8 @@ void player_tick(Player *player, World *world, const PlayerInput *input, float d
         player->vy -= (in_water ? 5.0f : 22.0f) * dt;
         if (player->vy < (in_water ? -4.0f : -35.0f))
             player->vy = in_water ? -4.0f : -35.0f;
-        if (move_axis(player, world, 0, player->vx * dt)) player->vx = 0.0f;
-        if (move_axis(player, world, 2, player->vz * dt)) player->vz = 0.0f;
+        if (move_horizontal(player, world, 0, player->vx * dt)) player->vx = 0.0f;
+        if (move_horizontal(player, world, 2, player->vz * dt)) player->vz = 0.0f;
         if (move_axis(player, world, 1, player->vy * dt)) {
             if (player->vy < 0.0f) player->on_ground = 1;
             player->vy = 0.0f;
@@ -340,7 +356,7 @@ static BlockHit raycast(const Player *player, World *world, float reach,int sour
                 id == BETA_BLOCK_UNLIT_REDSTONE_TORCH ||
                 id == BETA_BLOCK_REDSTONE_TORCH || id==BETA_BLOCK_CACTUS || id==BETA_BLOCK_NETHER_PORTAL ||
                 id==26 || id==93 || id==94 || id==69 || id==77 || id==78 || id==55 || id==70 || id==72 || id==29 || id==33 || id==34 || sign_is_block(id) || rail_is(id) ||
-                id==BETA_BLOCK_WOOD_DOOR || id==BETA_BLOCK_IRON_DOOR) {
+                id==96 || id==65 || id==92 || id==60 || id==BETA_BLOCK_WOOD_DOOR || id==BETA_BLOCK_IRON_DOOR) {
                 BetaBlockState state = { id, world_get_metadata(world, x, y, z) };
                 float end = fminf(reach, fminf(tx, fminf(ty, tz)));
                 place[0] = x; place[1] = y; place[2] = z;
@@ -445,6 +461,27 @@ int player_place_block_state(Player *player, World *world, BetaBlockState state)
         hit.place_y < 0 || hit.place_y >= WORLD_HEIGHT) return 0;
     old = world_get_block(world, hit.place_x, hit.place_y, hit.place_z);
     if (old != BLOCK_AIR && !fluid_kind(old)) return 0;
+    if(state.id==53 || state.id==67) {
+        static const uint8_t facing[4]={2,1,3,0};
+        state.metadata=facing[(int)floorf(player->yaw*.63661977236f+2.5f)&3];
+    }
+    if(state.id==86 || state.id==91) {
+        if(!world_block_def(world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z))->opaque) return 0;
+        state.metadata=(uint8_t)((int)floorf(player->yaw*.63661977236f+.5f)&3);
+    }
+    if(state.id==85 && !beta_material_solid(world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z))) return 0;
+    if(state.id==78) {
+        if(!world_block_def(world_get_block(world,hit.place_x,hit.place_y-1,hit.place_z))->opaque) return 0;
+        state.metadata=0;
+    }
+    if(state.id==96 || state.id==65) {
+        if(!world_block_def(hit.block)->opaque || hit.place_y!=hit.y) return 0;
+        if(hit.place_z<hit.z) state.metadata=state.id==96 ? 0 : 2;
+        else if(hit.place_z>hit.z) state.metadata=state.id==96 ? 1 : 3;
+        else if(hit.place_x<hit.x) state.metadata=state.id==96 ? 2 : 4;
+        else if(hit.place_x>hit.x) state.metadata=state.id==96 ? 3 : 5;
+        else return 0;
+    }
     if ((state.id==BETA_BLOCK_TORCH || state.id==BETA_BLOCK_REDSTONE_TORCH ||
          state.id==BETA_BLOCK_UNLIT_REDSTONE_TORCH) && state.metadata==0) {
         /* vm.e maps the clicked face to the attachment metadata. Metadata

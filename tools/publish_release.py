@@ -65,7 +65,7 @@ def validate_archive(path, version, platform):
         if {n[7:] for n in files if n.startswith('assets/')} != assets:
             raise ValueError('Archive assets differ from runtime allowlist')
         allowed = {'VERSION', 'MICROSOFT_CLIENT_ID', 'README.md', 'BUILD_INFO.txt', 'SHA256SUMS.txt',
-                   'docs/MICROSOFT_ACCOUNT.md', 'docs/BETA_EVENTS_AND_PROFILE.md',
+                   'docs/MICROSOFT_ACCOUNT.md', 'docs/BETA_EVENTS_AND_PROFILE.md', 'docs/BETA_BLOCKS_022.md',
                    'licenses/ASSET_SOURCES.md', 'licenses/raylib.md', 'licenses/glfw.txt'}
         allowed |= {'assets/' + name for name in assets}
         if platform == 'windows':

@@ -1,4 +1,4 @@
-# ReCraft 0.2.1
+# ReCraft 0.2.2
 
 Experimental client release targeting Minecraft Beta 1.7.3 behavior.
 
@@ -10,15 +10,18 @@ Experimental client release targeting Minecraft Beta 1.7.3 behavior.
 
 Keep the executable/app and `assets/` together. Existing worlds belong in `saves/` beside them. Back up Beta worlds before editing them with this experimental client.
 
-## Changes in 0.2.1
+## Changes in 0.2.2
 
-- Fixed climbing redstone dust: its texture runs vertically on all four wall faces, faces are no longer incorrectly culled, and the top joins the upper wire. Checked against both Beta 1.7.3 and 1.5.2 RenderBlocks.
-- Corrected repeater east/west texture orientation and dust corners, T junctions and crosses. Existing Beta circuit simulation remains unchanged.
-- Restored arrows, boats, minecarts and falling/TNT entities that could be hidden by a shared 64-model limit. TNT has an opaque textured body with a white flash.
-- Falling sand/gravel have tick-synchronised rendering and block AABB collision. Stacked columns settle without losing blocks, and saved falling entities resume correctly.
-- Improved Microsoft sign-in diagnostics distinguish token denial from profile failures.
+- Added correct Beta textures for gold, iron and diamond storage blocks, sponge and sandstone. Sponge intentionally does not absorb water.
+- Added wooden trapdoor side placement, orientation/open metadata, support drops, selection/collision and redstone control.
+- Added pumpkin/jack o'lantern facing textures and placement; jack o'lantern emits light 15.
+- Added Beta fence joins and 1.5-block collision; wooden/cobblestone stair shapes, orientations, collision, inventory/held models and half-block player stepping.
+- Snow supports all eight legacy metadata heights, Beta collision rules, support checks and block-light melting. Normal placement remains one layer; no modern snow stacking.
+- Fixed the stone button inventory model that resembled a pressure plate. Its original Beta texture is stone.
+- Added a safe generator for a flat McRegion world with all 97 IDs and 420 labelled state specimens, plus reader/writer and geometry regression tests. Run `python tools/create_block_lab.py build/saves/ReCraft_Block_Lab_022` from a source checkout.
+- Fixed protocol-14 movement Y/stance ordering, position/look packet variants, teleport interpolation, terrain readiness and disappearing server chunks. Added local commands (`/tp`, `/gamemode`, `/time`, `/weather`, `/seed`); multiplayer commands are forwarded to the server.
 
-Includes the previous release's mechanisms, dispensers, note blocks, pistons, burning effects, profiles/skins/capes and experimental Microsoft sessions. See the README and compatibility documentation for remaining Beta differences. Exact terrain generation and a complete multiplayer implementation are still in development.
+Includes 0.2.1's redstone texture, entity rendering and falling-block fixes. See the README and compatibility documentation for remaining Beta differences: exact terrain generation, complete multiplayer, crop/cake/ladder behavior and spawner AI remain unfinished. Returning to a password server's previous location after authentication still needs a live recheck; no password was automated or logged.
 
 ## Package verification
 

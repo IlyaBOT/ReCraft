@@ -634,6 +634,50 @@ static void mechanism_mesh_test(void)
     for(i=0;i<3;++i) free(mesh.layers[i].vertices);
     assert(world_close(&w)==WORLD_OK);
 }
+static void legacy_block_mesh_test(void)
+{
+    World w; Renderer r={0}; Chunk *c; ChunkMesh mesh={0}; int m,i,j,n;
+    assert(world_init(&w,22,1,4)==WORLD_OK && (c=world_get_chunk(&w,0,0)));
+    for(m=0;m<4;++m) {
+        emit_stairs(&r,&w,&mesh,c,8,100,8,53,(uint8_t)m);
+        assert(mesh.layers[0].vertex_count==44);
+        for(i=0;i<44;++i) assert(mesh.layers[0].vertices[i].a==255);
+        for(i=0;i<3;++i) free(mesh.layers[i].vertices);
+        memset(&mesh,0,sizeof(mesh));
+    }
+    emit_fence(&r,&w,&mesh,c,8,100,8);
+    assert(mesh.layers[0].vertex_count==72);
+    free(mesh.layers[0].vertices); memset(&mesh,0,sizeof(mesh));
+    chunk_set_block(c,7,100,8,85); chunk_set_block(c,9,100,8,85);
+    chunk_set_block(c,8,100,7,85); chunk_set_block(c,8,100,9,85);
+    emit_fence(&r,&w,&mesh,c,8,100,8);
+    assert(mesh.layers[0].vertex_count==120);
+    free(mesh.layers[0].vertices); memset(&mesh,0,sizeof(mesh));
+    for(m=0;m<8;++m) {
+        emit_low_block(&r,&w,&mesh,c,8,100,8,78,(uint8_t)m);
+        assert(mesh.layers[0].vertex_count==24);
+        n=0;
+        for(i=0;i<24;++i) {
+            assert(mesh.layers[0].vertices[i].y<=100*128+(m+1)*16);
+            if(mesh.layers[0].vertices[i].y==100*128+(m+1)*16) ++n;
+        }
+        assert(n==12);
+        free(mesh.layers[0].vertices); memset(&mesh,0,sizeof(mesh));
+        emit_shaped_block(&r,&w,&mesh,c,8,100,8,96,(uint8_t)m);
+        assert(mesh.layers[1].vertex_count==24);
+        for(i=0;i<24;++i) assert(mesh.layers[1].vertices[i].a==255);
+        free(mesh.layers[1].vertices); memset(&mesh,0,sizeof(mesh));
+    }
+    for(m=1;m<5;++m) for(j=0;j<2;++j) {
+        emit_low_block(&r,&w,&mesh,c,8,100,8,77,(uint8_t)(m|j*8));
+        assert(mesh.layers[1].vertex_count==24 && !mesh.layers[0].vertex_count);
+        for(i=0;i<24;++i) assert(mesh.layers[1].vertices[i].y>=100*128+48 && mesh.layers[1].vertices[i].y<=100*128+80);
+        free(mesh.layers[1].vertices); memset(&mesh,0,sizeof(mesh));
+    }
+    assert(world_close(&w)==WORLD_OK);
+    puts("Legacy stairs, connected fences, eight snow heights, trapdoors and wall buttons mesh passed");
+}
+
 static void wire_shapes_test(void)
 {
     /* Vanilla RenderBlocks' pixel crops: X min/max, Z min/max (1 block=128). */
@@ -833,6 +877,7 @@ int main(int argc, char **argv)
     entity_pick_test();
     chest_mesh_test();
     mechanism_mesh_test();
+    legacy_block_mesh_test();
     wire_shapes_test();
     wire_vertical_mesh_test();
     {

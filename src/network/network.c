@@ -379,6 +379,10 @@ static int receive_region(NetworkClient *c,const uint8_t *p)
             set_region_nibble(last->block_light,local,(uint8_t)(data[count+nibbles+idx/2]>>shift));
             set_region_nibble(last->sky_light,local,(uint8_t)(data[count+nibbles*2+idx/2]>>shift));
         }
+        /* A small MapChunk update is not an initial terrain snapshot. */
+        if(y==0 && height==WORLD_HEIGHT && (int64_t)x<=(int64_t)cx*16 &&
+           (int64_t)x+width>=(int64_t)cx*16+16 && (int64_t)z<=(int64_t)cz*16 &&
+           (int64_t)z+depth>=(int64_t)cz*16+16) last->network_received=1;
     }
     if(last) { ++last->revision; dirty_neighbors(c->world,last); }
     free(data); return 1;
@@ -461,18 +465,28 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
         /* Beta keeps the same WorldClient and its chunks for a death respawn.
          * The server supplies the new player inventory and position separately. */
         e.type=NETWORK_EVENT_RESPAWN; e.dimension=c->dimension; emit(c,&e); break;
-    case 0x0d:
-        /* Beta 14 clientbound: feet Y, camera Y. Serverbound reverses them. */
-        e.type=NETWORK_EVENT_POSITION; e.x=beta14_f64(p+1); e.y=beta14_f64(p+9); e.z=beta14_f64(p+25);
-        e.yaw=beta14_f32(p+33); e.pitch=beta14_f32(p+37);
+    case 0x0a: queue_bytes(c,p,2); break;
+    case 0x0c:
+        e.type=NETWORK_EVENT_POSITION; e.value=2;
+        e.yaw=beta14_f32(p+1); e.pitch=beta14_f32(p+5);
+        if(!isfinite(e.yaw)||!isfinite(e.pitch)) { fail(c,"Invalid server player rotation"); break; }
+        if(queue_bytes(c,p,10)) emit(c,&e);
+        break;
+    case 0x0b: case 0x0d:
+        /* NetClientHandler assigns yPosition to Entity.posY. Our Player uses
+         * feet Y, while Beta's EntityPlayerSP.posY includes yOffset=1.62. */
+        e.type=NETWORK_EVENT_POSITION; e.x=beta14_f64(p+1); e.y=beta14_f64(p+9)-1.62; e.z=beta14_f64(p+25);
+        e.value=p[0]==0x0d ? 3 : 1;
+        if(p[0]==0x0d) { e.yaw=beta14_f32(p+33); e.pitch=beta14_f32(p+37); }
         if(!isfinite(e.x)||!isfinite(e.y)||!isfinite(e.z)||!isfinite(e.yaw)||!isfinite(e.pitch)||fabs(e.x)>32000000||fabs(e.z)>32000000||fabs(e.y)>32000000) { fail(c,"Invalid server player position"); break; }
         if(c->state==NETWORK_LOGIN) set_state(c,NETWORK_PLAY);
-        off=beta14_movement(response,sizeof(response),e.x,e.y,e.z,e.yaw,e.pitch,p[41]);
+        off=beta14_movement(response,sizeof(response),e.x,e.y,e.z,e.yaw,e.pitch,p[p[0]==0x0d ? 41 : 33]);
+        if(p[0]==0x0b) { response[0]=0x0b; response[33]=p[33]; off=34; }
         if(queue_bytes(c,response,off)) emit(c,&e);
         break;
     case 0x32: {
-        int cx=beta14_i32(p+1),cz=beta14_i32(p+5); Chunk *chunk=world_peek_chunk(c->world,cx,cz);
-        if(chunk && !p[9]) { memset(chunk->blocks,0,sizeof(chunk->blocks)); memset(chunk->metadata,0,sizeof(chunk->metadata)); memset(chunk->block_light,0,sizeof(chunk->block_light)); memset(chunk->sky_light,0,sizeof(chunk->sky_light)); ++chunk->revision; dirty_neighbors(c->world,chunk); }
+        int cx=beta14_i32(p+1),cz=beta14_i32(p+5);
+        if(!p[9]) world_unload_network_chunk(c->world,cx,cz);
         break; }
     case 0x33:
         if(receive_region(c,p)) { e.type=NETWORK_EVENT_CHUNK; e.block_x=beta14_i32(p+1); e.block_y=(int16_t)beta14_u16(p+5); e.block_z=beta14_i32(p+7); emit(c,&e); } break;
@@ -597,6 +611,18 @@ void network_tick(NetworkClient *c)
 }
 int network_send_position(NetworkClient *c,double x,double y,double z,float yaw,float pitch,int ground)
 { uint8_t p[42]; size_t n; if(!c || c->state!=NETWORK_PLAY) return 0; n=beta14_movement(p,sizeof(p),x,y,z,yaw,pitch,ground); return queue_bytes(c,p,n); }
+int network_terrain_ready(const NetworkClient *c,double x,double z)
+{
+    int dx,dz;
+    if(!c || c->state!=NETWORK_PLAY || !isfinite(x) || !isfinite(z) ||
+       fabs(x)>32000000 || fabs(z)>32000000) return 0;
+    for(dx=-1;dx<=1;dx+=2) for(dz=-1;dz<=1;dz+=2) {
+        Chunk *chunk=world_peek_chunk(c->world,(int32_t)floor((x+dx*.3)/16),
+            (int32_t)floor((z+dz*.3)/16));
+        if(!chunk || !chunk->network_received) return 0;
+    }
+    return 1;
+}
 int network_send_chat(NetworkClient *c,const char *message)
 { uint8_t p[256]; size_t n; if(!c || c->state!=NETWORK_PLAY) return 0; n=beta14_chat(p,sizeof(p),message); return queue_bytes(c,p,n); }
 int network_send_sign_update(NetworkClient *c,int x,int y,int z,const char lines[4][61])

@@ -70,7 +70,7 @@ ZIP; use [Releases](https://github.com/IlyaBOT/ReCraft/releases) for direct,
 permanent platform download links.
 
 Push a tag matching `v` + `VERSION` to publish a release, for example
-`v0.2.1`. Publication waits for Windows, Linux and Vesper to pass. The
+`v0.2.2`. Publication waits for Windows, Linux and Vesper to pass. The
 Ubuntu release job downloads only this run's artifacts and runs
 `tools/publish_release.py` (Python 3.11+ standard library). It checks the archive
 and per-file SHA-256 inventories, runtime asset allowlist, exact source commit,

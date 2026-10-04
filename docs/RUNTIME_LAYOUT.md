@@ -26,6 +26,7 @@ build/
     sounds/step/, random/, liquid/, fire/, ambient/weather/, mob/, portal/
     music/                     (12 selected original OGG tracks)
   saves/                     (persistent ReCraft and Beta worlds)
+    ReCraft_Block_Lab_022/    (optional, separately generated Beta block test world)
   texturepacks/              (primary legacy packs: folders or ZIPs)
   resourcepacks/             (compatible newer texture/language overrides)
   shaderpacks/               (directory/interface only)

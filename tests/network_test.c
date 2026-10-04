@@ -37,6 +37,7 @@ typedef struct MockServer {
     int passed,online,joins;
 } MockServer;
 typedef struct Observed {
+    World *world;
     int state_play,position,chunk,block,inventory;
     double feet_y;
     int16_t item_id,item_slot;
@@ -51,6 +52,8 @@ typedef struct Observed {
     uint8_t chest_count[63];
 } Observed;
 static const char unicode_chat[]="Hello \xc3\xa9 \xd0\x9c\xd0\xb8\xd1\x80";
+/* Sent only to the loopback test server, never to a public game server. */
+static const char *server_commands[]={"/tp 1 65 2","/gamemode survival","/timeset day","/plugin-command"};
 static const char unicode_sign[4][61]={"\xd0\xa2\xd0\xb5\xd1\x81\xd1\x82","Beta 1.7.3","","123"};
 
 static void pause_ms(unsigned ms)
@@ -151,11 +154,19 @@ static int mock_containers(TestSocket s)
       if(!send_all(s,respawn,sizeof(respawn))) return 0;
     }
     memset(out,0,42); out[0]=0x0d;
-    put64(out+1,20.5); put64(out+9,65.0); put64(out+17,66.62); put64(out+25,20.5);
+    put64(out+1,20.5); put64(out+9,66.62); put64(out+17,65.0); put64(out+25,20.5);
     put_float(out+33,90.0f); out[41]=1;
     if(!send_all(s,out,42)) return 0;
     if(!recv_all(s,p,42) || p[0]!=0x0d || fabs(beta14_f64(p+1)-20.5)>0.0001 ||
-       fabs(beta14_f64(p+9)-66.62)>0.0001 || fabs(beta14_f64(p+17)-65.0)>0.0001) return 0;
+       fabs(beta14_f64(p+9)-65.0)>0.0001 || fabs(beta14_f64(p+17)-66.62)>0.0001) return 0;
+    /* Plugin-style positional correction without a look field, then look-only. */
+    out[0]=0x0b; put64(out+1,12.5); put64(out+9,66.62); put64(out+17,65);
+    put64(out+25,-57.5); out[33]=0;
+    if(!send_all(s,out,34) || !recv_all(s,p,34) || p[0]!=0x0b ||
+       fabs(beta14_f64(p+1)-12.5)>.0001 || fabs(beta14_f64(p+9)-65)>.0001 ||
+       fabs(beta14_f64(p+17)-66.62)>.0001 || fabs(beta14_f64(p+25)+57.5)>.0001) return 0;
+    out[0]=0x0c; put_float(out+1,90); put_float(out+5,20); out[9]=0;
+    if(!send_all(s,out,10) || !recv_all(s,p,10) || memcmp(out,p,10)) return 0;
     return 1;
 }
 static int mock_session(TestSocket s,int online)
@@ -174,9 +185,14 @@ static int mock_session(TestSocket s,int online)
     if(!send_all(s,out,9)) return 0;
     { const uint8_t weather[]={0x46,1}; if(!send_all(s,weather,sizeof(weather))) return 0; }
     memset(out,0,42); out[0]=0x0d;
-    put64(out+1,8.5); put64(out+9,65.0); put64(out+17,66.62); put64(out+25,8.5);
+    put64(out+1,8.5); put64(out+9,66.62); put64(out+17,65.0); put64(out+25,8.5);
     put_float(out+33,180.0f); put_float(out+37,0.0f); out[41]=1;
     if(!send_all(s,out,42)) return 0;
+
+    /* Real Beta servers wait for feet-Y acknowledgement before streaming the
+     * login room. Reversing feet and stance must fail before any map data. */
+    if(!recv_all(s,p,42) || p[0]!=0x0d || fabs(beta14_f64(p+9)-65.0)>0.0001 ||
+       fabs(beta14_f64(p+17)-66.62)>0.0001) return 0;
 
     blocks=(uint8_t *)calloc(81920,1);
     chunk_packet=(uint8_t *)malloc(18+131072);
@@ -199,6 +215,17 @@ static int mock_session(TestSocket s,int online)
     i=send_all(s,chunk_packet,packet_size);
     free(blocks); free(chunk_packet);
     if(!i) return 0;
+
+    { uint8_t partial[64]={0x33},data[4]={1,0,0,0}; uLongf size=46;
+      put32(partial+1,48); partial[6]=64; put32(partial+7,48);
+      if(compress2(partial+18,&size,data,4,Z_BEST_SPEED)!=Z_OK) return 0;
+      put32(partial+14,(uint32_t)size);
+      if(!send_all(s,partial,18+size)) return 0;
+    }
+
+    /* The chunk callback seeds another entry; server unload must remove it. */
+    memset(out,0,10); out[0]=0x32; put32(out+1,2); put32(out+5,2);
+    if(!send_all(s,out,10)) return 0;
 
     memset(out,0,12); out[0]=0x35; put32(out+1,8); out[5]=64;
     put32(out+6,8); out[10]=50; out[11]=3; /* Torch triggers local relighting. */
@@ -223,11 +250,16 @@ static int mock_session(TestSocket s,int online)
         if(!send_all(s,note,6) || !send_all(s,note+6,7))return 0;
     }
     out[0]=0; if(!send_all(s,out,1)) return 0;
-    /* Position acknowledgement, keepalive and selected hotbar slot. */
-    if(!recv_all(s,p,42) || p[0]!=0x0d || fabs(beta14_f64(p+9)-66.62)>0.0001 ||
-       fabs(beta14_f64(p+17)-65.0)>0.0001) return 0;
-    if(!recv_all(s,p,1) || p[0]!=0) return 0;
-    if(!recv_all(s,p,3) || p[0]!=0x10 || beta14_u16(p+1)!=2) return 0;
+    /* Keepalive and selected hotbar slot. Teleport ACK was checked above. */
+    { int keepalive=0,held=0;
+      for(i=0;i<2;++i) {
+          if(!recv_all(s,p,1)) return 0;
+          if(p[0]==0 && !keepalive) keepalive=1;
+          else if(p[0]==0x10 && !held && recv_all(s,p+1,2) && beta14_u16(p+1)==2) held=1;
+          else return 0;
+      }
+      if(!held || !keepalive) return 0;
+    }
     /* Named entity visibility is the only remote roster data Beta sends. */
     { uint8_t spawn[22]={0x17}; int object; static const unsigned char types[]={1,10,11,12,60};
       for(object=0;object<5;++object) {
@@ -242,6 +274,10 @@ static int mock_session(TestSocket s,int online)
       if(!send_all(s,spawn,at+16))return 0;
       { const uint8_t flags[]={0x28,0,0,0,123,0,1,127,0x28,0,0,1,200,0,1,127};
         if(!send_all(s,flags,sizeof(flags)))return 0; }
+      for(i=0;i<sizeof(server_commands)/sizeof(server_commands[0]);++i) {
+          n=beta14_chat(chat,sizeof(chat),server_commands[i]);
+          if(!recv_all(s,p,n)||memcmp(p,chat,n))return 0;
+      }
       n=beta14_chat(chat,sizeof(chat),unicode_chat);if(!recv_all(s,p,n)||memcmp(p,chat,n))return 0;
       if(!recv_all(s,p,10)||p[0]!=0x07||beta14_i32(p+1)!=123||beta14_i32(p+5)!=456||p[9]!=1)return 0;
       if(!recv_all(s,p,6)||p[0]!=0x12||beta14_i32(p+1)!=123||p[5]!=1)return 0;
@@ -285,9 +321,22 @@ static void observe(void *user,const NetworkEvent *e)
     }
     if(e->type==NETWORK_EVENT_ENTITY_FLAGS) {assert(e->value==1);assert(e->entity_id==123 ? e->entity_type==-1 : e->entity_id==456 && e->entity_type==0);++o->fire_flags;}
     if(e->type==NETWORK_EVENT_STATE && e->state==NETWORK_PLAY) o->state_play++;
-    if(e->type==NETWORK_EVENT_POSITION) { o->position++; o->feet_y=e->y; }
-    if(e->type==NETWORK_EVENT_CHUNK) o->chunk++;
-    if(e->type==NETWORK_EVENT_BLOCK) o->block++;
+    if(e->type==NETWORK_EVENT_POSITION) {
+        o->position++;
+        if(e->value&1) {
+            o->feet_y=e->y; assert(fabs(e->y-65.0)<0.0001);
+            assert(!network_terrain_ready(o->client,e->x,e->z));
+            if(e->value==1) assert(e->x==12.5 && e->z==-57.5);
+        } else { assert(e->value==2 && e->yaw==90 && e->pitch==20); }
+    }
+    if(e->type==NETWORK_EVENT_CHUNK) {
+        if(!o->chunk) {
+            Chunk *chunk=world_get_chunk(o->world,2,2); assert(chunk); chunk->network_received=1;
+            assert(network_terrain_ready(o->client,8.5,8.5));
+        } else assert(!network_terrain_ready(o->client,48.5,48.5));
+        o->chunk++;
+    }
+    if(e->type==NETWORK_EVENT_BLOCK) { assert(!world_peek_chunk(o->world,2,2)); o->block++; }
     if(e->type==NETWORK_EVENT_INVENTORY && e->entity_type==0 && e->slot==36) {
         o->inventory++; o->item_id=e->item_id; o->item_count=e->item_count; o->item_slot=e->slot;
     }
@@ -332,6 +381,8 @@ static void observe(void *user,const NetworkEvent *e)
         NetworkPlayerInfo players[4];assert(network_player_list(o->client,players,4)==2);
         assert(players[0].self&&!strcmp(players[0].name,"Player")&&players[0].entity_id==123&&players[0].ping_ms==-1);
         assert(!strcmp(players[1].name,"Bob")&&players[1].entity_id==456&&players[1].ping_ms==-1);
+        {size_t i;for(i=0;i<sizeof(server_commands)/sizeof(server_commands[0]);++i)
+            assert(network_send_chat(o->client,server_commands[i]));}
         ++o->player_spawn;assert(network_send_chat(o->client,unicode_chat));
         assert(network_use_entity(o->client,456,1)&&network_send_animation(o->client,1));
         assert(network_send_player_action(o->client,1)&&network_send_player_action(o->client,2));
@@ -360,8 +411,8 @@ static void test_packet_boundaries(void)
     uint8_t packet[128]; Beta14Packet parsed; size_t n,i;
     n=beta14_movement(packet,sizeof(packet),1.0,65.0,-2.0,180.0f,-15.0f,1);
     assert(n==42 && packet[0]==0x0d);
-    assert(fabs(beta14_f64(packet+9)-66.62)<0.0001);
-    assert(fabs(beta14_f64(packet+17)-65.0)<0.0001);
+    assert(fabs(beta14_f64(packet+9)-65.0)<0.0001);
+    assert(fabs(beta14_f64(packet+17)-66.62)<0.0001);
     for(i=0;i<n;++i) assert(beta14_next_packet(packet,i,&parsed)==0);
     assert(beta14_next_packet(packet,n,&parsed)==1 && parsed.size==n);
     assert(beta14_held_item(packet,sizeof(packet),8)==3);
@@ -426,6 +477,7 @@ int main(void)
 #endif
     assert(world_init(&world,0,0,64)==WORLD_OK); world.network_mode=1;
     memset(&observed,0,sizeof(observed));
+    observed.world=&world;
     client=network_create(&world,observe,&observed); assert(client!=NULL); observed.client=client;
     if(online)network_set_auth(client,mock_join,&server);
     assert(network_connect(client,"127.0.0.1",ntohs(addr.sin_port),"Player"));
@@ -434,12 +486,19 @@ int main(void)
         if(network_state(client)==NETWORK_PLAY && !ready) {
             assert(network_send_held_item(client,2)); ready=1;
         }
-        if(observed.respawn && observed.position==2 && observed.alive) break;
+        if(observed.respawn && observed.position==4 && observed.alive) break;
         if(network_state(client)==NETWORK_ERROR) break;
         pause_ms(1);
     }
-    assert(observed.state_play==1 && observed.position==2 && fabs(observed.feet_y-65.0)<0.0001);
-    assert(observed.chunk==1 && observed.block==1);
+    assert(observed.state_play==1 && observed.position==4 && fabs(observed.feet_y-65.0)<0.0001);
+    assert(observed.chunk==2 && observed.block==1);
+    assert(world_peek_block(&world,48,64,48)==BLOCK_STONE);
+    assert(!network_terrain_ready(client,48.5,48.5));
+    assert(network_terrain_ready(client,8.5,8.5));
+    assert(!network_terrain_ready(client,20.5,20.5));
+    assert(!network_terrain_ready(client,15.9,8.5)); /* Footprint reaches unloaded chunk. */
+    assert(world_get_chunk(&world,2,2)); /* Sparse/collision cache entry is not map data. */
+    assert(!network_terrain_ready(client,32.5,32.5));
     assert(observed.inventory==1 && observed.item_id==1 && observed.item_count==32 && observed.item_slot==36);
     assert(world_peek_block(&world,8,63,8)==BLOCK_STONE);
     assert(world_peek_block(&world,9,63,8)==BETA_BLOCK_WOOL);

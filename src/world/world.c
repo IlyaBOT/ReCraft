@@ -37,6 +37,24 @@ static const BlockDef block_defs[BLOCK_COUNT] = {
     [BETA_BLOCK_COAL_ORE] = {"Coal ore", 1, 1, BLOCK_LAYER_OPAQUE, 37,37,37,0},
     [BETA_BLOCK_LAPIS_ORE] = {"Lapis ore", 1, 1, BLOCK_LAYER_OPAQUE, 38,38,38,0},
     [BETA_BLOCK_LAPIS_BLOCK] = {"Lapis block", 1, 1, BLOCK_LAYER_OPAQUE, 39,39,39,0},
+    [BETA_BLOCK_SPONGE] = {"Sponge",1,1,BLOCK_LAYER_OPAQUE,1,1,1,0},
+    [BETA_BLOCK_SANDSTONE] = {"Sandstone",1,1,BLOCK_LAYER_OPAQUE,1,1,1,0},
+    [BETA_BLOCK_GOLD_BLOCK] = {"Gold Block",1,1,BLOCK_LAYER_OPAQUE,1,1,1,0},
+    [BETA_BLOCK_IRON_BLOCK] = {"Iron Block",1,1,BLOCK_LAYER_OPAQUE,1,1,1,0},
+    [BETA_BLOCK_DIAMOND_BLOCK] = {"Diamond Block",1,1,BLOCK_LAYER_OPAQUE,1,1,1,0},
+    [BETA_BLOCK_WOOD_STAIRS] = {"Wooden Stairs",1,0,BLOCK_LAYER_OPAQUE,17,17,17,0},
+    [BETA_BLOCK_COBBLE_STAIRS] = {"Cobblestone Stairs",1,0,BLOCK_LAYER_OPAQUE,7,7,7,0},
+    [BETA_BLOCK_FENCE] = {"Fence",1,0,BLOCK_LAYER_OPAQUE,17,17,17,0},
+    [BETA_BLOCK_PUMPKIN] = {"Pumpkin",1,1,BLOCK_LAYER_OPAQUE,1,1,1,0},
+    [BETA_BLOCK_JACK_O_LANTERN] = {"Jack o'Lantern",1,1,BLOCK_LAYER_OPAQUE,1,1,1,15},
+    [BETA_BLOCK_TRAPDOOR] = {"Trapdoor",1,0,BLOCK_LAYER_CUTOUT,1,1,1,0},
+    [BETA_BLOCK_BOOKSHELF] = {"Bookshelf",1,1,BLOCK_LAYER_OPAQUE,17,17,17,0},
+    [BETA_BLOCK_MOB_SPAWNER] = {"Monster Spawner",1,0,BLOCK_LAYER_CUTOUT,1,1,1,0},
+    [BETA_BLOCK_CROPS] = {"Wheat",0,0,BLOCK_LAYER_CUTOUT,1,1,1,0},
+    [BETA_BLOCK_FARMLAND] = {"Farmland",1,0,BLOCK_LAYER_OPAQUE,2,2,2,0},
+    [BETA_BLOCK_LADDER] = {"Ladder",1,0,BLOCK_LAYER_CUTOUT,1,1,1,0},
+    [BETA_BLOCK_CAKE] = {"Cake",1,0,BLOCK_LAYER_OPAQUE,1,1,1,0},
+    [BETA_BLOCK_LOCKED_CHEST] = {"Locked Chest",1,1,BLOCK_LAYER_OPAQUE,73,74,73,15},
     [BETA_BLOCK_BRICKS] = {"Bricks", 1, 1, BLOCK_LAYER_OPAQUE, 40,40,40,0},
     [BETA_BLOCK_MOSSY_COBBLESTONE] = {"Mossy cobblestone",1,1,BLOCK_LAYER_OPAQUE,41,41,41,0},
     [BETA_BLOCK_OBSIDIAN] = {"Obsidian",1,1,BLOCK_LAYER_OPAQUE,42,42,42,0},
@@ -60,6 +78,7 @@ static const BlockDef block_defs[BLOCK_COUNT] = {
     [BETA_BLOCK_CRAFTING_TABLE] = {"Crafting Table",1,1,BLOCK_LAYER_OPAQUE,70,71,17,0},
     [BETA_BLOCK_CHEST] = {"Chest",1,1,BLOCK_LAYER_OPAQUE,73,74,73,0},
     [BETA_BLOCK_NOTE_BLOCK] = {"Note Block",1,1,BLOCK_LAYER_OPAQUE,110,110,110,0},
+    [BETA_BLOCK_JUKEBOX] = {"Jukebox",1,1,BLOCK_LAYER_OPAQUE,110,110,110,0},
     [BETA_BLOCK_FURNACE] = {"Furnace",1,1,BLOCK_LAYER_OPAQUE,76,77,76,0},
     [BETA_BLOCK_BURNING_FURNACE] = {"Furnace",1,1,BLOCK_LAYER_OPAQUE,76,77,76,13},
     [BETA_BLOCK_REDSTONE_TORCH] = {"Redstone Torch",0,0,BLOCK_LAYER_CUTOUT,80,80,80,7},
@@ -125,7 +144,7 @@ static int blocks_light(uint8_t id)
 {
     /* ys in the Beta client is non-opaque for face culling but calls g(255):
      * the half slab blocks light despite its open upper half. */
-    return world_block_def(id)->opaque || id == BETA_BLOCK_SLAB;
+    return world_block_def(id)->opaque || id == BETA_BLOCK_SLAB || id==53 || id==67 || id==60;
 }
 
 static int valid_local(int x, int y, int z)
@@ -672,6 +691,42 @@ void world_touch_chunk(World *world, Chunk *chunk)
     if (world && chunk) chunk->last_used=++world->clock;
 }
 
+int world_unload_network_chunk(World *world,int32_t cx,int32_t cz)
+{
+    Chunk *chunk; size_t i;
+    if(!world || !world->network_mode || world->persistent) return 0;
+    chunk=world_peek_chunk(world,cx,cz);
+    if(!chunk) return 0;
+    for(i=0;i<world->cache_count && world->cache[i]!=chunk;++i) { }
+    if(i==world->cache_count) return 0;
+    mark_mesh_neighbors(world,cx,cz);
+    if(chunk->render_data && world->destroy_render_data) world->destroy_render_data(chunk->render_data);
+    world_physics_forget_chunk(world,chunk);
+    block_entities_free(chunk); world_entities_free(chunk); world_ticks_free(chunk);
+    free(chunk->beta_raw); free(chunk);
+    world->cache[i]=world->cache[--world->cache_count];
+    world->cache[world->cache_count]=NULL;
+    lookup_rebuild(world);
+    return 1;
+}
+
+static int grow_network_cache(World *world)
+{
+    size_t cap=world->cache_capacity*2,lookup_cap=16;
+    Chunk **cache,**lookup;
+    if(world->cache_capacity>=4096) return 0;
+    if(cap>4096) cap=4096;
+    while(lookup_cap<cap*2) lookup_cap*=2;
+    cache=(Chunk **)calloc(cap,sizeof(*cache));
+    lookup=(Chunk **)calloc(lookup_cap,sizeof(*lookup));
+    if(!cache || !lookup) { free(cache); free(lookup); return 0; }
+    memcpy(cache,world->cache,world->cache_count*sizeof(*cache));
+    free(world->cache); free(world->lookup);
+    world->cache=cache; world->cache_capacity=cap;
+    world->lookup=lookup; world->lookup_capacity=lookup_cap;
+    lookup_rebuild(world); return 1;
+}
+
 Chunk *world_get_chunk(World *world, int32_t cx, int32_t cz)
 {
     Chunk *incoming, *existing;
@@ -684,6 +739,14 @@ Chunk *world_get_chunk(World *world, int32_t cx, int32_t cz)
         world_touch_chunk(world,existing);
         world->error=WORLD_OK;
         return existing;
+    }
+    /* Network chunks have no disk backing and the server will not resend
+     * an LRU victim. Only empty speculative entries are safe to evict. */
+    if(world->network_mode && world->cache_count==world->cache_capacity) {
+        for(i=0;i<world->cache_count && world->cache[i]->network_received;++i) { }
+        if(i==world->cache_count && !grow_network_cache(world)) {
+            world->error=WORLD_ERROR_OUT_OF_MEMORY; return NULL;
+        }
     }
     incoming=world->cache_count<world->cache_capacity ?
              (Chunk *)malloc(sizeof(Chunk)) : world->staging;
@@ -721,6 +784,7 @@ Chunk *world_get_chunk(World *world, int32_t cx, int32_t cz)
     } else {
         Chunk *outgoing;
         for (i=0; i<world->cache_count; ++i) {
+            if(world->network_mode && world->cache[i]->network_received) continue;
             if (world->cache[i]->last_used<oldest) {
                 oldest=world->cache[i]->last_used;
                 victim=i;

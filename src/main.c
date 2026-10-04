@@ -7,6 +7,7 @@
 #include "renderer/renderer.h"
 #include "renderer/menu_background.h"
 #include "game/player.h"
+#include "game/commands.h"
 #include "game/entity_render.h"
 #include "game/settings.h"
 #include "game/inventory.h"
@@ -509,7 +510,7 @@ static int leave_world(App *app)
             memcpy(beta_state.inventory,app->inventory,sizeof(beta_state.inventory));
         }
         if (!save_player(app) || !save_inventory(app) || world_save(&app->world) != WORLD_OK ||
-            (app->world.beta_format &&
+            (app->world.persistent && app->world.beta_format &&
              !beta_level_save(app->world.path,&beta_state))) {
             notice(app, "Save failed. World remains open; check disk space and permissions.");
             ui_set_screen(&app->ui, UI_SCREEN_PAUSE);
@@ -610,15 +611,24 @@ static void network_event(void *user, const NetworkEvent *event)
 {
     App *app = (App *)user;
     int i, free_slot = -1;
+    if(app->debug && event->type==NETWORK_EVENT_POSITION)
+        fprintf(stderr,"Server correction fields %d: %.3f %.3f %.3f yaw %.2f pitch %.2f\n",event->value,event->x,event->y,event->z,event->yaw,event->pitch);
     if (event->type == NETWORK_EVENT_POSITION) {
-        app->previous_player=app->player;
-        app->player.x = (float)event->x;
-        app->player.y = (float)event->y;
-        app->player.z = (float)event->z;
-        app->player.yaw = (event->yaw - 180.0f) * PI_F / 180.0f;
-        app->player.pitch = -event->pitch * PI_F / 180.0f;
+        if(!event->value || (event->value&1)) {
+            app->player.x = (float)event->x;
+            app->player.y = (float)event->y;
+            app->player.z = (float)event->z;
+            app->network_position = 1;
+        }
+        if(!event->value || (event->value&2)) {
+            app->player.yaw = (event->yaw - 180.0f) * PI_F / 180.0f;
+            app->player.pitch = -event->pitch * PI_F / 180.0f;
+        }
         app->player.vx = app->player.vy = app->player.vz = 0;
-        app->network_position = 1;
+        app->player.fall_distance=0;
+        app->player.on_ground=0;
+        app->input.look_dx=app->input.look_dy=0;
+        app->previous_player=app->player;
     } else if (event->type == NETWORK_EVENT_CHAT) {
         if(app->chat_count==UI_CHAT_LINES) {
             memmove(app->chat_lines,app->chat_lines+1,sizeof(UiChatLine)*(UI_CHAT_LINES-1));
@@ -1184,6 +1194,15 @@ static void game_input(App *app)
         if (IsKeyPressed(KEY_ENTER)) {
             if (app->network && app->chat[0] && !network_send_chat(app->network, app->chat))
                 notice(app,"Unable to send chat message.");
+            else if(!app->network && app->chat[0]) {
+                NetworkEvent event={0}; char reply[401];
+                if(app->chat[0]=='/') {
+                    game_command(&app->world,&app->player,app->chat,reply,sizeof(reply));
+                    app->previous_player=app->player;
+                    event.text=reply;
+                } else event.text=app->chat;
+                event.type=NETWORK_EVENT_CHAT; network_event(app,&event);
+            }
             app->chat_open = 0; app->chat[0] = 0;
             capture_cursor(app,1);
         }
@@ -1217,8 +1236,10 @@ static void game_input(App *app)
         app->last_mouse=mouse;
         return;
     }
-    if (IsKeyPressed(KEY_T) && app->network && network_state(app->network)==NETWORK_PLAY) {
-        app->chat_open = 1; app->chat[0] = 0; cancel_mining(app); capture_cursor(app,0); return;
+    if ((IsKeyPressed(KEY_T) || IsKeyPressed(GLFW_KEY_SLASH)) &&
+        (!app->network || network_state(app->network)==NETWORK_PLAY)) {
+        app->chat_open = 1; copy_text(app->chat,sizeof(app->chat),IsKeyPressed(GLFW_KEY_SLASH) ? "/" : "");
+        cancel_mining(app); capture_cursor(app,0); return;
     }
     if(app->player.riding && IsKeyPressed(KEY_LEFT_SHIFT)) world_minecart_dismount(&app->world,&app->player);
     if(IsKeyPressed(KEY_Q)) {
@@ -1432,7 +1453,7 @@ static void tick_mining(App *app)
 static void tick_game(App *app)
 {
     if (app->network && (!app->network_position || network_state(app->network) != NETWORK_PLAY ||
-        !world_peek_chunk(&app->world, (int)floorf(app->player.x/16), (int)floorf(app->player.z/16)))) {
+        !network_terrain_ready(app->network,app->player.x,app->player.z))) {
         app->input.look_dx = app->input.look_dy = 0;
         return;
     }
@@ -1644,6 +1665,41 @@ static int gameplay_preview(App *app,const char *name)
 {
     BlockHit hit={0}; BlockEntity *a,*b; int i;
     if(!app->has_world) return 0;
+    if(!strcmp(name,"block-lab")) {
+        /* A camera-only inspection of the separately generated McRegion lab.
+         * Pausing prevents fluids, fire and technical states from changing. */
+        app->player.x=44; app->player.y=77; app->player.z=85;
+        app->player.yaw=0; app->player.pitch=-.60f;
+        app->previous_player=app->player;
+        for(i=-2;i<8;++i) {
+            int z;
+            for(z=-2;z<9;++z) world_get_chunk(&app->world,i,z);
+        }
+        app->world.persistent=0;
+        while(renderer_rebuild_budget(app->renderer,&app->world,2,5,8)>0) { }
+        ui_set_screen(&app->ui,UI_SCREEN_PAUSE); capture_cursor(app,0);
+        return 1;
+    }
+    if(!strcmp(name,"block-states")) {
+        static const uint8_t ids[]={19,24,41,42,57,86,91,53,67,85,96,78};
+        int x,z,j;
+        if(app->world.persistent || app->network) return 0;
+        for(i=0;i<12;++i) {
+            x=2+(i%4)*3; z=4+(i/4)*4;
+            if(ids[i]==85) { world_set_block(&app->world,x,64,z,85); world_set_block(&app->world,x+1,64,z,85); }
+            else if(ids[i]==96) {
+                world_set_block(&app->world,x,64,z-1,1);
+                world_set_state(&app->world,x,64,z,(BetaBlockState){96,5});
+            } else if(ids[i]==78) {
+                for(j=0;j<8;++j) world_set_state(&app->world,1+j*2,64,17,(BetaBlockState){78,(uint8_t)j});
+            } else world_set_state(&app->world,x,64,z,(BetaBlockState){ids[i],(uint8_t)((ids[i]==86 || ids[i]==91) ? 0 : i&3)});
+        }
+        app->world.beta_world_time=6000; world_environment_refresh(&app->world);
+        app->player.x=8; app->player.y=69; app->player.z=24; app->player.yaw=0; app->player.pitch=-.5f;
+        app->previous_player=app->player; app->player.flying=1;
+        for(i=0;i<9;++i) app->inventory[i]=(InventorySlot){ids[i+3],64,0};
+        return 1;
+    }
     if(!strcmp(name,"inventory")) {
         ui_set_screen(&app->ui,UI_SCREEN_GAME);
         open_inventory(app,app->player.creative ? CONTAINER_CREATIVE : CONTAINER_PLAYER,hit,0);
@@ -1898,6 +1954,7 @@ int main(int argc, char **argv)
             "  [--smoke-test --screen player|crafting|furnace|chest|large-chest|health|blocks|day|night|rain|snow|bed|mobs|events]\n"
             "  [--smoke-test --screen materials|sign-edit|multiplayer-demo|chat|players]\n"
             "  [--smoke-test --screen mechanisms|dispenser|repeaters|effects]\n"
+            "  [--smoke-test --screen block-states] [--world save-directory --screen block-lab]\n"
             "  [--smoke-test --screen chests-north|chests-south|chests-west|chests-east]\n"
             "  [--language en_US] [--texture-pack texturepacks/pack.zip]\n"
             "  [--no-audio] [--debug] [--fullscreen] [--window-check]\n"

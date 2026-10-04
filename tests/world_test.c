@@ -70,6 +70,33 @@ static void downgrade_world_metadata(const char *directory,const char *id)
     assert(fwrite(legacy,1,28+name,file)==28+name); assert(fclose(file)==0);
 }
 
+static int unloaded_meshes;
+static void unload_test_mesh(void *data) { ++unloaded_meshes; free(data); }
+static void network_cache_tests(void)
+{
+    World w; Chunk *first,*second; int i;
+    assert(world_init(&w,0,0,2)==WORLD_OK); w.network_mode=1;
+    w.destroy_render_data=unload_test_mesh;
+    first=world_get_chunk(&w,0,0); assert(first); first->network_received=1;
+    first->render_data=malloc(1); assert(first->render_data);
+    second=world_get_chunk(&w,1,0); assert(second); second->network_received=1;
+    chunk_set_block(second,0,64,0,BLOCK_STONE);
+    assert(world_get_chunk(&w,2,0)); /* Grow rather than lose received terrain. */
+    assert(w.cache_capacity==4 && world_peek_chunk(&w,0,0)==first && world_peek_chunk(&w,1,0)==second);
+    assert(world_get_chunk(&w,3,0)); assert(world_get_chunk(&w,4,0));
+    assert(!world_peek_chunk(&w,2,0)); /* Empty speculative entry may be reused. */
+    assert(world_peek_chunk(&w,0,0)==first && world_peek_chunk(&w,1,0)==second);
+    assert(world_unload_network_chunk(&w,0,0) && unloaded_meshes==1 && w.cache_count==3);
+    assert(!world_peek_chunk(&w,0,0) && !world_unload_network_chunk(&w,0,0));
+    for(i=3;i<40;++i) {
+        Chunk *c=world_get_chunk(&w,i,-i); assert(c); c->network_received=1;
+    }
+    assert(world_peek_chunk(&w,1,0)==second && chunk_get_block(second,0,64,0)==BLOCK_STONE);
+    for(i=3;i<40;++i) assert(world_peek_chunk(&w,i,-i));
+    w.persistent=1; assert(!world_unload_network_chunk(&w,1,0)); w.persistent=0;
+    w.network_mode=0; assert(!world_unload_network_chunk(&w,1,0));
+    assert(world_close(&w)==WORLD_OK && unloaded_meshes==1);
+}
 int main(void)
 {
     World a = {0}, b = {0}, c = {0};
@@ -79,6 +106,7 @@ int main(void)
     WorldInfo infos[4];
     char dir[128], id[64], chunk_path[256];
     int i;
+    network_cache_tests();
     /* Light crosses both positive and negative chunk seams, reaches a newly
      * loaded neighbour, and disappears again when its source is removed. */
     assert(world_init(&a,42,1,16)==WORLD_OK);

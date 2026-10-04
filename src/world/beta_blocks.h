@@ -52,6 +52,10 @@ int beta_block_cross_plant(unsigned id);
 /* Audited selection bounds for crossed plants, torches and the half slab.
  * Returns zero for blocks whose selection box is not registered yet. */
 int beta_block_selection_box(BetaBlockState state, BetaBlockBox *out);
+/* Beta stairs consist of two axis-aligned halves; no corner/upside-down states. */
+int beta_block_stair_boxes(BetaBlockState state, BetaBlockBox out[2]);
+/* Geometry used by inventory and held 3D block models (at most five boxes). */
+int beta_block_item_boxes(BetaBlockState state, BetaBlockBox out[5]);
 
 #ifdef __cplusplus
 }

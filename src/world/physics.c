@@ -133,7 +133,8 @@ static void notify_cell(World *w,int x,int y,int z)
     else if (id==12 || id==13) world_schedule_tick(w,x,y,z,(uint8_t)id,2);
     else if (id==75 || id==76) world_schedule_tick(w,x,y,z,(uint8_t)id,2);
     else if(id==55) world_wire_update(w,x,y,z);
-    else if (id==50 || id==81 || id==26 || id==64 || id==71 || sign_is_block(id) || rail_is(id)) world_schedule_tick(w,x,y,z,(uint8_t)id,rail_is(id) ? 0 : 1);
+    else if (id==50 || id==81 || id==26 || id==64 || id==71 || id==96 || sign_is_block(id) || rail_is(id)) world_schedule_tick(w,x,y,z,(uint8_t)id,rail_is(id) ? 0 : 1);
+    else if(id==78 && !world_block_def(world_peek_block(w,x,y-1,z))->opaque) world_set_block(w,x,y,z,0);
     else if(id==93 || id==94) {
         unsigned meta=world_peek_metadata(w,x,y,z);
         int input=world_repeater_input(w,x,y,z,meta);
@@ -193,7 +194,7 @@ void world_redstone_notify(World *w,int x,int y,int z)
         int nx=x+dx[i]+dx[j],ny=y+dy[i]+dy[j],nz=z+dz[i]+dz[j];
         unsigned id=world_peek_block(w,nx,ny,nz);
         if (id==75 || id==76 || id==55 || id==93 || id==94 || id==23 || id==29 || id==33 || id==70 || id==72 || rail_is(id)) notify_cell(w,nx,ny,nz);
-        if(id==64 || id==71) door_power_changed(w,nx,ny,nz);
+        if(id==64 || id==71 || id==96) door_power_changed(w,nx,ny,nz);
         if(id==46 || id==25) notify_cell(w,nx,ny,nz);
     }
 }
@@ -222,7 +223,7 @@ static void step(World *w,WorldPhysicsCell c)
     if(sign_is_block(id)) { sign_neighbor_tick(w,x,y,z); return; }
     if(rail_is(id)) { rail_update(w,x,y,z); return; }
     if(id==26) { bed_neighbor_tick(w,x,y,z); return; }
-    if(id==64 || id==71) { door_neighbor_tick(w,x,y,z); return; }
+    if(id==64 || id==71 || id==96) { door_neighbor_tick(w,x,y,z); return; }
     if(id==77) {
         if(meta&8) {
             world_set_metadata(w,x,y,z,(uint8_t)(meta&7)); world_redstone_notify(w,x,y,z);
@@ -293,6 +294,10 @@ static void random_cactus(World *w)
             x=bits&15; z=(bits>>8)&15; y=(bits>>16)&127; index=(unsigned)(x+z*16+y*256);
             x+=chunk->x*16; z+=chunk->z*16;
             if(chunk->blocks[index]==18) { world_leaf_tick(w,x,y,z); continue; }
+            if(chunk->blocks[index]==78) {
+                if(chunk_get_block_light(chunk,x-chunk->x*16,y,z-chunk->z*16)>11) world_set_block(w,x,y,z,0);
+                continue;
+            }
             if(chunk->blocks[index]==11) { world_lava_ignite_tick(w,x,y,z); continue; }
             if(chunk->blocks[index]==75 || chunk->blocks[index]==76) {
                 step(w,(WorldPhysicsCell){x,z,(uint8_t)y,chunk->blocks[index],0,0,0,NULL}); continue;

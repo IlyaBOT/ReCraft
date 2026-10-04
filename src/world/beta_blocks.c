@@ -40,6 +40,32 @@ int beta_block_selection_box(BetaBlockState state, BetaBlockBox *out)
 {
     float inset, height;
     if (!out || !beta_block_state_valid(state)) return 0;
+    if(state.id==96) {
+        *out=(BetaBlockBox){0,0,0,1,.1875f,1};
+        if(state.metadata&4) {
+            *out=(BetaBlockBox){0,0,0,1,1,1};
+            switch(state.metadata&3) {
+            case 0: out->min_z=.8125f; break;
+            case 1: out->max_z=.1875f; break;
+            case 2: out->min_x=.8125f; break;
+            case 3: out->max_x=.1875f; break;
+            }
+        }
+        return 1;
+    }
+    if(state.id==78) { *out=(BetaBlockBox){0,0,0,1,((state.metadata&7)+1)/8.0f,1}; return 1; }
+    if(state.id==60) { *out=(BetaBlockBox){0,0,0,1,.9375f,1}; return 1; }
+    if(state.id==88) { *out=(BetaBlockBox){0,0,0,1,1,1}; return 1; }
+    if(state.id==92) { *out=(BetaBlockBox){(1+(state.metadata>5 ? 5 : state.metadata)*2)/16.0f,0,.0625f,.9375f,.5f,.9375f}; return 1; }
+    if(state.id==65) {
+        *out=(BetaBlockBox){0,0,0,1,1,1};
+        if(state.metadata==2) out->min_z=.875f;
+        else if(state.metadata==3) out->max_z=.125f;
+        else if(state.metadata==4) out->min_x=.875f;
+        else out->max_x=.125f;
+        return 1;
+    }
+    if(state.id==59) { *out=(BetaBlockBox){0,0,0,1,.25f,1}; return 1; }
     if(state.id==55) { *out=(BetaBlockBox){0,0,0,1,.0625f,1}; return 1; }
     if(state.id==70 || state.id==72) {
         *out=(BetaBlockBox){.0625f,0,.0625f,.9375f,state.metadata ? .03125f : .0625f,.9375f}; return 1;
@@ -73,7 +99,7 @@ int beta_block_selection_box(BetaBlockState state, BetaBlockBox *out)
         out->max_y = 0.5f;
         return 1;
     }
-    if(state.id==26 || state.id==93 || state.id==94 || state.id==78) {
+    if(state.id==26 || state.id==93 || state.id==94) {
         *out=(BetaBlockBox){0,0,0,1,state.id==26 ? .5625f : .125f,1}; return 1;
     }
     if (state.id==BETA_BLOCK_WOOD_DOOR || state.id==BETA_BLOCK_IRON_DOOR) {
@@ -149,6 +175,40 @@ int beta_block_selection_box(BetaBlockState state, BetaBlockBox *out)
     return 1;
 }
 
+int beta_block_stair_boxes(BetaBlockState state,BetaBlockBox out[2])
+{
+    unsigned m=state.metadata&3;
+    if(!out || (state.id!=53 && state.id!=67)) return 0;
+    out[0]=(BetaBlockBox){0,0,0,1,.5f,1};
+    out[1]=(BetaBlockBox){0,0,0,1,1,1};
+    if(m<2) {
+        if(m==0) { out[0].max_x=.5f; out[1].min_x=.5f; }
+        else { out[0].min_x=.5f; out[1].max_x=.5f; }
+    } else {
+        if(m==2) { out[0].max_z=.5f; out[1].min_z=.5f; }
+        else { out[0].min_z=.5f; out[1].max_z=.5f; }
+    }
+    return 2;
+}
+
+int beta_block_item_boxes(BetaBlockState state,BetaBlockBox out[5])
+{
+    if(!out || !beta_block_state_valid(state)) return 0;
+    if(beta_block_stair_boxes(state,out)) return 2;
+    if(state.id==85) {
+        out[0]=(BetaBlockBox){.375f,0,0,.625f,1,.25f};
+        out[1]=(BetaBlockBox){.375f,0,.75f,.625f,1,1};
+        out[2]=(BetaBlockBox){.4375f,.375f,0,.5625f,.5625f,1};
+        out[3]=(BetaBlockBox){.4375f,.75f,0,.5625f,.9375f,1};
+        return 4;
+    }
+    if(state.id==77) { out[0]=(BetaBlockBox){.3125f,.375f,.4375f,.6875f,.625f,.5625f}; return 1; }
+    if(state.id==96) { out[0]=(BetaBlockBox){0,.40625f,0,1,.59375f,1}; return 1; }
+    if(state.id==44 || state.id==70 || state.id==72 || state.id==78 || state.id==92 || state.id==60)
+        return beta_block_selection_box(state,out);
+    out[0]=(BetaBlockBox){0,0,0,1,1,1}; return 1;
+}
+
 int beta_block_terrain_tile(BetaBlockState state, unsigned face)
 {
     /* Species/color rules follow vg, bk, ee, he and ru in the local Beta
@@ -157,6 +217,25 @@ int beta_block_terrain_tile(BetaBlockState state, unsigned face)
     if (!beta_block_state_valid(state) || face > 5u) return -1;
     variant = state.metadata & 3u;
     switch (state.id) {
+    case BETA_BLOCK_SPONGE: return 48;
+    case BETA_BLOCK_GOLD_BLOCK: return 23;
+    case BETA_BLOCK_IRON_BLOCK: return 22;
+    case BETA_BLOCK_DIAMOND_BLOCK: return 24;
+    case BETA_BLOCK_SANDSTONE: return face==0 ? 208 : face==1 ? 176 : 192;
+    case BETA_BLOCK_WOOD_STAIRS: case BETA_BLOCK_FENCE: return 4;
+    case BETA_BLOCK_COBBLE_STAIRS: return 16;
+    case BETA_BLOCK_TRAPDOOR: return 84;
+    case BETA_BLOCK_PUMPKIN: case BETA_BLOCK_JACK_O_LANTERN: {
+        static const unsigned front[4]={3,4,2,5};
+        return face<2 ? 102 : face==front[state.metadata&3] ? (state.id==86 ? 119 : 120) : 118;
+    }
+    case BETA_BLOCK_BOOKSHELF: return face<2 ? 4 : 35;
+    case BETA_BLOCK_MOB_SPAWNER: return 65;
+    case BETA_BLOCK_CROPS: return 88+(state.metadata&7);
+    case BETA_BLOCK_FARMLAND: return face==1 ? (state.metadata ? 86 : 87) : 2;
+    case BETA_BLOCK_LADDER: return 83;
+    case BETA_BLOCK_CAKE: return face==1 ? 121 : face==0 ? 124 : (face==4 && state.metadata ? 123 : 122);
+    case BETA_BLOCK_LOCKED_CHEST: return face<2 ? 25 : face==3 ? 27 : 26;
     case BETA_BLOCK_DISPENSER: return face<2 ? 62 : face==(state.metadata ? state.metadata : 3) ? 46 : 45;
     case BETA_BLOCK_STONE_PRESSURE_PLATE: return 1;
     case BETA_BLOCK_WOOD_PRESSURE_PLATE: return 4;
@@ -277,7 +356,8 @@ int beta_render_source_tile(unsigned slot)
         237,238,14,69,70,71,43,59,60,25,26,27,62,45,44,61,99,115,164,
         205,206,41,42,57,58,134,135,149,150,151,152,131,147,66,67,
         53,133,11,81,97,82,98,81,97,82,98,96,74,75,112,128,179,163,195,9,8,10,31,47,
-        165,180,181,46,106,107,108,109,110};
+        165,180,181,46,106,107,108,109,110,
+        48,23,22,24,84,102,118,119,120,35,65,83,86,87,88,89,90,91,92,93,94,95,121,122,123,124};
     return slot<sizeof(tiles)/sizeof(tiles[0]) ? tiles[slot] : -1;
 }
 unsigned beta_render_tile(int terrain_tile)

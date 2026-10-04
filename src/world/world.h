@@ -74,6 +74,7 @@ typedef struct Chunk {
     uint32_t dirty_flags;
     uint64_t last_used;
     uint32_t revision;
+    uint8_t network_received; /* Runtime only: complete initial map snapshot received. */
     uint8_t precipitation[256],precipitation_height[256],climate_ready;
     uint32_t precipitation_revision;
     void *render_data;
@@ -198,6 +199,8 @@ WorldError world_storage_rename(const char *saves_dir, const char *id, const cha
 
 Chunk *world_get_chunk(World *world, int32_t cx, int32_t cz);
 Chunk *world_peek_chunk(const World *world, int32_t cx, int32_t cz);
+/* Server-authoritative unload; rejects persistent/offline worlds. */
+int world_unload_network_chunk(World *world,int32_t cx,int32_t cz);
 size_t world_cached_chunk_count(const World *world);
 Chunk *world_cached_chunk_at(const World *world, size_t index);
 size_t world_dirty_chunk_count(const World *world);

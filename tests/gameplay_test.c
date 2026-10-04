@@ -4,6 +4,7 @@
 #include "world/entities.h"
 #include "world/ticks.h"
 #include "game/player.h"
+#include "game/commands.h"
 #include "game/bed.h"
 #include "world/environment.h"
 #include "world/redstone.h"
@@ -456,8 +457,41 @@ static void mob_collision_tests(void)
     assert(world_peek_chunk(&w,1,0)->saved_entities==e && e->mob.x>16);
     assert(world_close(&w)==WORLD_OK);
 }
+static void command_tests(void)
+{
+    World w; Player p={0}; char reply[401];
+    assert(world_init(&w,123,1,8)==WORLD_OK); p.name="IlyaBOT";
+    p.x=8.5f; p.y=64; p.z=-3.5f; p.vy=-12; p.fall_distance=50;
+    assert(game_command(&w,&p,"/tp IlyaBOT ~2 70 -10",reply,sizeof(reply))==1);
+    assert(p.x==10.5f && p.y==70 && p.z==-9.5f && !p.vy && !p.fall_distance);
+    assert(game_command(&w,&p,"/tp nan 70 0",reply,sizeof(reply))==-1);
+    assert(p.x==10.5f && p.y==70 && p.z==-9.5f);
+    assert(game_command(&w,&p,"/tp Other 1 2 3",reply,sizeof(reply))==-1);
+    assert(game_command(&w,&p,"/gamemode creative IlyaBOT",reply,sizeof(reply))==1);
+    assert(p.creative && w.creative); p.flying=1;
+    assert(game_command(&w,&p,"/gamemode 0",reply,sizeof(reply))==1);
+    assert(!p.creative && !w.creative && !p.flying);
+    assert(game_command(&w,&p,"/gamemode adventure",reply,sizeof(reply))==-1);
+    assert(game_command(&w,&p,"/time set night",reply,sizeof(reply))==1);
+    assert(w.beta_world_time==12500);
+    assert(game_command(&w,&p,"/time add 100",reply,sizeof(reply))==1);
+    assert(w.beta_world_time==12600);
+    assert(game_command(&w,&p,"/timeset day",reply,sizeof(reply))==1 && !w.beta_world_time);
+    assert(game_command(&w,&p,"/time set -1",reply,sizeof(reply))==-1 && !w.beta_world_time);
+    w.beta_world_time=INT64_MAX;
+    assert(game_command(&w,&p,"/time add 1",reply,sizeof(reply))==-1 && w.beta_world_time==INT64_MAX);
+    assert(game_command(&w,&p,"/weather thunder 5",reply,sizeof(reply))==1);
+    assert(w.raining && w.thundering && w.rain_time==100 && w.thunder_time==100);
+    assert(game_command(&w,&p,"/weather clear",reply,sizeof(reply))==1 && !w.raining && !w.thundering);
+    assert(game_command(&w,&p,"/seed",reply,sizeof(reply))==1 && strstr(reply,"123"));
+    assert(game_command(&w,&p,"/help",reply,sizeof(reply))==1 && strstr(reply,"gamemode"));
+    w.network_mode=1;
+    assert(game_command(&w,&p,"/gamemode creative",reply,sizeof(reply))==0);
+    assert(!p.creative && !w.creative && !reply[0]);
+    assert(world_close(&w)==WORLD_OK);
+}
 int main(void)
 {
-    regressions(); mob_collision_tests(); mob_tests(); environment_bed_tests(); mechanisms_tests(); fluid_tests(); container_tests(); health_redstone_tests(); bucket_tests(); tick_save_tests(); entity_nbt_tests();
+    command_tests(); regressions(); mob_collision_tests(); mob_tests(); environment_bed_tests(); mechanisms_tests(); fluid_tests(); container_tests(); health_redstone_tests(); bucket_tests(); tick_save_tests(); entity_nbt_tests();
     puts("Scheduled Beta water/lava, containers, persistence, health and torch inversion passed"); return 0;
 }

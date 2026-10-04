@@ -22,7 +22,7 @@ typedef enum NetworkState {
 typedef enum NetworkEventType {
     NETWORK_EVENT_STATE = 0,
     NETWORK_EVENT_CHAT,
-    NETWORK_EVENT_POSITION,
+    NETWORK_EVENT_POSITION, /* value bits: 1=position, 2=rotation; 0=both. */
     NETWORK_EVENT_DISCONNECT,
     NETWORK_EVENT_CHUNK,
     NETWORK_EVENT_BLOCK,
@@ -70,6 +70,9 @@ void network_disconnect(NetworkClient *client);
 void network_tick(NetworkClient *client); /* Nonblocking, bounded packet budget. */
 
 NetworkState network_state(const NetworkClient *client);
+/* Physics waits for map data under the player's footprint after a teleport.
+ * PreChunk and isolated block updates do not make an empty cache entry ready. */
+int network_terrain_ready(const NetworkClient *client,double x,double z);
 const char *network_last_error(const NetworkClient *client);
 typedef struct NetworkPlayerInfo {
     char name[65];

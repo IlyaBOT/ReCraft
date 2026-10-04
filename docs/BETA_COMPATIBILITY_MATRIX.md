@@ -42,6 +42,8 @@ Lever attachments/UV, jukebox RecordPlayer/discs, rail topology and three cart
 variants now have a local implementation; see [transport audit](BETA_TRANSPORT.md).
 Current redstone/Creative/effects checks: [mechanisms audit](BETA_MECHANISMS_AND_EFFECTS.md).
 
+Block update 0.2.2: [textures, shapes, Beta snow rules and the all-block lab](BETA_BLOCKS_022.md).
+
 | Block ID | Block name | Metadata usage | Implemented | Rendering | Collision | Drops | Interaction | Scheduled tick | Random tick | Tile entity | Redstone | Lighting | Fluid behavior | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 0 | air | none | ID + metadata stored | none | none | no | no | no | no | no | no | none | no | air |
@@ -63,12 +65,12 @@ Current redstone/Creative/effects checks: [mechanisms audit](BETA_MECHANISMS_AND
 | 16 | oreCoal | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 17 | log | tree species | ID + metadata + texture variants | metadata texture | box approximation | no | generic break/place | no | no | no | no | local approximation | no | texture variants |
 | 18 | leaves | tree species and decay flag bit 8 | ID + metadata + texture variants | Fast exterior / Fancy internal cutouts; optional opaque tiles | full box | harvest rules/shears + sapling 1/20 | generic break/place | no | no | no | no | four-step log support on random ticks | no | unloaded neighbors defer decay |
-| 19 | sponge | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 19 | sponge | none | Beta texture + mining/placement | original terrain cube | full cube | self when harvested | generic break/place | no | no | no | no | opaque; local light propagation | no | tested cube; sponge has no absorption |
 | 20 | glass | none | ID + metadata stored | approximate | box approximation | no | generic break/place | no | no | no | no | local approximation | no | visual proxy |
 | 21 | oreLapis | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 22 | blockLapis | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 23 | dispenser | horizontal facing | block + 9-slot storage | Beta top/side/front | full cube | block + contents | open inventory, dispense | 4 ticks after power notification | no | Trap | block or above powered | day/night | no | Beta projectiles/items; callback ordering not fully verified |
-| 24 | sandStone | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 24 | sandStone | none | Beta texture + mining/placement | original terrain cube | full cube | self when harvested | generic break/place | no | no | no | no | opaque; local light propagation | no | tested cube |
 | 25 | musicBlock | none; note in TileEntity | tune/play + instruments | Beta tile 74 cube | full cube | note block | right tune; left play | no | no | Music.note byte | rising-edge play | day/night | no | five instruments, pitch and NBT; note particle pending |
 | 26 | bed | facing, head, occupied | two halves + saved spawn | rotated Beta top, frame/legs cutout, hidden join | 9/16 height | bed from foot | place/sleep/wake | orphan check | no | no | no | day/night | no | partial bed/camera; no nightmares |
 | 27 | goldenRail | shape and powered | 0..5 + power bit 8 | sloping cutout rail | none | rail 27 | connectivity/support/cart path | neighbor chain | no | no | eight-rail powered reach | day/night | no | local transport |
@@ -85,33 +87,33 @@ Current redstone/Creative/effects checks: [mechanisms audit](BETA_MECHANISMS_AND
 | 38 | rose | none | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | local approximation | no | crossed plant |
 | 39 | mushroom | none | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | emission 1; local approximation | no | crossed plant |
 | 40 | mushroom | none | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | local approximation | no | crossed plant |
-| 41 | blockGold | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 42 | blockIron | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 41 | blockGold | none | Beta texture + mining/placement | original terrain cube | full cube | self when harvested | generic break/place | no | no | no | no | opaque; local light propagation | no | tested cube |
+| 42 | blockIron | none | Beta texture + mining/placement | original terrain cube | full cube | self when harvested | generic break/place | no | no | no | no | opaque; local light propagation | no | tested cube |
 | 43 | stoneSlab | slab material | ID + metadata + slab material | double slab cube | full box | no | generic break/place | no | no | no | no | local approximation | no | double slab |
 | 44 | stoneSlab | slab material | ID + metadata + slab material | half-height opaque mesh | half-height box | no | selection-box raycast; matching local merge | no | no | no | no | local approximation | no | half slab |
 | 45 | brick | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 46 | tnt | none | ID + PrimedTnt Entity/Fuse Byte | Beta top/side/bottom; primed entity | full box | break/drop or prime | fuse/explosion | no | no | redstone primes | fire primes | 80-tick fuse; chain 10-29; blast power 4 | no | blast/particles parity still incomplete |
-| 47 | bookshelf | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 47 | bookshelf | none | Beta texture | top/bottom planks; bookshelf sides | full cube | none in Beta | generic break/place | no | no | no | no | local approximation | no | tested visual; no enchanting in Beta |
 | 48 | stoneMoss | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 49 | obsidian | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 50 | torch | attachment face | ID + metadata + attachment mesh | metadata-oriented torch prism | none | torch when broken/unsupported | selection-box raycast; local attachment | support check | no | no | no | emission 14; local approximation | no | normal torch |
 | 51 | fire | age 0-15 | ID + metadata + pending ticks | animated CPU cutout planes | non-solid | extinguish; no drop | original fire keys | no | no | no | spread/burn; netherrack/rain/lava | scheduled 40 ticks | no | wall geometry/smoke pending |
-| 52 | mobSpawner | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 53 | stairsWood | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 52 | mobSpawner | none | Beta texture; NBT preserved | cutout spawner cage | full cube | no | generic break/place | no | no | MobSpawner preserved | no | local approximation | no | spawner AI unfinished |
+| 53 | stairsWood | facing | facing metadata + geometry | wood stair mesh + item model | two boxes; stepHeight 0.5 | planks (Beta) | yaw placement; walk up | no | no | no | no | local approximation | no | tested; no modern corners/inversion |
 | 54 | chest | facing | 27/54 slots + NBT | Beta single/double chest cube | full cube | chest + contents | open; obstruction/triple checks | no | no | Chest | no | local approximation | no | container |
 | 55 | redstoneDust | power level 0..15 | component propagation | tinted tiles 164/165 + overlay | none; 1/16 selection | redstone dust | dust placement | immediate neighbour propagation | no | no | weak/strong, steps | day/night | no | clock with dust branch regression; complex callback ordering pending |
 | 56 | oreDiamond | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
-| 57 | blockDiamond | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 57 | blockDiamond | none | Beta texture + mining/placement | original terrain cube | full cube | self when harvested | generic break/place | no | no | no | no | opaque; local light propagation | no | tested cube |
 | 58 | workbench | none | 3 x 3 crafting | Beta face textures | full cube | workbench | 151 Beta recipes | no | no | no | no | local approximation | no | crafting |
-| 59 | crops | growth stage | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 60 | farmland | moisture | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 59 | crops | growth stage | growth metadata rendered | cutout stage texture | none | wheat/seeds harvest foundation | generic break/place | no | no | no | no | local approximation | no | growth/farming unfinished |
+| 60 | farmland | moisture | moisture metadata rendered | 15/16 height; dry/wet top | full cube (Beta) | dirt | generic break/place | no | no | no | no | local approximation | no | hydration/trampling unfinished |
 | 61 | furnace | facing | smelting + NBT | oriented Beta faces | full cube | furnace + contents | input/fuel/take-only output | 20 Hz smelting | no | Furnace | no | local approximation | no | container |
 | 62 | furnace | facing | smelting + NBT | oriented lit Beta faces | full cube | unlit furnace + contents | input/fuel/take-only output | 20 Hz smelting | no | Furnace | no | emission 13 | no | container |
 | 63 | sign | rotation | placement + four saved text lines | textured board/post, bitmap text | none; Beta selection box | item 323 | placement editor | support check | no | Sign; preserves unknown NBT | no | local approximation | replace fluids | local + server-owned text |
 | 64 | doorWood | facing, open, upper half | duplicated lower metadata, upper bit 8 | thin Beta atlas model; optional opaque windows | metadata-oriented thin box | door item, support removal | item 324, paired hinge, right-click/power | support validation | no | no | reacts to neighbour power | local approximation | no | doors and reload tested |
-| 65 | ladder | attachment face | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 65 | ladder | attachment face | wall attachment | thin wall mesh | 1/8 wall bounds | ladder | side placement | no | no | no | no | local approximation | no | climbing/support updates unfinished |
 | 66 | rail | shape | metadata 0..9 connectivity | sloping/corner cutout rail | none | rail 66 | dynamic topology/cart path | neighbor shapes/support | no | no | junction selection | day/night | no | local transport |
-| 67 | stairsStone | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 67 | stairsStone | facing | facing metadata + geometry | cobble stair mesh + item model | two boxes; stepHeight 0.5 | cobblestone (Beta) | yaw placement; walk up | no | no | no | no | local approximation | no | tested; no modern corners/inversion |
 | 68 | sign | attachment face | placement + four saved text lines | textured wall board, bitmap text | none; Beta selection box | item 323 | placement editor | support check | no | Sign; preserves unknown NBT | no | local approximation | replace fluids | local + server-owned text |
 | 69 | lever | attachment and powered | floor 5/6; walls 1..4; bit 8 ON | cobble base + tile 96 prism | none | lever | attach/toggle | support check | no | no | weak/strong support power | day/night | no | cached attachment model |
 | 70 | pressurePlate | powered bit | living-entity detector | thin stone plate | none | plate | entity contact | 20 ticks release polling | no | no | weak + strong below | day/night | no | contact/support and signal tests |
@@ -121,26 +123,26 @@ Current redstone/Creative/effects checks: [mechanisms audit](BETA_MECHANISMS_AND
 | 74 | oreRedstone | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | emission 9; local approximation | no | cube texture |
 | 75 | notGate | attachment face | attachment + inversion | unlit narrow prism | none | lit redstone torch | attach/support | 2 ticks | yes (burnout recovery) | no | inversion/burnout | no emission | no | partial redstone |
 | 76 | notGate | attachment face | attachment + inversion | lit narrow prism | none | redstone torch | attach/support | 2 ticks | yes | no | inversion/burnout | emission 7 | no | partial redstone |
-| 77 | button | wall attachment + powered bit 8 | support + held timer | oriented narrow prism | none | button | press, no timer reset | 20 ticks release | no | no | weak/strong support power | day/night | no | floor placement excluded in Beta; four wall orientations |
-| 78 | snow | none | layer + cold weather placement | 1/8 layer | none | snowball with shovel | break/place | no | weather placement | no | no | day/night | no | melting/support unfinished |
+| 77 | button | wall attachment + powered bit 8 | support + held timer | wall button and small inventory model; stone tile 1 | none | button | press, no timer reset | 20 ticks release | no | no | weak/strong support power | day/night | no | tested four wall orientations; not a plate |
+| 78 | snow | height (low three bits) | eight heights + support/melting | height (m+1)/8 | none below m3; 0.5 above | snowball with shovel | break/place | no | block light >11 melts | no | no | day/night | no | tested; normal placement m0; no modern stacking |
 | 79 | ice | none | cube + cold source freezing | transparent cube | full cube | none | break/place | no | weather freezing | no | no | day/night | freezing | melting/break-water unfinished |
 | 80 | snow | none | Beta texture | full cube | full cube | 4 snowballs with shovel | break/place | no | no | no | no | day/night | no | cube |
 | 81 | cactus | age | age + support + growth | inset cactus faces | inset box | cactus | sand/cactus support; contact damage | support check | growth to 3 blocks | no | no | local approximation | no | cactus |
 | 82 | clay | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 83 | reeds | age | ID + metadata + crossed texture | crossed cutout | none | no | selection-box raycast; generic break/place | no | no | no | no | local approximation | no | crossed plant |
 | 84 | jukebox | record present | metadata 0/1 + Record ID | Beta tiles 74/75 cube | full box | jukebox + disc | insert/eject 13/cat | no | no | RecordPlayer Record Int | no | day/night | no | local streaming/persistence |
-| 85 | fence | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 86 | pumpkin | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 85 | fence | none | Beta fence geometry | post/rails; connects fences only | full footprint x 1.5 height | fence | place; support required at placement | no | no | no | no | local approximation | no | tested joins/collision |
+| 86 | pumpkin | facing | yaw-facing metadata | Beta top/side/front | full cube | pumpkin | normal cube below placement | no | no | no | no | local approximation | no | tested four directions; no golems |
 | 87 | hellrock | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 88 | hellsand | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | local approximation | no | cube texture |
 | 89 | lightgem | none | ID + metadata + terrain tile | Beta tile (cube) | box approximation | no | generic break/place | no | no | no | no | emission 15; local approximation | no | cube texture |
 | 90 | portal | portal axis | portal visual/ambient | animated double-sided plane | none | no | no dimension transport | no | no | no | no | emission 11 | no | visual/ambient only |
-| 91 | litpumpkin | facing | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 92 | cake | bites eaten | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 91 | litpumpkin | facing | yaw-facing metadata | Beta top/side/lit front | full cube | jack o lantern | normal cube below placement | no | no | no | no | emission 15 | no | tested four directions |
+| 92 | cake | bites eaten | bites metadata rendered | partial cake with exposed bitten side | cropped footprint x 7/16 height | none | generic break/place | no | no | no | no | local approximation | no | eating unfinished |
 | 93 | diode | facing 0..3 + delay bits | direction/delay + support | Beta 131 plate + two torches | none; 1/8 selection | repeater item | place/cycle delay | 2/4/6/8 ticks | no | no | directional output | day/night | no | four UV orientations; clock branch regression |
 | 94 | diode | facing 0..3 + delay bits | direction/delay + support | Beta 147 plate + two torches | none; 1/8 selection | repeater item | place/cycle delay | 2/4/6/8 ticks | no | no | directional output | day/night | no | four UV orientations; clock branch regression |
-| 95 | lockedchest | none | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
-| 96 | trapdoor | facing and open | ID + metadata stored | placeholder/hidden | box approximation | no | generic break/place | no | no | no | no | local approximation | no | storage only |
+| 95 | lockedchest | none | Beta texture; raw state preserved | locked chest cube | full cube | no | generic break/place | no | no | no | no | emission 15 | no | obsolete store/random removal unfinished |
+| 96 | trapdoor | facing and open | facing bits + open bit 4 | 3/16 horizontal/vertical panel | state-dependent thin panel | trapdoor; support drop | side placement; right click | support check | no | no | open/close with indirect power | local approximation | no | tested placement/power/NBT; no modern upper half |
 
 ## Milestone sequence
 

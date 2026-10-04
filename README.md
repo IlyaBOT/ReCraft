@@ -20,8 +20,13 @@ GitHub Actions builds Windows/Linux and macOS on the local Vesper runner.
 See [CI, artifacts and host build instructions](docs/CI.md).
 
 The game has 16 x 16 x 128 chunk columns, deterministic terrain for ReCraft saves, walking and flying controls, block interaction, crafting and chest/furnace inventories, survival health and mining, menus, video settings, a debug overlay, and reproducible benchmark scenes. Chunk block bytes use the Beta 1.7.3 ID range 0..96 with separate metadata nibbles; native `.rcg` version 1 saves are migrated on load to version 2. Minecraft Beta 1.7.3 `level.dat` and existing McRegion `.mcr` chunks can also be opened for play. Edits to loaded Beta chunks are written back in McRegion format. Missing Beta chunks are not generated yet. Some Beta blocks still use proxy geometry and behavior, and ReCraft's own terrain generator is not Beta-compatible. The per-block status is in the [Beta compatibility matrix](docs/BETA_COMPATIBILITY_MATRIX.md).
-The Minecraft Beta 1.7.3 protocol 14 client is experimental. Offline joining and optional Microsoft session joining for online challenges are implemented; both still need testing against a real compatible server. The server list queries modern status (protocol 47) for MOTD, favicon, population and ping; modern gameplay is not implemented. Beta entries show TCP reachability only. See [network support and limits](docs/NETWORK_PROTOCOLS.md).
+The Minecraft Beta 1.7.3 protocol 14 client is experimental. Pre-login terrain/signs/chests were verified on goldenage.keii.dev; the user's manual password login succeeded, but return to the previous location remains unresolved. Optional Microsoft session joining for online challenges still needs real-server verification. The server list queries modern status (protocol 47) for MOTD, favicon, population and ping; modern gameplay is not implemented. Beta entries show TCP reachability only. See [network support and limits](docs/NETWORK_PROTOCOLS.md).
 The interface uses selected user-provided CoterieCraft Beta textures and an original bitmap font atlas. Effects and music use original OGG assets with Beta sound keys and a non-looping music schedule. See [asset sources](docs/ASSET_SOURCES.md).
+
+Version 0.2.2 adds the missing storage blocks, sponge, sandstone, pumpkins,
+trapdoors, fences and the two Beta stair types. Snow renders all eight legacy
+metadata heights; buttons have their small inventory model. See the
+[block audit and flat all-block test world](docs/BETA_BLOCKS_022.md).
 
 The current [mechanics audit](docs/BETA_MECHANICS_AUDIT.md) distinguishes working,
 partial and missing features. Day/night, weather, beds and saved mobs have a
@@ -136,14 +141,19 @@ working directory. See [runtime layout](docs/RUNTIME_LAYOUT.md) and
   Creative opens a scrollable Beta block/item catalogue: select a hotbar slot,
   then click an item. The mouse wheel and right scrollbar browse the catalogue.
 - Esc: pause; F2: save a screenshot in `screenshots/`; F3: measurements and renderer state.
-- While connected, T opens chat, Enter sends it and Esc closes the draft.
+- T opens chat; `/` opens a command draft. Enter sends it and Esc closes the draft.
+  Multiplayer forwards slash commands unchanged to the server, which decides
+  permissions and supported syntax. Singleplayer supports `/tp [name] x y z`
+  (including `~` coordinates), `/gamemode survival|creative` (or `0|1`),
+  `/time set day|night|ticks`, `/time add ticks`, `/timeset day|night|ticks`,
+  `/weather clear|rain|thunder [seconds]`, `/seed` and `/help`.
   Hold Tab for self and nearby named players. Beta has no global roster or
   per-player ping packet, so unavailable ping is shown as `--`.
 - Place a sign (item 323) against a solid material to open its four-line editor.
   Up/Down or Enter changes the active line; Done/Esc saves the text. Signs have
   16 standing directions or four wall attachments, and persist in native/Beta
   TileEntity data. Multiplayer waits for the server to confirm placement.
-- Options: edit Player Name (1-16 letters, digits or `_`); it is saved in
+- Profile: edit Player Name (1-16 letters, digits or `_`); it is saved in
   `config/options.txt` and used by the offline protocol 14 connection.
 - Q: throw one selected item, preserving its metadata and durability.
 - Main menu: the nickname button under the player opens Profile. Choose the

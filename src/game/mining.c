@@ -34,7 +34,7 @@ InventorySlot mining_drop(BetaBlockState b,int item,uint32_t random)
     case 1: d.id=4; break;
     case 2: case 60: d.id=3; break;
     case 7: case 8: case 9: case 10: case 11: case 20: case 51: case 52:
-    case 34: case 36: case 79: case 90: d.id=-1; d.count=0; break;
+    case 34: case 36: case 47: case 79: case 90: d.id=-1; d.count=0; break;
     case 13: if (random%10==0) d.id=318; break;
     case 16: d.id=263; break;
     case 17: d.damage=b.metadata&3; break;
@@ -51,6 +51,8 @@ InventorySlot mining_drop(BetaBlockState b,int item,uint32_t random)
     case 43: d.id=44; d.count=2; d.damage=b.metadata&3; break;
     case 44: d.damage=b.metadata&3; break;
     case 55: d.id=331; break;
+    case 53: d.id=5; break; /* Beta BlockStairs delegates drops to its model block. */
+    case 67: d.id=4; break;
     case 56: d.id=264; break;
     case 59: d.id=b.metadata==7 ? 296 : 295; break;
     case 62: d.id=61; break;
