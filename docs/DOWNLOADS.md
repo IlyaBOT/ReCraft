@@ -16,7 +16,7 @@ packages target its current SDK, not the Snow Leopard/i386 recipe.
 Download `SHA256SUMS.txt` from the same release. Compare the archive hash:
 
 ```powershell
-Get-FileHash .\ReCraft-0.2.0-dev-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\ReCraft-0.2.1-windows-x64.zip -Algorithm SHA256
 ```
 
 On Linux/macOS, from the directory containing all listed downloads:

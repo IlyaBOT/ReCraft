@@ -1467,7 +1467,9 @@ static void emit_wire(const Renderer *r,const World *w,ChunkMesh *mesh,const Chu
     for(n=0;n<4;++n) p[n][1]=y+.015625f;
     for(pass=0;pass<2;++pass) wire_quad(mesh,p,(int)beta_render_tile(164+(line ? 1 : 0)+pass*16),line==2,
                                      lo[0],lo[1],hi[0],hi[1],colors[pass]);
-    /* Dust climbing a solid neighbour uses the line and highlight tiles. */
+    /* Dust climbing a solid neighbour uses the line and highlight tiles.
+     * Match Beta/1.5.2 RenderBlocks: U follows height, each face points back
+     * towards the lower dust, and the top slightly overlaps the upper wire. */
     if(!world_block_def(world_peek_block(w,wx,y+1,wz))->opaque) for(n=0;n<4;++n) {
         static const int dx[4]={0,-1,0,1},dz[4]={1,0,-1,0};
         if(!world_block_def(world_peek_block(w,wx+dx[n],y,wz+dz[n]))->opaque ||
@@ -1478,10 +1480,10 @@ static void emit_wire(const Renderer *r,const World *w,ChunkMesh *mesh,const Chu
                 float a=i==0 || i==1 ? 1 : 0,b=i==0 || i==3 ? 1 : 0;
                 p[i][0]=x+(dx[n]<0 ? .015625f : dx[n]>0 ? .984375f : a);
                 p[i][2]=z+(dz[n]<0 ? .015625f : dz[n]>0 ? .984375f : 1-a);
-                p[i][1]=y+b;
+                p[i][1]=y+b*1.021875f;
             }
-            if(n==0 || n==1) { float t[3]; memcpy(t,p[0],sizeof(t)); memcpy(p[0],p[3],sizeof(t)); memcpy(p[3],t,sizeof(t)); memcpy(t,p[1],sizeof(t)); memcpy(p[1],p[2],sizeof(t)); memcpy(p[2],t,sizeof(t)); }
-            wire_quad(mesh,p,(int)beta_render_tile(165+pass*16),0,0,0,1,1,colors[pass]);
+            if(n==1 || n==2) { float t[3]; memcpy(t,p[0],sizeof(t)); memcpy(p[0],p[3],sizeof(t)); memcpy(p[3],t,sizeof(t)); memcpy(t,p[1],sizeof(t)); memcpy(p[1],p[2],sizeof(t)); memcpy(p[2],t,sizeof(t)); }
+            wire_quad(mesh,p,(int)beta_render_tile(165+pass*16),1,1,0,0,1,colors[pass]);
         }
     }
 }

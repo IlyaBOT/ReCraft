@@ -52,6 +52,11 @@ inspected; no additional runtime assets are needed.
   These requested 1.5.2 visual connections have their own query. Existing Beta
   electrical output geometry and timing are preserved; this change does not
   migrate saved circuits to the later redstone simulation.
+- Climbing dust now follows the shared Beta/1.5.2 wall vertex table: texture U
+  follows height, winding faces the lower dust on all four sides, and the top
+  reaches 1.021875 blocks to join the upper wire. Previously the generic quad
+  UV placed the stripe horizontally, and south/north wall winding pointed
+  into the support block, so back-face culling could hide those faces.
 
 ## Regression checks
 
@@ -64,6 +69,13 @@ arrow/cart/boat/TNT/sand, opacity against two backgrounds, a list exceeding
 64 models, tick interpolation, and rendering in front of/behind a terrain
 wall. CPU mesh checks cover all 16 dust masks, both repeater ends and states,
 all four repeater directions and all four delays.
+Vertical dust checks cover four wall orientations, powered/unpowered colours,
+both texture passes, positive/negative chunk seams, an obstructed climb and
+missing upper dust. A real-atlas pixel check renders all four walls with
+back-face culling enabled and verifies that the stripe spans their height.
+`renderer_test --wire-capture <path.png>` exports this four-wall check.
+The terrain/entity pixel fixture closes its world before releasing the
+renderer; cached meshes still refer to that renderer during destruction.
 
 `mechanisms_test` retains the four-repeater delay-2 ring comparison, with and
 without a dust branch, for 160 ticks. Tests use temporary fixtures; user saves

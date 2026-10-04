@@ -1,4 +1,6 @@
-ReCraft development preview, targeting Minecraft Beta 1.7.3 behavior.
+# ReCraft 0.2.1
+
+Experimental client release targeting Minecraft Beta 1.7.3 behavior.
 
 ## Download and launch
 
@@ -8,9 +10,15 @@ ReCraft development preview, targeting Minecraft Beta 1.7.3 behavior.
 
 Keep the executable/app and `assets/` together. Existing worlds belong in `saves/` beside them. Back up Beta worlds before editing them with this experimental client.
 
-## Changes in this preview
+## Changes in 0.2.1
 
-Legacy block mechanisms, dispensers, note blocks, pistons, creative catalogue corrections, falling blocks and TNT, burning effects, player profiles/skins/capes and experimental Microsoft session support. See the included README and project documentation for implemented behavior and remaining Beta differences.
+- Fixed climbing redstone dust: its texture runs vertically on all four wall faces, faces are no longer incorrectly culled, and the top joins the upper wire. Checked against both Beta 1.7.3 and 1.5.2 RenderBlocks.
+- Corrected repeater east/west texture orientation and dust corners, T junctions and crosses. Existing Beta circuit simulation remains unchanged.
+- Restored arrows, boats, minecarts and falling/TNT entities that could be hidden by a shared 64-model limit. TNT has an opaque textured body with a white flash.
+- Falling sand/gravel have tick-synchronised rendering and block AABB collision. Stacked columns settle without losing blocks, and saved falling entities resume correctly.
+- Improved Microsoft sign-in diagnostics distinguish token denial from profile failures.
+
+Includes the previous release's mechanisms, dispensers, note blocks, pistons, burning effects, profiles/skins/capes and experimental Microsoft sessions. See the README and compatibility documentation for remaining Beta differences. Exact terrain generation and a complete multiplayer implementation are still in development.
 
 ## Package verification
 

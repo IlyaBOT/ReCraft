@@ -1,6 +1,6 @@
 # Client builds and version
 
-`VERSION` is the single source for the client version (currently `0.2.0-dev`).
+`VERSION` is the single source for the client version (currently `0.2.1`).
 CMake and the legacy Makefile generate `recraft_version.h`; do not edit generated
 headers. Changing VERSION rebuilds the menu footer and `ReCraft --version`.
 The macOS bundle also receives the numeric part in its version fields.
@@ -70,7 +70,7 @@ ZIP; use [Releases](https://github.com/IlyaBOT/ReCraft/releases) for direct,
 permanent platform download links.
 
 Push a tag matching `v` + `VERSION` to publish a release, for example
-`v0.2.0-dev`. Publication waits for Windows, Linux and Vesper to pass. The
+`v0.2.1`. Publication waits for Windows, Linux and Vesper to pass. The
 Ubuntu release job downloads only this run's artifacts and runs
 `tools/publish_release.py` (Python 3.11+ standard library). It checks the archive
 and per-file SHA-256 inventories, runtime asset allowlist, exact source commit,

@@ -264,7 +264,7 @@ static void transport_world_pixels_test(void)
         glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,combined);
         assert(!memcmp(terrain,combined,sizeof(terrain))); /* Wall occludes all five models. */
     }
-    assert(glGetError()==GL_NO_ERROR);renderer_shutdown(r); assert(world_close(&w)==WORLD_OK); assets_shutdown();
+    assert(glGetError()==GL_NO_ERROR);assert(world_close(&w)==WORLD_OK); renderer_shutdown(r); assets_shutdown();
     puts("Terrain + arrow/cart/boat/TNT/sand: visible in front, depth-occluded behind wall passed");
 }
 
@@ -686,6 +686,119 @@ static void wire_shapes_test(void)
     puts("Dust: all 16 connection masks, both repeater ends/states, UV crops and steps passed");
 }
 
+static void wire_fixture_block(World *w,int x,int y,int z,uint8_t id)
+{
+    Chunk *c=world_get_chunk(w,x>=0 ? x/16 : (x-15)/16,z>=0 ? z/16 : (z-15)/16);
+    assert(c); chunk_set_block(c,x&15,y,z&15,id);
+}
+static void wire_vertical_mesh_test(void)
+{
+    /* Beta RenderBlocks and 1.5.2 use the same wall vertex/UV table. The
+     * texture's U axis runs UP the wall, with the front face towards dust. */
+    static const int dx[4]={0,-1,0,1},dz[4]={1,0,-1,0};
+    static const int positions[4][4][3]={
+        {{128,131,126},{128,0,126},{0,0,126},{0,131,126}},
+        {{2,131,128},{2,0,128},{2,0,0},{2,131,0}},
+        {{0,131,2},{0,0,2},{128,0,2},{128,131,2}},
+        {{126,131,0},{126,0,0},{126,0,128},{126,131,128}}
+    };
+    World w; Renderer policy={0}; int n,seam,power,covered,upper,pass,i;
+    /* Centre plus four neighbours can occupy five cache slots at seams.
+     * Keep fixture chunk pointers stable across world_get_chunk calls. */
+    assert(world_init(&w,42,1,9)==WORLD_OK);
+    for(n=0;n<4;++n) for(seam=0;seam<2;++seam) for(power=0;power<=15;power+=15)
+        for(covered=0;covered<2;++covered) for(upper=0;upper<2;++upper) {
+        int x=seam && dx[n] ? (dx[n]<0 ? 0 : 15) : 8;
+        int z=seam && dz[n] ? (dz[n]<0 ? 0 : 15) : 8;
+        Chunk *c=world_get_chunk(&w,x/16,z/16);
+        ChunkMesh mesh={0};
+        for(i=0;i<4;++i) {
+            wire_fixture_block(&w,x+dx[i],100,z+dz[i],0);
+            wire_fixture_block(&w,x+dx[i],101,z+dz[i],0);
+        }
+        wire_fixture_block(&w,x,100,z,55); chunk_set_metadata(c,x&15,100,z&15,(uint8_t)power);
+        wire_fixture_block(&w,x,101,z,covered ? 1 : 0);
+        wire_fixture_block(&w,x+dx[n],100,z+dz[n],1);
+        wire_fixture_block(&w,x+dx[n],101,z+dz[n],upper ? 55 : 76);
+        emit_wire(&policy,&w,&mesh,c,x&15,100,z&15);
+        assert(mesh.layers[1].vertex_count==(upper && !covered ? 16u : 8u));
+        if(upper && !covered) for(pass=0;pass<2;++pass) {
+            const VoxelVertex *v=mesh.layers[1].vertices+8+pass*4;
+            unsigned tile=beta_render_tile(165+pass*16);
+            int ax=v[1].x-v[0].x,ay=v[1].y-v[0].y,az=v[1].z-v[0].z;
+            int bx=v[2].x-v[0].x,by=v[2].y-v[0].y,bz=v[2].z-v[0].z;
+            assert(-(ay*bz-az*by)*dx[n]-(ax*by-ay*bx)*dz[n]>0);
+            for(i=0;i<4;++i) {
+                assert(v[i].x==(x&15)*128+positions[n][i][0]);
+                assert(v[i].y==100*128+positions[n][i][1]);
+                assert(v[i].z==(z&15)*128+positions[n][i][2]);
+                assert(v[i].u==partial_texcoord(tile,i==0 || i==3,0,0));
+                assert(v[i].v==partial_texcoord(tile,i>=2,0,1));
+            }
+        }
+        free(mesh.layers[1].vertices);
+    }
+    assert(world_close(&w)==WORLD_OK);
+    puts("Vertical dust: four wall normals/UVs, highlight, upper join, chunk seams and obstruction passed");
+}
+
+static void wire_vertical_pixels_test(const char *capture)
+{
+    static const int dx[4]={0,-1,0,1},dz[4]={1,0,-1,0},angle[4]={180,-90,0,90};
+    GLubyte pixels[320*240*3],row[320*3]; World w; Renderer *r; GLint mode;
+    int n,i,y;
+    assets_init(RECRAFT_TEST_ASSET_ROOT); r=renderer_init(); assert(r);
+    assert(world_init(&w,42,1,4)==WORLD_OK);
+    glGetIntegerv(GL_MATRIX_MODE,&mode); glPushAttrib(GL_ALL_ATTRIB_BITS);
+    glMatrixMode(GL_TEXTURE); glPushMatrix(); glLoadIdentity();
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); glOrtho(-.6,.6,-.05,1.1,-2,2);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix();
+    glDisable(GL_SCISSOR_TEST); glDisable(GL_FOG); glDisable(GL_LIGHTING); glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST); glDepthMask(GL_TRUE); glEnable(GL_CULL_FACE); glCullFace(GL_BACK); glFrontFace(GL_CCW);
+    glEnable(GL_ALPHA_TEST); glAlphaFunc(GL_GREATER,.5f); glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D,r->atlas); glTexEnvi(GL_TEXTURE_ENV,GL_TEXTURE_ENV_MODE,GL_MODULATE);
+    glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+    for(n=0;n<4;++n) {
+        Chunk *c=world_get_chunk(&w,0,0); ChunkMesh mesh={0};
+        for(i=0;i<4;++i) {
+            wire_fixture_block(&w,8+dx[i],100,8+dz[i],0);
+            wire_fixture_block(&w,8+dx[i],101,8+dz[i],0);
+        }
+        wire_fixture_block(&w,8,100,8,55); chunk_set_metadata(c,8,100,8,15);
+        wire_fixture_block(&w,8+dx[n],100,8+dz[n],1);
+        wire_fixture_block(&w,8+dx[n],101,8+dz[n],55);
+        emit_wire(r,&w,&mesh,c,8,100,8); assert(mesh.layers[1].vertex_count==16);
+        glViewport(n*80,0,80,240); glLoadIdentity(); glRotatef((float)angle[n],0,1,0); glTranslatef(-8.5f,-100,-8.5f);
+        glBegin(GL_QUADS);
+        for(i=8;i<16;++i) {
+            const VoxelVertex *v=mesh.layers[1].vertices+i;
+            glColor4ub(v->r,v->g,v->b,v->a); glTexCoord2f(v->u/32767.0f,v->v/32767.0f);
+            glVertex3f(v->x/128.0f,v->y/128.0f,v->z/128.0f);
+        }
+        glEnd(); free(mesh.layers[1].vertices);
+    }
+    glReadPixels(0,0,320,240,GL_RGB,GL_UNSIGNED_BYTE,pixels);
+    for(n=0;n<4;++n) {
+        int occupied=0;
+        for(y=0;y<240;++y) for(i=n*80;i<(n+1)*80;++i) {
+            const GLubyte *p=pixels+(y*320+i)*3;
+            if(p[0]>20 && p[0]>p[1] && p[0]>p[2]) { ++occupied; break; }
+        }
+        assert(occupied>150); /* A vertical stripe, not a horizontal band or a culled wall. */
+    }
+    if(capture) {
+        for(y=0;y<120;++y) {
+            GLubyte *a=pixels+y*320*3,*b=pixels+(239-y)*320*3;
+            memcpy(row,a,sizeof(row)); memcpy(a,b,sizeof(row)); memcpy(b,row,sizeof(row));
+        }
+        assert(stbi_write_png(capture,320,240,3,pixels,320*3));
+    }
+    assert(glGetError()==GL_NO_ERROR);
+    glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_TEXTURE); glPopMatrix();
+    glMatrixMode(mode); glPopAttrib(); assert(world_close(&w)==WORLD_OK); renderer_shutdown(r); assets_shutdown();
+    puts("Vertical dust: real atlas pixels span all four walls with back-face culling enabled");
+}
+
 int main(int argc, char **argv)
 {
     World world;
@@ -721,6 +834,7 @@ int main(int argc, char **argv)
     chest_mesh_test();
     mechanism_mesh_test();
     wire_shapes_test();
+    wire_vertical_mesh_test();
     {
         World light_world;
         Chunk *a,*b;
@@ -1242,6 +1356,7 @@ int main(int argc, char **argv)
     fire_cape_tnt_test();
     transport_pixels_test();
     transport_world_pixels_test();
+    wire_vertical_pixels_test(argc>2 && strcmp(argv[1],"--wire-capture")==0 ? argv[2] : NULL);
     inventory_preview_test();
     first_person_test();
     sign_render_test();
