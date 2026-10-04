@@ -52,12 +52,22 @@ jobs:
           fi
       - name: Package runtime
         run: |
-          cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$PWD/build/package" -DRUNTIME_DLL_DIR="$(cygpath -m "$MINGW_PREFIX/bin")" -P tools/package_runtime.cmake
-          echo "version=$(cat VERSION)" >> "$GITHUB_ENV"
+          version="$(cat VERSION)"
+          package_dir="$PWD/build/package-${{ github.run_id }}-${{ github.run_attempt }}/ReCraft-$version-windows-x64"
+          cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$package_dir" -DRUNTIME_DLL_DIR="$(cygpath -m "$MINGW_PREFIX/bin")" -P tools/package_runtime.cmake
+          cmake -DPACKAGE_DIR="$package_dir" -DARCHIVE_DIR="$PWD/build/archives" -P tools/archive_runtime.cmake
+          echo "version=$version" >> "$GITHUB_ENV"
+      - name: Scan Windows archive with Microsoft Defender
+        shell: pwsh
+        run: |
+          ./tools/scan_windows_package.ps1 -PackagePath "build/archives/ReCraft-$env:version-windows-x64.zip" -ReportPath build/archives/windows-defender-scan.txt
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ReCraft-${{ env.version }}-windows-x64
-          path: build/package/
+          path: |
+            build/archives/ReCraft-${{ env.version }}-windows-x64.zip
+            build/archives/ReCraft-${{ env.version }}-windows-x64.zip.sha256
+            build/archives/windows-defender-scan.txt
           if-no-files-found: error
 
   linux:
@@ -85,13 +95,18 @@ jobs:
           xvfb-run -a build/ReCraft --menu-smoke --window-check --no-audio --frames 30 --capture build/menu.png
       - name: Package runtime
         run: |
-          cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$PWD/build/package" -P tools/package_runtime.cmake
-          tar -czf build/ReCraft-linux-x64.tar.gz -C build/package .
-          echo "version=$(cat VERSION)" >> "$GITHUB_ENV"
+          version="$(cat VERSION)"
+          package_dir="$PWD/build/package-${{ github.run_id }}-${{ github.run_attempt }}/ReCraft-$version-linux-x64"
+          cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$package_dir" -P tools/package_runtime.cmake
+          cmake -DPACKAGE_DIR="$package_dir" -DARCHIVE_DIR="$PWD/build/archives" -P tools/archive_runtime.cmake
+          python3 -m unittest discover -s tests -p release_tools_test.py
+          echo "version=$version" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ReCraft-${{ env.version }}-linux-x64
-          path: build/ReCraft-linux-x64.tar.gz
+          path: |
+            build/archives/ReCraft-${{ env.version }}-linux-x64.tar.gz
+            build/archives/ReCraft-${{ env.version }}-linux-x64.tar.gz.sha256
           if-no-files-found: error
 
   macos:
@@ -148,11 +163,41 @@ jobs:
           fi
       - name: Package runtime
         run: |
-          cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$PWD/build/package" -P tools/package_runtime.cmake
-          tar -czf build/ReCraft-macos-x64.tar.gz -C build/package .
-          echo "version=$(cat VERSION)" >> "$GITHUB_ENV"
+          version="$(cat VERSION)"
+          package_dir="$PWD/build/package-${{ github.run_id }}-${{ github.run_attempt }}/ReCraft-$version-macos-x64"
+          cmake -DRUNTIME_DIR="$PWD/build" -DOUTPUT_DIR="$package_dir" -P tools/package_runtime.cmake
+          cmake -DPACKAGE_DIR="$package_dir" -DARCHIVE_DIR="$PWD/build/archives" -P tools/archive_runtime.cmake
+          echo "version=$version" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ReCraft-${{ env.version }}-macos-x64
-          path: build/ReCraft-macos-x64.tar.gz
+          path: |
+            build/archives/ReCraft-${{ env.version }}-macos-x64.tar.gz
+            build/archives/ReCraft-${{ env.version }}-macos-x64.tar.gz.sha256
           if-no-files-found: error
+
+  release:
+    name: Publish verified release
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check version tag
+        run: |
+          version="$(cat VERSION)"
+          test "$GITHUB_REF_NAME" = "v$version"
+          echo "version=$version" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: ReCraft-${{ env.version }}-*
+          merge-multiple: true
+          path: build/release
+      - name: Validate archives and publish complete release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/publish_release.py --directory build/release --version "$version" --commit "$GITHUB_SHA" --repository "$GITHUB_REPOSITORY" --publish

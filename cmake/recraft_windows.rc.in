@@ -1,0 +1,31 @@
+#include <winver.h>
+
+1 RT_MANIFEST "@RECRAFT_WINDOWS_MANIFEST@"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @RECRAFT_WINDOWS_VERSION@
+ PRODUCTVERSION @RECRAFT_WINDOWS_VERSION@
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "ReCraft contributors\0"
+            VALUE "FileDescription", "ReCraft legacy voxel client\0"
+            VALUE "FileVersion", "@RECRAFT_VERSION@\0"
+            VALUE "InternalName", "ReCraft\0"
+            VALUE "OriginalFilename", "ReCraft.exe\0"
+            VALUE "ProductName", "ReCraft\0"
+            VALUE "ProductVersion", "@RECRAFT_VERSION@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

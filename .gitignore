@@ -25,4 +25,6 @@ options.txt
 *.app/
 *.log
 *.csv
+__pycache__/
+*.pyc
 /docs/[Ss]creenshots/

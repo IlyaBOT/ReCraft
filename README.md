@@ -2,6 +2,16 @@
 
 [Build and launch](#manual-build-and-launch) | [Testing](#testing) | [Controls](#play)
 
+## Download a build
+
+Download a platform archive from [GitHub Releases](https://github.com/IlyaBOT/ReCraft/releases).
+Extract it into a writable directory; keep the executable/app and `assets/`
+together. On Windows, start `ReCraft.exe`; MSYS2 is not required for these
+packages. On Linux, run `./ReCraft`; on macOS, open `ReCraft.app`.
+The Vesper macOS build is x64 for its installed SDK, not Snow Leopard/i386.
+SHA-256 checksums and a Windows Defender scan report accompany each release.
+See [download verification and browser warnings](docs/DOWNLOADS.md).
+
 ReCraft is a voxel sandbox built around raylib 1.4, GLFW 3.1.2, and a fixed-function OpenGL renderer. Its target is an i386 Mac running Mac OS X 10.6.8 with Intel GMA 950. Modern Windows, Linux and macOS builds are development/test hosts; a native Snow Leopard build and GPU run remain unverified.
 
 The build version is stored in [VERSION](VERSION) and appears at the bottom left
