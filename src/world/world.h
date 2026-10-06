@@ -62,6 +62,7 @@ const BlockDef *world_block_def(uint8_t id);
 #define CHUNK_DIRTY_SMOOTH_MESH 8u
 #define CHUNK_DIRTY_ENTITIES 16u
 #define CHUNK_DIRTY_TICKS 32u
+#define CHUNK_DIRTY_COLOR 64u
 
 /* x + z * 16 + y * 256. Block bytes use Beta IDs; metadata is a nibble. */
 typedef struct Chunk {
@@ -71,6 +72,7 @@ typedef struct Chunk {
     uint8_t metadata[WORLD_NIBBLE_BYTES];
     uint8_t block_light[WORLD_NIBBLE_BYTES];
     uint8_t sky_light[WORLD_NIBBLE_BYTES];
+    uint8_t *red_light; /* Optional runtime light channel; never serialized. */
     uint32_t dirty_flags;
     uint64_t last_used;
     uint32_t revision;
@@ -137,6 +139,7 @@ typedef struct World {
     uint8_t structures;
     uint8_t persistent;
     uint8_t network_mode; /* Allocate empty chunks until protocol data arrives. */
+    uint8_t colored_redstone;
     uint8_t beta_format;   /* Original Beta 1.7.3 McRegion storage. */
     int64_t beta_world_time;
     int difficulty,rain_time,thunder_time,raining,thundering,sky_subtracted;
@@ -224,6 +227,11 @@ void world_physics_forget_chunk(World *world,Chunk *chunk);
 void world_redstone_notify(World *world,int x,int y,int z);
 uint8_t world_peek_metadata(const World *world,int x,int y,int z);
 void world_finish_light_updates(World *world);
+uint8_t world_render_light(const World *world,int x,int y,int z);
+uint8_t world_red_light(const World *world,int x,int y,int z);
+int world_sky_light(const World *world,int x,int y,int z);
+void world_color_lighting(World *world,int enabled);
+void world_finish_color_updates(World *world);
 int world_take_drop(World *world, WorldDropEvent *drop);
 void world_drop_stack(World *world,int x,int y,int z,InventorySlot item);
 void world_drop_stack_at(World *world,int x,int y,int z,float dx,float dy,float dz,InventorySlot item);

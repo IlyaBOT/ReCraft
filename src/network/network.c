@@ -65,9 +65,13 @@ typedef struct RemoteEntity {
     float yaw,pitch;
     uint16_t type;
     uint8_t variant,flags;
+    int16_t item_id,item_damage;
+    uint8_t item_count;
+    double vx,vy,vz;
     char name[65];
 } RemoteEntity;
 struct NetworkClient {
+    NetworkStats stats;
     World *world;
     NetworkEventFn callback;
     void *user;
@@ -81,6 +85,7 @@ struct NetworkClient {
     size_t rx_count,tx_count;
     int logged_in,dimension;
     int32_t self_id;
+    int32_t vehicle_id;
     NetworkJoinFn join;void *join_context;int joining;char server_id[65];
     RemoteEntity entities[NET_MAX_ENTITIES];
 };
@@ -148,7 +153,7 @@ static void stop_transport(NetworkClient *c)
     }
     if(c->addresses) freeaddrinfo(c->addresses);
     c->addresses=c->next_address=NULL;
-    c->rx_count=c->tx_count=0; c->logged_in=0;
+    c->rx_count=c->tx_count=0; c->logged_in=0; c->vehicle_id=-1;
 }
 static void fail(NetworkClient *c,const char *reason)
 {
@@ -256,7 +261,7 @@ NetworkClient *network_create(World *world,NetworkEventFn callback,void *user)
 #endif
         return NULL;
     }
-    c->world=world; c->callback=callback; c->user=user; c->socket=NET_INVALID; return c;
+    c->world=world; c->callback=callback; c->user=user; c->socket=NET_INVALID; c->vehicle_id=-1; return c;
 }
 void network_destroy(NetworkClient *c)
 {
@@ -397,7 +402,9 @@ static RemoteEntity *entity_find(NetworkClient *c,int32_t id,int create)
 static void entity_event(NetworkClient *c,RemoteEntity *r,NetworkEventType type,const char *name)
 {
     NetworkEvent e; memset(&e,0,sizeof(e)); e.type=type; e.entity_id=r->id; e.entity_type=r->type; e.entity_variant=r->variant;
-    e.x=r->x; e.y=r->y; e.z=r->z; e.yaw=r->yaw; e.pitch=r->pitch; e.text=name; emit(c,&e);
+    e.x=r->x; e.y=r->y; e.z=r->z; e.yaw=r->yaw; e.pitch=r->pitch; e.text=name;
+    e.item_id=r->item_id; e.item_count=r->item_count; e.item_damage=r->item_damage;
+    e.vx=r->vx; e.vy=r->vy; e.vz=r->vz; emit(c,&e);
 }
 static void inventory_slot(NetworkClient *c,const uint8_t *p,int window,int slot)
 {
@@ -417,10 +424,15 @@ static void entity_metadata(NetworkClient *c,const Beta14Packet *packet,size_t o
                 event.type=NETWORK_EVENT_ENTITY_FLAGS;event.entity_id=id;
                 event.entity_type=id==c->self_id ? -1 : r ? r->type : 255;event.value=p[off];emit(c,&event);
             }
+            else if(r) {
+                NetworkEvent event;memset(&event,0,sizeof(event));
+                event.type=NETWORK_EVENT_ENTITY_METADATA;event.entity_id=id;event.entity_type=r->type;
+                event.property=(int)index;event.value=(int8_t)p[off];emit(c,&event);
+            }
             bytes=1;
         } else if(type==1)bytes=2;else if(type==2 || type==3)bytes=4;
-        else if(type==4)bytes=2+beta14_u16(p+off)*2;
-        else if(type==5)bytes=beta14_u16(p+off)==65535 ? 2 : 5;
+        else if(type==4)bytes=2+beta14_u16(p+off); /* Java writeUTF byte count. */
+        else if(type==5)bytes=5; /* Beta WatchableObject ItemStack has fixed fields. */
         else if(type==6)bytes=12;else break;
         off+=bytes;
     }
@@ -464,6 +476,7 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
         }
         /* Beta keeps the same WorldClient and its chunks for a death respawn.
          * The server supplies the new player inventory and position separately. */
+        c->vehicle_id=-1;
         e.type=NETWORK_EVENT_RESPAWN; e.dimension=c->dimension; emit(c,&e); break;
     case 0x0a: queue_bytes(c,p,2); break;
     case 0x0c:
@@ -525,19 +538,44 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
     case 0x14: case 0x15: case 0x17: case 0x18: {
         RemoteEntity *r=entity_find(c,beta14_i32(p+1),1); if(!r) break; text[0]=0;
         if(p[0]==0x14) { off=beta14_read_string(packet,5,text,sizeof(text)); r->type=0;snprintf(r->name,sizeof(r->name),"%.64s",text); }
-        else { off=p[0]==0x15?10:6; r->type=p[0]==0x15?255:p[5]; }
+        else { off=p[0]==0x15?10:6; r->type=p[0]==0x15?1008:p[5]; }
         r->variant=0;
         if(p[0]==0x17) {
             /* Object packet types are a separate Beta registry, not mob IDs. */
-            r->type=p[5]==1 ? 1002 : p[5]==60 ? 1000 : p[5]>=10 && p[5]<=12 ? 1001 : 255;
+            r->type=p[5]==1 ? 1002 : p[5]==60 ? 1000 : p[5]>=10 && p[5]<=12 ? 1001 : p[5]==50 ? 1003 : p[5]==61 ? 1004 : p[5]==62 ? 1005 : p[5]==70 || p[5]==71 ? 1006 : 255;
             if(r->type==1001) r->variant=p[5]-10;
+            if(r->type==1006) r->variant=p[5]==70 ? 12 : 13;
+            if(beta14_i32(p+18)>0) { r->vx=(int16_t)beta14_u16(p+22)/400.0;r->vy=(int16_t)beta14_u16(p+24)/400.0;r->vz=(int16_t)beta14_u16(p+26)/400.0; }
         }
         r->x=beta14_i32(p+off)/32.0; r->y=beta14_i32(p+off+4)/32.0; r->z=beta14_i32(p+off+8)/32.0;
+        if(p[0]==0x15) {
+            r->item_id=(int16_t)beta14_u16(p+5);r->item_count=p[7];r->item_damage=(int16_t)beta14_u16(p+8);
+            if(r->item_id<=0 || r->item_count==0 || r->item_count>127) { r->used=0;fail(c,"Invalid Item entity stack");break; }
+            r->vx=(int8_t)p[22]*(20.0/128);r->vy=(int8_t)p[23]*(20.0/128);r->vz=(int8_t)p[24]*(20.0/128);
+        }
         if(p[0]==0x14 || p[0]==0x18) { r->yaw=p[off+12]*(360.0f/256.0f); r->pitch=p[off+13]*(360.0f/256.0f); }
         entity_event(c,r,NETWORK_EVENT_ENTITY_SPAWN,text);
         if(p[0]==0x18)entity_metadata(c,packet,20,r->id);
         break; }
     case 0x28: entity_metadata(c,packet,5,beta14_i32(p+1));break;
+    case 0x27:
+        e.type=NETWORK_EVENT_ATTACH;e.entity_id=beta14_i32(p+1);e.vehicle_id=beta14_i32(p+5);
+        e.entity_type=e.entity_id==c->self_id ? -1 : 0;
+        if(e.entity_type==-1)c->vehicle_id=e.vehicle_id;
+        emit(c,&e);break;
+    case 0x1c: {
+        RemoteEntity *r=entity_find(c,beta14_i32(p+1),0);
+        e.type=NETWORK_EVENT_ENTITY_VELOCITY;e.entity_id=beta14_i32(p+1);
+        e.entity_type=e.entity_id==c->self_id ? -1 : r ? r->type : 255;
+        e.vx=(int16_t)beta14_u16(p+5)/400.0;e.vy=(int16_t)beta14_u16(p+7)/400.0;e.vz=(int16_t)beta14_u16(p+9)/400.0;
+        if(r) { r->vx=e.vx;r->vy=e.vy;r->vz=e.vz; } emit(c,&e);break; }
+    case 0x26:
+        e.type=NETWORK_EVENT_ENTITY_STATUS;e.entity_id=beta14_i32(p+1);e.value=p[5];emit(c,&e);break;
+    case 0x16: {
+        RemoteEntity *r=entity_find(c,beta14_i32(p+1),0);
+        if(r) { e.type=NETWORK_EVENT_ENTITY_COLLECT;e.entity_id=r->id;e.vehicle_id=beta14_i32(p+5);
+            e.entity_type=e.vehicle_id==c->self_id ? -1 : 0;e.x=r->x;e.y=r->y;e.z=r->z;
+            emit(c,&e);entity_event(c,r,NETWORK_EVENT_ENTITY_DESPAWN,NULL);r->used=0; } break; }
     case 0x1f: case 0x20: case 0x21: case 0x22: {
         RemoteEntity *r=entity_find(c,beta14_i32(p+1),0); if(!r) break;
         if(p[0]==0x22) { r->x=beta14_i32(p+5)/32.0; r->y=beta14_i32(p+9)/32.0; r->z=beta14_i32(p+13)/32.0; off=17; }
@@ -545,7 +583,9 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
         else off=5;
         if(p[0]!=0x1f) { r->yaw=p[off]*(360.0f/256.0f); r->pitch=p[off+1]*(360.0f/256.0f); }
         entity_event(c,r,NETWORK_EVENT_ENTITY_MOVE,NULL); break; }
-    case 0x1d: { RemoteEntity *r=entity_find(c,beta14_i32(p+1),0); if(r) { entity_event(c,r,NETWORK_EVENT_ENTITY_DESPAWN,NULL); r->used=0; } break; }
+    case 0x1d: { RemoteEntity *r=entity_find(c,beta14_i32(p+1),0); if(r) {
+        if(c->vehicle_id==r->id) { c->vehicle_id=-1;e.type=NETWORK_EVENT_ATTACH;e.entity_id=c->self_id;e.entity_type=-1;e.vehicle_id=-1;emit(c,&e); }
+        entity_event(c,r,NETWORK_EVENT_ENTITY_DESPAWN,NULL); r->used=0; } break; }
     case 0x64: {
         char title[65]; size_t count=beta14_u16(p+3);
         if(count>64) { fail(c,"Invalid container title"); break; }
@@ -573,7 +613,7 @@ static void handle_packet(NetworkClient *c,const Beta14Packet *packet)
     }
 }
 
-void network_tick(NetworkClient *c)
+static void network_tick_inner(NetworkClient *c)
 {
     unsigned packets=0,reads=0,regions=0; double now;
     if(!c || c->state==NETWORK_DISCONNECTED || c->state==NETWORK_ERROR) return;
@@ -594,10 +634,13 @@ void network_tick(NetworkClient *c)
         if(result<0) { char message[96]; snprintf(message,sizeof(message),result==-2?"Unsupported packet 0x%02X (requires Beta 1.7.3 protocol 14)":"Malformed packet 0x%02X",c->rx_count?c->rx[0]:0); fail(c,message); return; }
         if(result==1) {
             if(packet.id==0x33 && regions++>=2) break;
-            handle_packet(c,&packet);
+            { double before=net_time();handle_packet(c,&packet);
+              ++c->stats.packets;
+              if(packet.id==0x33){++c->stats.chunks;c->stats.chunk_ms+=(net_time()-before)*1000;}
+            }
             if(c->state==NETWORK_ERROR || c->state==NETWORK_DISCONNECTED) return;
             c->rx_count-=packet.size; memmove(c->rx,c->rx+packet.size,c->rx_count); ++packets;
-            if(c->joining)break;
+            if(c->joining || net_time()-now>=.004)break;
             continue;
         }
         if(reads++>=4) break;
@@ -609,8 +652,20 @@ void network_tick(NetworkClient *c)
     }
     flush_send(c);
 }
+void network_tick(NetworkClient *c)
+{
+    double start;if(!c)return;
+    memset(&c->stats,0,sizeof(c->stats));start=net_time();network_tick_inner(c);
+    c->stats.tick_ms=(net_time()-start)*1000;c->stats.pending_bytes=c->rx_count;
+}
+NetworkStats network_stats(const NetworkClient *c)
+{ NetworkStats zero={0};return c ? c->stats : zero; }
 int network_send_position(NetworkClient *c,double x,double y,double z,float yaw,float pitch,int ground)
 { uint8_t p[42]; size_t n; if(!c || c->state!=NETWORK_PLAY) return 0; n=beta14_movement(p,sizeof(p),x,y,z,yaw,pitch,ground); return queue_bytes(c,p,n); }
+int32_t network_vehicle_id(const NetworkClient *c) { return c ? c->vehicle_id : -1; }
+int network_send_riding(NetworkClient *c,double vx,double vz,float yaw,float pitch,int ground)
+{ uint8_t p[42];size_t n;if(!c || c->state!=NETWORK_PLAY || c->vehicle_id<0)return 0;
+  n=beta14_riding(p,sizeof(p),vx/20,vz/20,yaw,pitch,ground);return queue_bytes(c,p,n); }
 int network_terrain_ready(const NetworkClient *c,double x,double z)
 {
     int dx,dz;

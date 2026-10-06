@@ -1002,9 +1002,22 @@ static UiAction video_menu(Ui *ui)
         snprintf(text, sizeof(text), "VBO Budget: %d MiB", o->vbo_budget_mb);
         if (option_button(ui, 23, text, 1)) o->vbo_budget_mb = o->vbo_budget_mb >= 32 ? 4 : o->vbo_budget_mb*2;
     }
-    if(option_button(ui,24,o->reduced_transparency ? "Reduced Transparency: ON" : "Reduced Transparency: OFF",1))
-        o->reduced_transparency=!o->reduced_transparency;
+    if(option_button(ui,24,"Environment...",1)) ui_set_screen(ui,UI_SCREEN_ENVIRONMENT);
     if (button(ui, 220, 442, 200, 29, "Done", 1)) ui_set_screen(ui, UI_SCREEN_OPTIONS);
+    return action;
+}
+
+static UiAction environment_menu(Ui *ui)
+{
+    UiOptions *o=&ui->options;UiAction action=empty_action();
+    draw_background(1);title("Environment");
+    if(option_button(ui,0,o->reduced_transparency ? "Reduced Transparency: ON" : "Reduced Transparency: OFF",1))o->reduced_transparency=!o->reduced_transparency;
+    if(option_button(ui,1,o->colored_redstone ? "Red Torch Light: Red" : "Red Torch Light: Vanilla",1))o->colored_redstone=!o->colored_redstone;
+    if(option_button(ui,2,o->fancy_leaves ? "Transparent Leaves: Fancy" : "Transparent Leaves: Fast",1))o->fancy_leaves=!o->fancy_leaves;
+    if(option_button(ui,3,o->smooth_lighting ? "Smooth Lighting: ON" : "Smooth Lighting: OFF",1))o->smooth_lighting=!o->smooth_lighting;
+    if(option_button(ui,4,o->menu_blur ? "Menu Blur: ON" : "Menu Blur: OFF",1))o->menu_blur=!o->menu_blur;
+    centered("Red torch colour is an optional visual effect.",320,240,11,col(180,180,180,255));
+    if(button(ui,220,442,200,29,"Done",1))ui_set_screen(ui,UI_SCREEN_VIDEO);
     return action;
 }
 
@@ -1088,6 +1101,7 @@ UiAction ui_frame(Ui *ui, const UiWorldEntry *worlds, int world_count,
             case UI_SCREEN_PAUSE:
                 action.type = UI_ACTION_RESUME; ui_set_screen(ui, UI_SCREEN_GAME); return action;
             case UI_SCREEN_CONFIRM: ui_set_screen(ui, ui->previous_screen); break;
+            case UI_SCREEN_ENVIRONMENT: ui_set_screen(ui,UI_SCREEN_VIDEO); break;
             case UI_SCREEN_VIDEO: ui_set_screen(ui, UI_SCREEN_OPTIONS); break;
             case UI_SCREEN_LANGUAGES: ui_set_screen(ui,ui->language_parent); break;
             case UI_SCREEN_PACKS:
@@ -1115,6 +1129,7 @@ UiAction ui_frame(Ui *ui, const UiWorldEntry *worlds, int world_count,
         case UI_SCREEN_OPTIONS: return options_menu(ui);
         case UI_SCREEN_PROFILE: return profile_menu(ui);
         case UI_SCREEN_VIDEO: return video_menu(ui);
+        case UI_SCREEN_ENVIRONMENT: return environment_menu(ui);
         case UI_SCREEN_LANGUAGES: return languages_menu(ui);
         case UI_SCREEN_PACKS: return packs_menu(ui);
         case UI_SCREEN_CONTROLS: return controls_menu(ui,0);

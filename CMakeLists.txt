@@ -286,7 +286,7 @@ endif()
 if(EXISTS "${CMAKE_SOURCE_DIR}/tests/renderer_test.c")
     add_executable(renderer_test tests/renderer_test.c src/world/world.c src/world/storage.c
         src/world/beta_blocks.c src/assets/assets.c src/util/game_paths.c src/renderer/texture_animation.c
-        src/game/entity_render.c src/game/creative.c src/ui/pixel_font.c src/assets/server_icon_png.c
+        src/game/entity_render.c src/game/entity_state.c src/game/creative.c src/ui/pixel_font.c src/assets/server_icon_png.c
         src/ui/ui.c src/ui/gui_button.c src/game/settings.c src/network/status_json.c)
     target_include_directories(renderer_test PRIVATE src "${RAYLIB_ROOT}/src" "${CMAKE_BINARY_DIR}/generated")
     target_compile_definitions(renderer_test PRIVATE RECRAFT_TEST_ASSET_ROOT="${CMAKE_SOURCE_DIR}")
@@ -396,13 +396,17 @@ endif()
 if(_lab_python)
     add_test(NAME block_lab_test COMMAND "${_lab_python}" "${CMAKE_SOURCE_DIR}/tests/block_lab_test.py" "$<TARGET_FILE:legacy_shapes_test>")
 endif()
-foreach(_world_test world_test renderer_test network_test beta_region_test gameplay_test sign_test transport_test audio_record_test beta_events_test mechanisms_test legacy_shapes_test)
+add_executable(entity_state_test tests/entity_state_test.c src/world/world.c src/world/storage.c src/world/beta_blocks.c src/game/entity_state.c)
+target_include_directories(entity_state_test PRIVATE src)
+target_link_libraries(entity_state_test m)
+add_test(NAME entity_state_test COMMAND entity_state_test)
+foreach(_world_test entity_state_test world_test renderer_test network_test beta_region_test gameplay_test sign_test transport_test audio_record_test beta_events_test mechanisms_test legacy_shapes_test)
     if(TARGET ${_world_test})
         target_sources(${_world_test} PRIVATE src/world/block_entity.c src/world/environment.c src/world/climate.c src/world/redstone.c src/world/beta_session.c src/game/bed.c src/game/sign.c src/game/player.c
             src/world/entities.c src/world/mobs.c src/world/transport.c src/world/rail.c src/world/door.c
             src/world/physics.c src/world/ticks.c src/world/fluid.c src/game/mining.c
             src/world/foliage.c src/world/fire.c src/world/explosion.c src/world/mob_path.c src/world/mechanisms.c src/world/piston.c
-            src/game/crafting.c src/game/inventory.c src/nbt/nbt.c)
+            src/game/crafting.c src/game/inventory.c src/nbt/nbt.c src/world/collision.c)
     endif()
 endforeach()
 

@@ -65,38 +65,6 @@ static void scene_end(GLint mode)
   glMatrixMode(GL_TEXTURE); glPopMatrix(); glMatrixMode(mode); glPopAttrib(); }
 
 /* The six face rectangles follow Beta ModelRenderer's 64x32 skin layout. */
-int entity_pick(const RenderEntity *entities,int count,const RendererCamera *camera,float reach,float block_distance)
-{
-    float direction[3]={sinf(camera->yaw)*cosf(camera->pitch),sinf(camera->pitch),-cosf(camera->yaw)*cosf(camera->pitch)};
-    float origin[3]={camera->x,camera->y,camera->z},nearest=fminf(reach,block_distance);
-    int i,result=-1;
-    for(i=0;i<count;++i) {
-        const RenderEntity *e=&entities[i]; int axis;
-        float width=.6f,height=1.8f,lo[3],hi[3],enter=0,leave=nearest;
-        if(!e->active || (e->type!=0 && e->type!=50 && e->type!=51 && e->type!=52 && e->type!=54 &&
-           e->type!=90 && e->type!=91 && e->type!=92 && e->type!=93 && e->type!=1001 && e->type!=1002)) continue;
-        if(e->type==52) { width=1.4f; height=.9f; }
-        else if(e->type==90) { width=.9f; height=.9f; }
-        else if(e->type==91 || e->type==92) { width=.9f; height=1.3f; }
-        else if(e->type==93) { width=.3f; height=.4f; }
-        else if(e->type==1001) { width=.98f; height=.7f; }
-        else if(e->type==1002) { width=1.5f; height=.6f; }
-        lo[0]=e->x-width*.5f-.1f; lo[1]=e->y-.1f; lo[2]=e->z-width*.5f-.1f;
-        hi[0]=e->x+width*.5f+.1f; hi[1]=e->y+height+.1f; hi[2]=e->z+width*.5f+.1f;
-        if(e->type==1002) { lo[1]-=.3f; hi[1]-=.3f; }
-        for(axis=0;axis<3;++axis) {
-            if(fabsf(direction[axis])<1e-6f) { if(origin[axis]<lo[axis] || origin[axis]>hi[axis]) break; }
-            else {
-                float a=(lo[axis]-origin[axis])/direction[axis],b=(hi[axis]-origin[axis])/direction[axis];
-                if(a>b) { float swap=a; a=b; b=swap; }
-                enter=fmaxf(enter,a); leave=fminf(leave,b); if(enter>leave) break;
-            }
-        }
-        if(axis==3 && enter<nearest) { nearest=enter; result=e->id; }
-    }
-    return result;
-}
-
 static int skin_height=32;
 static int player_modern;
 static void held_cube(const InventorySlot *item);
@@ -128,15 +96,16 @@ static void limb(float x,float y,float angle,int arm,int mirror,int thin)
     }
     glPopMatrix();
 }
+static int hurt_overlay;
 static void player_model_pose(const RenderEntity *e,float head_yaw)
 {
-    float angle=sinf(e->walk)*32;
+    float angle=cosf(e->walk*.6662f)*80*e->walk_amount;
     int previous_height=skin_height,previous_modern=player_modern;
     if(e->type==0) skin_height=e->skin ? e->skin_height : assets_get_texture(ASSET_PLAYER_SKIN).height;
     player_modern=e->type==0&&skin_height==64;
     glPushMatrix(); glTranslatef(e->draw_x,e->draw_y+1.40625f,e->draw_z);
     glRotatef(180-e->yaw,0,1,0); glScalef(.05859375f,-.05859375f,.05859375f);
-    glColor3ub(255,255,255);
+    if(hurt_overlay)glColor4f(1,0,0,.4f);else glColor3ub(255,255,255);
     skin_box(-4,0,-2,8,12,4,16,16,0);
     if(player_modern) skin_box_inflated(-4,0,-2,8,12,4,16,32,0,.25f);
     glPushMatrix(); glRotatef(head_yaw,0,1,0); glRotatef(e->pitch,1,0,0);
@@ -145,6 +114,12 @@ static void player_model_pose(const RenderEntity *e,float head_yaw)
     glPopMatrix();
     limb(-5,2,e->type==54 || e->type==51 ? -90+e->pitch : angle,1,0,e->type==51);
     limb(5,2,e->type==54 || e->type==51 ? -90+e->pitch : -angle,1,1,e->type==51);
+    if(e->type==51) {
+        GLint texture;glGetIntegerv(GL_TEXTURE_BINDING_2D,&texture);
+        glPushMatrix();glTranslatef(-5,2,0);glRotatef(-90+e->pitch,1,0,0);
+        glTranslatef(-1,7,1);glRotatef(-20,0,0,1);glRotatef(-100,1,0,0);glRotatef(45,0,1,0);glScalef(6,6,6);
+        held_sprite(beta_item_tile(261,0),0);glPopMatrix();glBindTexture(GL_TEXTURE_2D,(GLuint)texture);
+    }
     limb(-2,12,-angle,0,0,e->type==51); limb(2,12,angle,0,1,e->type==51);
     if(e->type==0 && e->cape) {
         GLint texture;glGetIntegerv(GL_TEXTURE_BINDING_2D,&texture);glBindTexture(GL_TEXTURE_2D,e->cape);
@@ -216,8 +191,8 @@ static AssetId mob_skin(int type)
 }
 static void mob_model(const RenderEntity *e)
 {
-    float angle=sinf(e->walk)*32; int leg,i;
-    glColor3ub(255,255,255);
+    float angle=cosf(e->walk*.6662f)*80*e->walk_amount; int leg,i;
+    if(hurt_overlay)glColor4f(1,0,0,.4f);else glColor3ub(255,255,255);
     if(e->type==51 || e->type==54) { player_model(e); return; }
     glPushMatrix(); glTranslatef(e->draw_x,e->draw_y+(e->type==50 ? 1.375f : 1.5f),e->draw_z);
     if(e->type==50 && e->fuse>0) {
@@ -261,8 +236,8 @@ static void mob_model(const RenderEntity *e)
         model_part(0,15,9,0,-5,-4,-6,10,8,12,0,12);
         for(i=0;i<8;++i) {
             glPushMatrix(); glTranslatef(i&1 ? 4 : -4,15,(float)(2-i/2));
-            glRotatef((i&1 ? -1 : 1)*(30+sinf(e->walk+(float)i)*10),0,0,1);
-            glRotatef((float)(i/2-2)*20,0,1,0);
+            float yaw,roll;entity_spider_leg_pose(e->walk,e->walk_amount,i,&yaw,&roll);
+            glRotatef(roll*57.2957795f,0,0,1);glRotatef(yaw*57.2957795f,0,1,0);
             skin_box(i&1 ? -1 : -15,-1,-1,16,2,2,18,0,0); glPopMatrix();
         }
     }
@@ -321,6 +296,21 @@ void entity_render_tick_fraction(RenderEntity *entities,int count,float fraction
     int i; fraction=fmaxf(0,fminf(1,fraction));
     for(i=0;i<count;++i) if(entities[i].active && entities[i].local_interpolation) entities[i].phase=fraction;
 }
+static void item_model(const InventorySlot *item,float age,float yaw)
+{
+    int n,copies=item->count>20 ? 4 : item->count>5 ? 3 : item->count>1 ? 2 : 1;
+    int block=item->id>0 && item->id<BETA_BLOCK_COUNT,cube=block && world_block_def((uint8_t)item->id)->solid;
+    glTranslatef(0,.15f+sinf(age*2)*.05f,0);
+    glRotatef(cube ? age*57.2957795f : -yaw*57.2957795f,0,1,0);
+    glScalef(cube ? .25f : .5f,cube ? .25f : .5f,cube ? .25f : .5f);
+    for(n=0;n<copies;++n) {
+        glPushMatrix();if(n)glTranslatef(n&1 ? .13f : -.13f,n*.06f,n&2 ? .13f : -.13f);
+        if(cube)held_cube(item);
+        else {int tile=block ? beta_block_terrain_tile((BetaBlockState){(uint8_t)item->id,(uint8_t)item->damage},2) : beta_item_tile(item->id,item->damage);
+              if(tile>=0)held_sprite(tile,block);}
+        glPopMatrix();
+    }
+}
 int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *camera,
                        int width,int height,int distance,float dt)
 {
@@ -340,20 +330,10 @@ int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *ca
     /* The caller already bounds the entity list. A shared 64-model budget
      * hid every projectile/vehicle following a populated mob list. */
     for (i=0;i<count;++i) {
-        RenderEntity *e=&entities[i]; float dx,dy,dz,a=dt*10,move;
-        if (!e->active) continue;
-        dx=e->x-e->draw_x; dy=e->y-e->draw_y; dz=e->z-e->draw_z;
-        if(e->local_interpolation) {
-            e->draw_x=e->previous_x+(e->x-e->previous_x)*e->phase;
-            e->draw_y=e->previous_y+(e->y-e->previous_y)*e->phase;
-            e->draw_z=e->previous_z+(e->z-e->previous_z)*e->phase; e->positioned=1;
-        } else if (!e->positioned || dx*dx+dy*dy+dz*dz>64) { e->draw_x=e->x; e->draw_y=e->y; e->draw_z=e->z; e->positioned=1; }
-        else {
-            if(a>1) a=1;
-            if(a<0) a=0;
-            move=sqrtf(dx*dx+dz*dz)*a;
-            e->draw_x+=dx*a; e->draw_y+=dy*a; e->draw_z+=dz*a; e->walk+=move*6;
-        }
+        RenderEntity pose,*e=&entities[i];float dx,dy,dz;
+        if(!e->active)continue;
+        entity_render_update(e,1,dt,e->phase);
+        pose=*e;pose.yaw=e->draw_yaw;pose.pitch=e->draw_pitch;e=&pose;
         dx=e->draw_x-camera->x; dy=e->draw_y-camera->y; dz=e->draw_z-camera->z;
         if(dx*dx+dy*dy+dz*dz>far2) continue;
         {
@@ -375,6 +355,10 @@ int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *ca
             glColor4f(1,1,1,1);glEnable(GL_ALPHA_TEST);
             glPopMatrix();
         }
+        else if(e->type==1008) {
+            glPushMatrix();glTranslatef(e->draw_x,e->draw_y,e->draw_z);
+            item_model(&e->item,e->age,camera->yaw);glPopMatrix();
+        }
         else if(e->type==1000 || e->type==1001 || e->type==1002) transport_model(e);
         else if(e->type==1004 || e->type==1005) {
             glEnable(GL_TEXTURE_2D);
@@ -384,7 +368,19 @@ int entity_render_draw(RenderEntity *entities,int count,const RendererCamera *ca
         }
         else if(e->type==0) { glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,e->skin ? e->skin : skin.id); player_model(e); }
         else if(e->type==50 || e->type==51 || e->type==52 || e->type==54 || (e->type>=90 && e->type<=93)) {
-            glEnable(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D,assets_get_texture(mob_skin(e->type)).id); mob_model(e);
+            glEnable(GL_TEXTURE_2D);glBindTexture(GL_TEXTURE_2D,assets_get_texture(mob_skin(e->type)).id);
+            if(e->death) {
+                RenderEntity corpse=*e;float t=sqrtf(fminf(1,((e->death+e->phase-1)/20)*1.6f));
+                glPushMatrix();glTranslatef(e->draw_x,e->draw_y,e->draw_z);glRotatef(t*90,0,0,1);
+                corpse.draw_x=corpse.draw_y=corpse.draw_z=0;mob_model(&corpse);glPopMatrix();
+            }else mob_model(e);
+            if(e->hurt>0 && !e->death) {
+                /* RenderLiving's red hurt overlay; depth-equal reuses the model,
+                 * so silhouettes, skin holes and the skeleton bow stay intact. */
+                glPushAttrib(GL_ENABLE_BIT|GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT|GL_TEXTURE_BIT);
+                glDisable(GL_TEXTURE_2D);glDisable(GL_ALPHA_TEST);glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
+                glDepthFunc(GL_EQUAL);glDepthMask(GL_FALSE);glColor4f(1,0,0,.4f);hurt_overlay=1;mob_model(e);hurt_overlay=0;glPopAttrib();
+            }
         }
         else {
             glDisable(GL_TEXTURE_2D); glColor3ub(84,133,72); glBegin(GL_QUADS);
@@ -414,24 +410,9 @@ int item_drop_draw(const ItemDrop *drops,int count,const RendererCamera *camera,
         const ItemDrop *d=&drops[i];
         InventorySlot item={d->id,d->count,d->damage};
         float dx=d->x-camera->x,dy=d->y-camera->y,dz=d->z-camera->z;
-        int n,copies=d->count>20 ? 4 : d->count>5 ? 3 : d->count>1 ? 2 : 1;
-        int block=d->id>0 && d->id<BETA_BLOCK_COUNT;
-        int cube=block && world_block_def((uint8_t)d->id)->solid;
         if (dx*dx+dy*dy+dz*dz>far2) continue;
         glPushMatrix();
-        glTranslatef(d->x,d->y+.15f+sinf(d->age*2)*.05f,d->z);
-        glRotatef(cube ? d->age*57.2957795f : -camera->yaw*57.2957795f,0,1,0);
-        glScalef(cube ? .25f : .5f,cube ? .25f : .5f,cube ? .25f : .5f);
-        for(n=0;n<copies;++n) {
-            glPushMatrix();
-            if(n) glTranslatef((n&1 ? .13f : -.13f),n*.06f,(n&2 ? .13f : -.13f));
-            if(cube) held_cube(&item);
-            else {
-                int tile=block ? beta_block_terrain_tile((BetaBlockState){(uint8_t)d->id,(uint8_t)d->damage},2) : beta_item_tile(d->id,d->damage);
-                if(tile>=0) held_sprite(tile,block);
-            }
-            glPopMatrix();
-        }
+        glTranslatef(d->x,d->y,d->z);item_model(&item,d->age,camera->yaw);
         glPopMatrix(); ++drawn;
     }
     scene_end(mode); return drawn;
@@ -562,7 +543,7 @@ void first_person_draw_pose(const InventorySlot *item,int width,int height,float
         glTranslatef(5.6f,0,0); glScalef(.0625f,.0625f,.0625f);
         Texture2D skin=assets_get_texture(ASSET_PLAYER_SKIN);int previous_height=skin_height;
         glBindTexture(GL_TEXTURE_2D,skin.id);skin_height=skin.height;
-        glColor3ub(255,255,255); skin_box(-8,0,-2,4,12,4,40,16,0);
+        if(hurt_overlay)glColor4f(1,0,0,.4f);else glColor3ub(255,255,255); skin_box(-8,0,-2,4,12,4,40,16,0);
         if(skin.height==64) skin_box_inflated(-8,0,-2,4,12,4,40,32,0,.25f);
         skin_height=previous_height;
     }

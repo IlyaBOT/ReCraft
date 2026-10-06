@@ -64,7 +64,7 @@ extern void glfwSwapInterval(int interval);
 extern int stbi_write_png(const char *, int, int, int, const void *, int);
 
 #define CACHE_CHUNKS 512
-#define ENTITY_LIMIT 256
+#define ENTITY_LIMIT 512
 #define PI_F 3.14159265358979323846f
 static const int beta_items[9] = { 1, 3, 2, 12, 4, 17, 18, 20, 50 };
 
@@ -108,7 +108,7 @@ typedef struct App {
     InventorySlot server_player_slots[9];
     BlockHit mining_hit;
     float mining_progress;
-    int mining_item,mining_active,mining_wait,attack,attack_pressed,swing_ticks;
+    int mining_item,mining_active,mining_wait,attack,attack_pressed,swing_ticks,entity_attack_hold;
     uint64_t animation_tick;
     char inventory_labels[9][32];
     const char *inventory_label_ptrs[9];
@@ -132,7 +132,7 @@ typedef struct App {
 typedef struct RunOptions {
     int frames, width, height, smoke, menu, no_audio, client_arrays, basic, fullscreen;
     int window_check;
-    int distance, mipmaps, smooth, blur, leaves, reduced, budget, vbo_budget, debug, profile_gpu;
+    int distance, mipmaps, smooth, blur, leaves, reduced, colored, budget, vbo_budget, debug, profile_gpu;
     const char *benchmark, *csv, *capture, *screen, *connect, *data_dir, *world_id, *language, *texture_pack;
 } RunOptions;
 
@@ -334,7 +334,7 @@ static void capture_cursor(App *app, int capture)
     app->mouse_settle=capture ? 2 : 0;
     if(capture) {
         app->mouse_release=1;
-        app->attack=app->attack_pressed=0;
+        app->attack=app->attack_pressed=0;app->entity_attack_hold=0;
         memset(&app->input,0,sizeof(app->input));
     }
     memset(&app->input, 0, sizeof(app->input));
@@ -369,6 +369,7 @@ static void apply_options(App *app)
     r.smooth_lighting = o->smooth_lighting;
     r.transparent_leaves = o->fancy_leaves;
     r.reduced_transparency = o->reduced_transparency;
+    r.colored_redstone = o->colored_redstone;
     r.brightness = o->brightness;
     renderer_set_options(app->renderer, app->has_world ? &app->world : NULL, r);
     if (o->fullscreen != app->applied.fullscreen)
@@ -562,7 +563,7 @@ static void enter_world(App *app)
     }
     app->previous_player=app->player;
     inventory_init(app->inventory,app->world.creative);
-    app->mining_active=app->mining_wait=app->attack=app->attack_pressed=0;
+    app->mining_active=app->mining_wait=app->attack=app->attack_pressed=0;app->entity_attack_hold=0;
     if (app->world.beta_format) beta_world_read_vitals(app->world.path,&app->player.health,&app->player.air,&app->player.fire);
     app->health=app->player.health;
     if (app->world.beta_format &&
@@ -655,7 +656,7 @@ static void network_event(void *user, const NetworkEvent *event)
         reset_modal_inputs(app,0);
         app->player.vx=app->player.vy=app->player.vz=0;
         app->player.fall_distance=0; app->player.health=app->health=20;
-        app->player.air=300; app->player.fire=app->player.hurt_ticks=0;
+        app->player.air=300; app->player.fire=app->player.hurt_ticks=0;app->player.riding=0;
         app->inventory_open=0; app->network_position=0;
         memset(&app->container,0,sizeof(app->container));
         inventory_clear_slot(&app->container.cursor);
@@ -687,6 +688,38 @@ static void network_event(void *user, const NetworkEvent *event)
     } else if(event->type==NETWORK_EVENT_WINDOW_SYNC && app->container.window_id==event->window_id) {
         if(app->container.pending==2) app->container.pending=0;
     }
+    else if(event->type==NETWORK_EVENT_ATTACH) {
+        if(event->entity_type==-1) {
+            if(event->vehicle_id<0 && app->player.riding) {
+                for(i=0;i<ENTITY_LIMIT;++i) if(app->entities[i].active && app->entities[i].id==app->player.riding-1) {
+                    app->player.x=app->entities[i].x;app->player.z=app->entities[i].z;
+                    app->player.y=app->entities[i].y+(app->entities[i].type==1002 ? .3f : .35f);break;
+                }
+            }
+            app->player.riding=event->vehicle_id<0 ? 0 : event->vehicle_id+1;
+            app->player.vx=app->player.vy=app->player.vz=0;app->player.fall_distance=0;
+            entity_rider_position(app->entities,ENTITY_LIMIT,event->vehicle_id,0,&app->player.x,&app->player.y,&app->player.z);
+            app->previous_player=app->player;cancel_mining(app);
+        } else for(i=0;i<ENTITY_LIMIT;++i) if(app->entities[i].active && app->entities[i].id==event->entity_id)
+            app->entities[i].vehicle_id=event->vehicle_id<0 ? 0 : event->vehicle_id+1;
+    }
+    else if(event->type==NETWORK_EVENT_ENTITY_COLLECT)
+        audio_named(&app->audio,"random.pop",.2f,2,1,(float)event->x,(float)event->y,(float)event->z);
+    else if(event->type==NETWORK_EVENT_ENTITY_VELOCITY) {
+        if(event->entity_type==-1) { app->player.push_x=(float)event->vx;app->player.vy=(float)event->vy;app->player.push_z=(float)event->vz; }
+        else for(i=0;i<ENTITY_LIMIT;++i) if(app->entities[i].active && app->entities[i].id==event->entity_id) {
+            app->entities[i].vx=(float)event->vx;app->entities[i].vy=(float)event->vy;app->entities[i].vz=(float)event->vz;
+        }
+    }
+    else if(event->type==NETWORK_EVENT_ENTITY_STATUS || event->type==NETWORK_EVENT_ENTITY_METADATA) {
+        for(i=0;i<ENTITY_LIMIT;++i) if(app->entities[i].active && app->entities[i].id==event->entity_id) {
+            Entity *e=&app->entities[i];
+            if(event->type==NETWORK_EVENT_ENTITY_STATUS) { if(event->value==2)e->hurt=500;else if(event->value==3)e->death=1; }
+            else if(e->type==91 && event->property==16) { e->color=event->value&15;e->sheared=!!(event->value&16); }
+            else if(e->type==50 && event->property==17)e->powered=!!event->value;
+            else if(e->type==50 && event->property==16)e->fuse=event->value>0 ? (e->fuse ? e->fuse : 1) : 0;
+        }
+    }
     else if(event->type==NETWORK_EVENT_ENTITY_FLAGS) {
         if(event->entity_type==-1)app->player.fire=(event->value&1) ? 32767 : 0;
         else for(i=0;i<ENTITY_LIMIT;++i)if(app->entities[i].active && app->entities[i].id==event->entity_id)app->entities[i].fire=(event->value&1) ? 1 : 0;
@@ -698,8 +731,7 @@ static void network_event(void *user, const NetworkEvent *event)
             if (!e->active && free_slot < 0) free_slot = i;
             if (e->active && e->id == event->entity_id) {
                 if (event->type == NETWORK_EVENT_ENTITY_DESPAWN) { e->active = 0; --app->entity_count; }
-                else { e->x=(float)event->x; e->y=(float)event->y; e->z=(float)event->z;
-                    e->yaw=event->yaw; e->pitch=event->pitch; }
+                else entity_remote_pose(e,(float)event->x,(float)event->y,(float)event->z,event->yaw,event->pitch);
                 return;
             }
         }
@@ -710,6 +742,9 @@ static void network_event(void *user, const NetworkEvent *event)
             e->color=event->entity_variant;
             e->x = (float)event->x; e->y = (float)event->y; e->z = (float)event->z;
             e->yaw=event->yaw; e->pitch=event->pitch;
+            if(e->type==1003)e->fuse=80;
+            e->vx=(float)event->vx;e->vy=(float)event->vy;e->vz=(float)event->vz;
+            e->item=(InventorySlot){event->item_id,event->item_count,event->item_damage};
             e->positioned=0; e->walk=0;
             if(e->type==0) {
                 int slot=player_textures_queue(app->player_textures,event->text,NULL);
@@ -822,7 +857,7 @@ static void reset_modal_inputs(App *app,int preserve_sign)
     app->chat[0]=0;
     close_inventory(app);
     cancel_mining(app);
-    app->attack=app->attack_pressed=0;
+    app->attack=app->attack_pressed=0;app->entity_attack_hold=0;
     memset(&app->input,0,sizeof(app->input));
 }
 
@@ -1164,7 +1199,7 @@ static void game_input(App *app)
     Vector2 mouse = GetMousePosition();
     if(app->mouse_release) {
         if(!gameplay_input_ready(&app->mouse_release,IsMouseButtonDown(MOUSE_LEFT_BUTTON),IsMouseButtonDown(MOUSE_RIGHT_BUTTON))) {
-            app->attack=app->attack_pressed=0;
+            app->attack=app->attack_pressed=0;app->entity_attack_hold=0;
             memset(&app->input,0,sizeof(app->input)); app->last_mouse=mouse;
             return;
         }
@@ -1241,7 +1276,10 @@ static void game_input(App *app)
         app->chat_open = 1; copy_text(app->chat,sizeof(app->chat),IsKeyPressed(GLFW_KEY_SLASH) ? "/" : "");
         cancel_mining(app); capture_cursor(app,0); return;
     }
-    if(app->player.riding && IsKeyPressed(KEY_LEFT_SHIFT)) world_minecart_dismount(&app->world,&app->player);
+    if(app->player.riding && IsKeyPressed(KEY_LEFT_SHIFT)) {
+        if(app->network)network_use_entity(app->network,network_vehicle_id(app->network),0);
+        else world_minecart_dismount(&app->world,&app->player);
+    }
     if(IsKeyPressed(KEY_Q)) {
         if(app->network) network_mine_block(app->network,4,0,0,0,0);
         else world_item_throw(&app->world,&app->player,&app->inventory[app->player.selected_slot]);
@@ -1276,27 +1314,33 @@ static void game_input(App *app)
     }
     app->attack=IsMouseButtonDown(MOUSE_LEFT_BUTTON)!=0;
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) app->attack_pressed=1;
-    if(app->attack_pressed && !app->network) {
-        BlockHit hit=player_raycast(&app->player,&app->world,5);
-        if(hit.hit && hit.block==25)note_block_use(&app->world,hit.x,hit.y,hit.z,0);
-    }
-    if(app->network && app->attack) {
+    if(app->attack) {
         BlockHit hit=player_raycast(&app->player,&app->world,4);
         RendererCamera camera={app->player.x,app->player.y+1.62f,app->player.z,app->player.yaw,app->player.pitch,70};
-        int target=entity_pick(app->entities,ENTITY_LIMIT,&camera,3,hit.hit ? hit.distance : 3);
+        int ignored=app->network ? network_vehicle_id(app->network) : -1;
+        int target=entity_pick_except(app->entities,ENTITY_LIMIT,&camera,3,hit.hit ? hit.distance : 3,ignored);
         if(target>=0) {
             if(app->attack_pressed) {
-                network_use_entity(app->network,target,1); network_send_animation(app->network,1);
+                if(app->network) { network_use_entity(app->network,target,1); network_send_animation(app->network,1); }
+                else for(i=0;i<ENTITY_LIMIT;++i) if(app->entities[i].active && app->entities[i].id==target) {
+                    if(app->entities[i].type==1001 || app->entities[i].type==1002)
+                        world_transport_interact(&app->world,&app->player,&app->inventory[app->player.selected_slot],1);
+                    else world_mobs_attack(&app->world,&app->player,&app->inventory[app->player.selected_slot],3);
+                    break;
+                }
                 app->swing_ticks=6;
             }
+            gameplay_attack_blocks(&app->entity_attack_hold,1,1);
             /* Holding attack on an entity must not mine the block behind it. */
             app->attack=app->attack_pressed=0; cancel_mining(app);
         }
     }
-    if(app->attack_pressed && !app->network && (world_transport_interact(&app->world,&app->player,
-        &app->inventory[app->player.selected_slot],1) || world_mobs_attack(&app->world,&app->player,
-        &app->inventory[app->player.selected_slot],3))) {
-        app->attack=app->attack_pressed=0; cancel_mining(app); app->swing_ticks=6;
+    if(!gameplay_attack_blocks(&app->entity_attack_hold,IsMouseButtonDown(MOUSE_LEFT_BUTTON),0)) {
+        app->attack=app->attack_pressed=0;cancel_mining(app);
+    }
+    if(app->attack_pressed && !app->network) {
+        BlockHit hit=player_raycast(&app->player,&app->world,5);
+        if(hit.hit && hit.block==25)note_block_use(&app->world,hit.x,hit.y,hit.z,0);
     }
     if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON)) {
         if (app->network) {
@@ -1463,6 +1507,12 @@ static void tick_game(App *app)
     app->player.name=app->ui.options.player_name;
     first_person_tick(&app->first_person,&app->inventory[app->player.selected_slot],app->player.selected_slot);
     player_tick(&app->player, &app->world, &app->input, (float)RECRAFT_TICK_SECONDS);
+    if(app->network) {
+        entity_network_tick(app->entities,ENTITY_LIMIT,&app->world);
+        entity_network_collide(app->entities,ENTITY_LIMIT,&app->player);
+        if(app->player.riding)entity_rider_position(app->entities,ENTITY_LIMIT,network_vehicle_id(app->network),0,
+            &app->player.x,&app->player.y,&app->player.z);
+    }
     if(app->previous_player.sleeping && !app->player.sleeping) capture_cursor(app,1);
     if(app->player.health<app->previous_player.health)
         audio_named(&app->audio,"random.hurt",1,1,1,app->player.x,app->player.y,app->player.z);
@@ -1508,7 +1558,9 @@ static void tick_game(App *app)
         app->world.sound_count=0;
     }
     app->input.look_dx = app->input.look_dy = 0;
-    if (app->network) network_send_position(app->network, app->player.x, app->player.y,
+    if(app->network && app->player.riding)network_send_riding(app->network,app->player.vx,app->player.vz,
+        app->player.yaw*180.0f/PI_F+180.0f,-app->player.pitch*180.0f/PI_F,app->player.on_ground);
+    else if (app->network) network_send_position(app->network, app->player.x, app->player.y,
         app->player.z, app->player.yaw*180.0f/PI_F+180.0f,
         -app->player.pitch*180.0f/PI_F, app->player.on_ground);
     if (app->player.on_ground && (app->input.forward || app->input.strafe)) {
@@ -1608,7 +1660,7 @@ static int parse_options(int argc, char **argv, RunOptions *o)
 {
     int i;
     memset(o, 0, sizeof(*o)); o->width = 960; o->height = 720;
-    o->blur = o->mipmaps = o->smooth = o->leaves = o->reduced = o->budget = o->vbo_budget = -1;
+    o->blur = o->mipmaps = o->smooth = o->leaves = o->reduced = o->colored = o->budget = o->vbo_budget = -1;
     for (i = 1; i < argc; ++i) {
         const char *s = argv[i];
         if (!strcmp(s, "--smoke-test")) o->smoke = 1;
@@ -1626,6 +1678,7 @@ static int parse_options(int argc, char **argv, RunOptions *o)
         else if (!strcmp(s, "--menu-blur") && i+1 < argc) o->blur = atoi(argv[++i]);
         else if (!strcmp(s, "--smooth-lighting") && i+1 < argc) o->smooth = atoi(argv[++i]);
         else if (!strcmp(s, "--fancy-leaves") && i+1 < argc) o->leaves = atoi(argv[++i]);
+        else if (!strcmp(s, "--colored-redstone") && i+1 < argc) o->colored=atoi(argv[++i]);
         else if (!strcmp(s, "--reduced-transparency") && i+1 < argc) o->reduced = atoi(argv[++i]);
         else if (!strcmp(s, "--chunk-budget") && i+1 < argc) o->budget = atoi(argv[++i]);
         else if (!strcmp(s, "--vbo-budget") && i+1 < argc) o->vbo_budget = atoi(argv[++i]);
@@ -1653,7 +1706,7 @@ static int parse_options(int argc, char **argv, RunOptions *o)
         o->frames >= 0 && o->frames <= 1000000 && (o->distance == 0 ||
         (o->distance >= 2 && o->distance <= 12)) &&
         o->mipmaps >= -1 && o->mipmaps <= 4 && o->smooth >= -1 && o->smooth <= 1 && o->blur>=-1 && o->blur<=1 &&
-        o->leaves >= -1 && o->leaves <= 1 && o->reduced>=-1 && o->reduced<=1 && (o->budget == -1 ||
+        o->leaves >= -1 && o->leaves <= 1 && o->reduced>=-1 && o->reduced<=1 && o->colored>=-1 && o->colored<=1 && (o->budget == -1 ||
         (o->budget >= 1 && o->budget <= 8)) &&
         (o->vbo_budget == -1 || o->vbo_budget == 4 || o->vbo_budget == 8 ||
          o->vbo_budget == 16 || o->vbo_budget == 32);
@@ -1679,6 +1732,24 @@ static int gameplay_preview(App *app,const char *name)
         while(renderer_rebuild_budget(app->renderer,&app->world,2,5,8)>0) { }
         ui_set_screen(&app->ui,UI_SCREEN_PAUSE); capture_cursor(app,0);
         return 1;
+    }
+    if(!strcmp(name,"partial-light")) {
+        static const uint8_t ids[]={44,53,67,55,93};int x,y,z;
+        if(app->world.persistent||app->network)return 0;
+        app->world.physics_processing=1;
+        for(x=3;x<=21;++x)for(z=4;z<=13;++z) {
+            world_set_block(&app->world,x,63,z,1);
+            for(y=64;y<67;++y)world_set_block(&app->world,x,y,z,z==4 ? 1 : 0);
+            world_set_block(&app->world,x,67,z,1);
+        }
+        for(i=0;i<5;++i)world_set_state(&app->world,6+i*2,64,10,(BetaBlockState){ids[i],0});
+        world_set_state(&app->world,15,64,9,(BetaBlockState){76,5});
+        app->world.physics_processing=0;world_finish_light_updates(&app->world);
+        app->world.beta_world_time=18000;world_environment_refresh(&app->world);
+        app->player.x=12;app->player.y=65;app->player.z=17;app->player.yaw=0;app->player.pitch=-.15f;
+        app->previous_player=app->player;
+        while(renderer_rebuild_budget(app->renderer,&app->world,0,0,8)>0){}
+        ui_set_screen(&app->ui,UI_SCREEN_GAME);capture_cursor(app,1);return 1;
     }
     if(!strcmp(name,"block-states")) {
         static const uint8_t ids[]={19,24,41,42,57,86,91,53,67,85,96,78};
@@ -1949,7 +2020,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "Usage: ReCraft [--smoke-test|--menu-smoke|--benchmark bench_torch|bench_stream|bench_flat|bench_forest|bench_caves|bench_chunk_updates|bench_worstcase_transparency]\n"
             "  [--frames N] [--window 960x720] [--capture file.png] [--csv file.csv]\n"
             "  [--client-arrays] [--basic-mesh] [--distance 2..12] [--mipmaps 0..4]\n"
-            "  [--smooth-lighting 0|1] [--menu-blur 0|1] [--fancy-leaves 0|1] [--reduced-transparency 0|1] [--chunk-budget 1..8] [--vbo-budget 4|8|16|32]\n"
+            "  [--smooth-lighting 0|1] [--menu-blur 0|1] [--fancy-leaves 0|1] [--reduced-transparency 0|1] [--colored-redstone 0|1] [--chunk-budget 1..8] [--vbo-budget 4|8|16|32]\n"
             "  [--screen main|profile|profile-online|worlds|create|multiplayer|add|direct|video|inventory|pause]\n"
             "  [--smoke-test --screen player|crafting|furnace|chest|large-chest|health|blocks|day|night|rain|snow|bed|mobs|events]\n"
             "  [--smoke-test --screen materials|sign-edit|multiplayer-demo|chat|players]\n"
@@ -1989,6 +2060,7 @@ int main(int argc, char **argv)
     if (run.blur >= 0) app.ui.options.menu_blur = run.blur;
     if (run.smooth >= 0) app.ui.options.smooth_lighting = run.smooth;
     if (run.leaves >= 0) app.ui.options.fancy_leaves = run.leaves;
+    if(run.colored>=0)app.ui.options.colored_redstone=run.colored;
     if (run.reduced >= 0) app.ui.options.reduced_transparency = run.reduced;
     if (run.budget >= 1) app.ui.options.chunk_build_budget = app.ui.options.dynamic_updates = run.budget;
     if (run.vbo_budget >= 0) app.ui.options.vbo_budget_mb = run.vbo_budget;
@@ -2072,6 +2144,7 @@ int main(int argc, char **argv)
         }
         else if (!strcmp(run.screen,"languages")) ui_set_screen(&app.ui,UI_SCREEN_LANGUAGES);
         else if (!strcmp(run.screen,"packs")) ui_set_screen(&app.ui,UI_SCREEN_PACKS);
+        else if (!strcmp(run.screen,"environment")) ui_set_screen(&app.ui,UI_SCREEN_ENVIRONMENT);
         else if (!strcmp(run.screen,"video")) ui_set_screen(&app.ui,UI_SCREEN_VIDEO);
     }
     if (run.csv) {
@@ -2173,9 +2246,10 @@ int main(int argc, char **argv)
             char vram[48], texture_report[48], gart[48];
             const char *vertex_stage;
             if (draw_scene) {
+                entity_render_update(app.entities,ENTITY_LIMIT,(float)elapsed,(float)(accumulator/RECRAFT_TICK_SECONDS));
                 camera.x=app.player.x; camera.y=app.player.y+1.62f; camera.z=app.player.z;
                 camera.yaw=app.player.yaw; camera.pitch=app.player.pitch; camera.fov_y=(float)app.ui.options.fov;
-                if (!run.benchmark && !app.network && !app.ui.world_background) {
+                if (!run.benchmark && !app.ui.world_background) {
                     float alpha=(float)(accumulator/RECRAFT_TICK_SECONDS);
                     if (alpha<0) alpha=0;
                     if (alpha>1) alpha=1;
@@ -2191,6 +2265,8 @@ int main(int argc, char **argv)
                 }
                 if(app.player.sleeping)
                     player_eye(&app.player,&app.world,&camera.x,&camera.y,&camera.z,&camera.yaw,&camera.pitch);
+                if(app.network && app.player.riding && entity_rider_position(app.entities,ENTITY_LIMIT,
+                    network_vehicle_id(app.network),1,&camera.x,&camera.y,&camera.z))camera.y+=1.62f;
                 if(app.camera_sleeping!=app.player.sleeping) {
                     app.camera_sleeping=app.player.sleeping; app.camera_from=app.sleeping_view;
                     app.sleep_transition=app.sleeping_view.fov_y>0 ? .2f : 0;
@@ -2219,7 +2295,7 @@ int main(int argc, char **argv)
                 entity_render_tick_fraction(app.entities,ENTITY_LIMIT,
                     run.benchmark || app.ui.world_background ? 1 : (float)(accumulator/RECRAFT_TICK_SECONDS));
                 app.rendered_entities = entity_render_draw(app.entities,ENTITY_LIMIT,&camera,
-                    scene_width,scene_height,app.ui.options.render_distance,(float)elapsed);
+                    scene_width,scene_height,app.ui.options.render_distance,0);
                 app.rendered_entities += item_drop_draw(app.drops,128,&camera,
                     scene_width,scene_height,app.ui.options.render_distance);
                 renderer_weather(&app.world,&camera,scene_width,scene_height,
@@ -2289,6 +2365,11 @@ int main(int argc, char **argv)
                     app.player.x,app.player.y,app.player.z,(int)floorf(app.player.x/16),(int)floorf(app.player.z/16),
                     app.player.flying?"flying":"walking",stats.gpu_vendor,stats.gpu_renderer,stats.gpu_version,
                     app.entity_count,app.rendered_entities,app.health);
+                if(app.network) {
+                    NetworkStats net=network_stats(app.network);size_t used=strlen(debug_text);
+                    snprintf(debug_text+used,sizeof(debug_text)-used,"\nNetwork CPU %.2f ms | chunk apply %.2f ms | %u packets | %lu queued bytes",
+                        net.tick_ms,net.chunk_ms,net.packets,(unsigned long)net.pending_bytes);
+                }
                 {
                     int slot;
                     for (slot = 0; slot < 9; ++slot) {

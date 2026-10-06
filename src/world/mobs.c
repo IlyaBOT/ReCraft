@@ -3,6 +3,7 @@
 #include "environment.h"
 #include "explosion.h"
 #include "fluid.h"
+#include "collision.h"
 #include "../game/player.h"
 #include "../game/entity_render.h"
 #include "../game/bed.h"
@@ -73,6 +74,9 @@ static int mob_rewrite(void *context,NbtEvent event,const NbtTag *tag,unsigned d
         else if(r->list!=3 && t.type==NBT_DOUBLE) t.value.double_value=r->list==1 ? p[r->index++] : v[r->index++];
     }
     if(event==NBT_VALUE && depth==1) {
+        if(t.type==NBT_SHORT && t.name.size==10 && !memcmp(t.name.data,"AttackTime",10)){t.value.short_value=(int16_t)r->mob->attack_ticks;r->fields|=4096;}
+        if(t.type==NBT_SHORT && t.name.size==9 && !memcmp(t.name.data,"DeathTime",9)){t.value.short_value=(int16_t)r->mob->death_ticks;r->fields|=1024;}
+        if(t.type==NBT_SHORT && t.name.size==8 && !memcmp(t.name.data,"HurtTime",8)){t.value.short_value=(int16_t)r->mob->hurt_ticks;r->fields|=2048;}
         if(t.type==NBT_SHORT && t.name.size==6 && !memcmp(t.name.data,"Health",6)) { t.value.short_value=(int16_t)r->mob->health; r->fields|=8; }
         if(t.type==NBT_SHORT && t.name.size==4 && !memcmp(t.name.data,"Fire",4)) { t.value.short_value=(int16_t)r->mob->fire; r->fields|=16; }
         if(t.type==NBT_BYTE && t.name.size==8 && !memcmp(t.name.data,"OnGround",8)) { t.value.byte=(int8_t)r->mob->on_ground; r->fields|=32; }
@@ -87,6 +91,9 @@ static int mob_rewrite(void *context,NbtEvent event,const NbtTag *tag,unsigned d
         if(!(r->fields&1) && !list(r->writer,"Pos",p,3,0)) return 0;
         if(!(r->fields&2) && !list(r->writer,"Motion",v,3,0)) return 0;
         if(!(r->fields&4) && !list(r->writer,"Rotation",a,2,1)) return 0;
+        if(!(r->fields&4096) && !scalar(r->writer,NBT_SHORT,"AttackTime",m->attack_ticks))return 0;
+        if(!(r->fields&1024) && !scalar(r->writer,NBT_SHORT,"DeathTime",m->death_ticks))return 0;
+        if(!(r->fields&2048) && !scalar(r->writer,NBT_SHORT,"HurtTime",m->hurt_ticks))return 0;
         if(!(r->fields&8) && !scalar(r->writer,NBT_SHORT,"Health",m->health)) return 0;
         if(!(r->fields&16) && !scalar(r->writer,NBT_SHORT,"Fire",m->fire)) return 0;
         if(!(r->fields&32) && !scalar(r->writer,NBT_BYTE,"OnGround",m->on_ground)) return 0;
@@ -117,7 +124,7 @@ int world_mob_spawn(World *w,int type,float x,float y,float z)
     Chunk *c=owner(w,x,z); SavedEntity *e;
     if(w->network_mode || !definition(type) || !c || (w->beta_format && !c->beta_raw)) return 0;
     e=(SavedEntity *)calloc(1,sizeof(*e)); if(!e) return 0;
-    e->mob.type=type; e->mob.health=mob_default_health(type); e->mob.x=x; e->mob.y=y; e->mob.z=z;e->mob.air=300;
+    e->mob.type=type; e->mob.health=mob_default_health(type); e->mob.x=x; e->mob.y=y; e->mob.z=z;e->mob.air=300;e->mob.previous_x=x;e->mob.previous_y=y;e->mob.previous_z=z;
     e->mob.runtime_id=++w->next_entity_id; e->next=c->saved_entities; c->saved_entities=e; dirty(c); return 1;
 }
 static int collides(const World *w,const MobState *m,float x,float y,float z)
@@ -143,22 +150,15 @@ static int collides(const World *w,const MobState *m,float x,float y,float z)
 }
 static int move_axis(const World *w,MobState *m,int axis,float delta)
 {
+    const MobDef *d=definition(m->type);
+    WorldAabb box={{m->x-d->width*.5f,m->y,m->z-d->width*.5f},{m->x+d->width*.5f,m->y+d->height,m->z+d->width*.5f}};
     float *position=axis==0 ? &m->x : axis==1 ? &m->y : &m->z;
-    int steps,i;
-    /* Bound work even for a corrupt but finite Motion tag. Normal Beta mob
-     * velocities never reach sixteen blocks in one tick. */
-    delta=fmaxf(-16,fminf(16,delta)); steps=(int)ceilf(fabsf(delta)*4);
-    for(i=0;i<steps;++i) {
-        float start=*position,portion=delta/steps,lo=0,hi=1; int j;
-        *position=start+portion;
-        if(!collides(w,m,m->x,m->y,m->z)) continue;
-        for(j=0;j<8;++j) {
-            float mid=(lo+hi)*.5f; *position=start+portion*mid;
-            if(collides(w,m,m->x,m->y,m->z)) hi=mid; else lo=mid;
-        }
-        *position=start+portion*lo; return 1;
-    }
-    return 0;
+    double clipped;
+    delta=fmaxf(-16,fminf(16,delta));
+    if(axis!=1 && collides(w,m,m->x+(axis==0 ? delta : 0),m->y,m->z+(axis==2 ? delta : 0)) &&
+       !owner(w,m->x+(axis==0 ? delta : 0),m->z+(axis==2 ? delta : 0)))return 1;
+    clipped=world_clip_axis((World *)w,&box,axis,delta,0);*position+=(float)clipped;
+    return fabs(clipped-delta)>1e-6;
 }
 static int can_see(const World *w,const MobState *m,const Player *p)
 {
@@ -211,9 +211,10 @@ static void follow_path(MobState *m,const MobDef *d,float speed,int ceased)
         int at=m->path.index;float wx=m->path.x[at]+floorf(d->width+1)*.5f,wz=m->path.z[at]+floorf(d->width+1)*.5f;
         float dx=wx-m->x,dz=wz-m->z,length=sqrtf(dx*dx+dz*dz);
         if(length<d->width*2 && fabsf(m->y-m->path.y[at])<.8f){++m->path.index;continue;}
-        if(!ceased&&length>.01f) {
+        if((!ceased || m->type==51)&&length>.01f) {
             float yaw=atan2f(-dx,dz)*57.2957795131f,difference=fmodf(yaw-m->yaw+540,360)-180;
-            m->yaw+=fmaxf(-30,fminf(30,difference));m->vx=dx/length*speed;m->vz=dz/length*speed;
+            if(m->type==51&&ceased){m->vx=dx/length*speed;m->vz=dz/length*speed;}
+            else {m->yaw+=fmaxf(-30,fminf(30,difference));m->vx=-sinf(m->yaw*.01745329252f)*speed;m->vz=cosf(m->yaw*.01745329252f)*speed;}
             if(m->path.y[at]>m->y+.1f&&m->on_ground)m->vy=8.4f;
         }
         break;
@@ -292,11 +293,16 @@ void world_mobs_tick(World *w,Player *p)
             if(!d || e->last_tick==w->tick) { link=&e->next; continue; }
             dx=p->x-m->x; dz=p->z-m->z;
             {float dy=p->y+PLAYER_BETA_ENTITY_Y_OFFSET-m->y;distance=sqrtf(dx*dx+dy*dy+dz*dz);}
-            if((m->type<90 && (w->difficulty==0 || distance>128 || (distance>32 && m->age>600 && !world_random(w,800)))) || m->health<=0) {
+            if((m->type<90 && (w->difficulty==0 || distance>128 || (distance>32 && m->age>600 && !world_random(w,800)))) || (m->health<=0 && m->death_ticks>=20)) {
                 *link=e->next; free(e->raw); free(e); dirty(c); continue;
             }
             if(distance>64 || processed++>=128) { ++m->age;link=&e->next;continue; }
             e->last_tick=w->tick;
+            m->previous_x=m->x;m->previous_y=m->y;m->previous_z=m->z;
+            if(m->health<=0){
+                if(++m->death_ticks>=20){*link=e->next;free(e->raw);free(e);dirty(c);continue;}
+                dirty(c);link=&e->next;continue;
+            }
             if(m->hurt_ticks>0) --m->hurt_ticks;
             if(m->attack_ticks>0) --m->attack_ticks;
             ++m->age;
@@ -331,17 +337,20 @@ void world_mobs_tick(World *w,Player *p)
             } else m->target_player=0;
             if(m->target_player) {
                 visible=can_see(w,m,p);
-                m->yaw=atan2f(dx,-dz)*57.2957795131f+180;
+                { float wanted=atan2f(-dx,dz)*57.2957795131f,turn=fmodf(wanted-m->yaw+540,360)-180;
+                  m->yaw+=fmaxf(-30,fminf(30,turn));
+                  m->pitch=-atan2f(p->y+1.62f-m->y-d->height*.85f,fmaxf(.001f,sqrtf(dx*dx+dz*dz)))*57.2957795131f; }
                 if(m->type==50 && visible && distance<(m->fuse>0?7:3)) {
                     if(!m->fuse) world_sound(w,"random.fuse",m->x,m->y,m->z,1,.5f);
                     ceased=1;
                     if(++m->fuse>=30) {
-                        m->health=0;world_explode(w,p,m->x,m->y,m->z,m->powered?6:3,0);
+                        m->health=0;m->death_ticks=20;world_explode(w,p,m->x,m->y,m->z,m->powered?6:3,0);
                         dirty(c);link=&e->next;continue;
                     }
                 } else if(m->fuse>0) --m->fuse;
-                if(m->type==51 && visible && distance<10 && !m->attack_ticks) {
-                    if(world_skeleton_arrow(w,e,p)) m->attack_ticks=30;
+                if(m->type==51 && visible && distance<10) {
+                    if(!m->attack_ticks && world_skeleton_arrow(w,e,p))m->attack_ticks=30;
+                    ceased=1;
                 }
                 if(m->type==52 && visible && distance>2 && distance<6 && m->on_ground && !world_random(w,10)) {
                     float horizontal_distance=fmaxf(.001f,sqrtf(dx*dx+dz*dz));
@@ -350,10 +359,14 @@ void world_mobs_tick(World *w,Player *p)
                 if(d->damage && visible && distance<2 && p->y+1.8f>m->y && p->y<m->y+d->height && !m->attack_ticks) {
                     int health=p->health;
                     player_wake(p,w,0); player_mob_damage(p,w,d->damage); m->attack_ticks=20;
+                    if(p->health<health) {
+                        float len=fmaxf(.001f,sqrtf(dx*dx+dz*dz));
+                        p->push_x=p->push_x*.5f+dx/len*8;p->push_z=p->push_z*.5f+dz/len*8;p->vy=fminf(8,p->vy*.5f+8);
+                    }
                     if(p->health<health) world_sound(w,"random.hurt",p->x,p->y,p->z,1,1);
                 }
                 if(m->path.ticks>0) --m->path.ticks;
-                if(!ceased && path_budget && (!m->path.ticks || m->path.index>=m->path.count)) {
+                if(!ceased && path_budget && (!m->path.ticks || m->path.index>=m->path.count || !world_random(w,20))) {
                     --path_budget;mob_path_find(w,d->width,d->height,m->x,m->y,m->z,p->x,p->y,p->z,&m->path);
                     m->path.ticks=20;
                 }
@@ -365,14 +378,20 @@ void world_mobs_tick(World *w,Player *p)
                 }
                 if(m->path.index<m->path.count)follow_path(m,d,speed,0);
                 else {
-                if(!m->walk_ticks) {
-                    m->walk_ticks=40+(int)world_random(w,100);
-                    m->yaw=(float)world_random(w,360);
-                    if(world_random(w,3)==0) m->walk_ticks=-m->walk_ticks;
-                } else --m->walk_ticks;
-                m->vx=m->walk_ticks>0?-sinf(m->yaw*.01745329252f)*speed:0;
-                m->vz=m->walk_ticks>0?cosf(m->yaw*.01745329252f)*speed:0;
-                if(m->walk_ticks<0) m->walk_ticks+=2;
+                m->vx=m->vz=0;
+                if(!world_random(w,50)) {
+                    if(distance<8)m->look_ticks=10+(int)world_random(w,20);
+                    else m->idle_yaw=((float)world_random(w,16777216)/16777216-.5f)*20;
+                }
+                if(m->look_ticks>0 && distance<8) {
+                    float wanted=atan2f(-dx,dz)*57.2957795131f,turn=fmodf(wanted-m->yaw+540,360)-180;
+                    m->yaw+=fmaxf(-10,fminf(10,turn));--m->look_ticks;
+                    m->pitch=-atan2f(p->y+1.62f-m->y-d->height*.85f,fmaxf(.001f,sqrtf(dx*dx+dz*dz)))*57.2957795131f;
+                }else {
+                    m->look_ticks=0;
+                    if(!world_random(w,20))m->idle_yaw=((float)world_random(w,16777216)/16777216-.5f)*20;
+                    m->yaw+=m->idle_yaw;m->pitch=0;
+                }
                 }
             }
             if((m->type==54 || m->type==51) && world_is_daytime(w)) {
@@ -407,7 +426,7 @@ void world_mobs_tick(World *w,Player *p)
                     m->vy=0;
                 }
             }
-            m->walk+=sqrtf(m->vx*m->vx+m->vz*m->vz)*.3f;
+            m->walk+=sqrtf((m->x-m->previous_x)*(m->x-m->previous_x)+(m->z-m->previous_z)*(m->z-m->previous_z))*4;
             m->vx*=friction;m->vz*=friction;
             if((int)world_random(w,1000)<m->sound_ticks++) {
                 m->sound_ticks=-80;
@@ -482,11 +501,19 @@ int world_mobs_interact(World *w,Player *p,InventorySlot *held,float reach)
 }
 int world_mobs_attack(World *w,Player *p,InventorySlot *held,float reach)
 {
-    Chunk *chunk=NULL; SavedEntity *best;
+    Chunk *chunk=NULL; SavedEntity *best;int successful;
     if(w->network_mode || !held || !(best=mob_hit(w,p,reach,&chunk))) return 0;
-    damage(w,chunk,&best->mob,p->creative ? 1000 : beta_attack_damage(held->id));
+    { int before=best->mob.health;
+      damage(w,chunk,&best->mob,beta_attack_damage(held->count>0 ? held->id : 0));
+      successful=best->mob.health<before;
+      if(successful) {
+          float dx=best->mob.x-p->x,dz=best->mob.z-p->z,len=fmaxf(.001f,sqrtf(dx*dx+dz*dz));
+          best->mob.push_x=best->mob.push_x*.5f+dx/len*8;best->mob.push_z=best->mob.push_z*.5f+dz/len*8;
+          best->mob.vy=fminf(8,best->mob.vy*.5f+8);
+      }
+    }
     if(best->mob.type<90) best->mob.target_player=1;
-    if(!p->creative) {
+    if(successful && !p->creative) {
         int sword=(held->id==268 || held->id==272 || held->id==267 || held->id==276 || held->id==283);
         int tool=(held->id>=256 && held->id<=258) || (held->id>=269 && held->id<=271) ||
             (held->id>=273 && held->id<=275) || (held->id>=277 && held->id<=279) || (held->id>=284 && held->id<=286);
@@ -501,13 +528,15 @@ int world_mobs_visible(World *w,RenderEntity *out,int capacity)
     size_t i; int count=0;
     for(i=0;i<w->cache_count && count<capacity;++i) {
         SavedEntity *e;
-        for(e=w->cache[i]->saved_entities;e && count<capacity;e=e->next) if(e->mob.type && e->mob.health>0) {
+        for(e=w->cache[i]->saved_entities;e && count<capacity;e=e->next) if(e->mob.type && (e->mob.health>0 || e->mob.death_ticks<20)) {
             RenderEntity *r=&out[count++]; MobState *m=&e->mob;
             if(!m->runtime_id) m->runtime_id=++w->next_entity_id;
             if(r->id!=m->runtime_id) memset(r,0,sizeof(*r));
             r->active=1; r->id=m->runtime_id; r->type=m->type;
             r->x=m->x; r->y=m->y; r->z=m->z; r->yaw=m->yaw; r->pitch=m->pitch; r->color=m->color; r->sheared=m->sheared;
             r->fuse=m->fuse;r->powered=m->powered;r->fire=m->fire;
+            r->local_interpolation=1;r->previous_x=m->previous_x;r->previous_y=m->previous_y;r->previous_z=m->previous_z;
+            r->death=m->health<=0 ? m->death_ticks : 0;r->hurt=m->hurt_ticks*50;
         }
     }
     for(i=(size_t)count;i<(size_t)capacity;++i) out[i].active=0;

@@ -650,6 +650,7 @@ void renderer_set_options(Renderer *renderer, World *world, RendererOptions opti
     options.smooth_lighting = !!options.smooth_lighting;
     options.transparent_leaves = !!options.transparent_leaves;
     options.reduced_transparency = !!options.reduced_transparency;
+    options.colored_redstone = !!options.colored_redstone;
     if (options.mipmap < 0) options.mipmap = 0;
     if (options.mipmap > 4) options.mipmap = 4;
     if (options.brightness < 0) options.brightness = 0;
@@ -662,6 +663,7 @@ void renderer_set_options(Renderer *renderer, World *world, RendererOptions opti
                   options.smooth_lighting != previous.smooth_lighting ||
                   options.transparent_leaves != previous.transparent_leaves ||
                   options.reduced_transparency != previous.reduced_transparency ||
+                  options.colored_redstone != previous.colored_redstone ||
                   options.brightness != previous.brightness ||
                   options.vbo_mode != previous.vbo_mode ||
                   options.vbo_budget_mb != previous.vbo_budget_mb;
@@ -675,23 +677,7 @@ void renderer_set_options(Renderer *renderer, World *world, RendererOptions opti
 
 static uint8_t light_at(const World *world, const Chunk *chunk, int x, int y, int z)
 {
-    const Chunk *source = chunk;
-    if (y >= WORLD_HEIGHT) return (uint8_t)(15-world->sky_subtracted);
-    if (y < 0) return 0;
-    if (x < 0 || z < 0 || x >= WORLD_CHUNK_SIZE || z >= WORLD_CHUNK_SIZE) {
-        int32_t cx = chunk->x, cz = chunk->z;
-        if (x < 0) { --cx; x += WORLD_CHUNK_SIZE; }
-        else if (x >= WORLD_CHUNK_SIZE) { ++cx; x -= WORLD_CHUNK_SIZE; }
-        if (z < 0) { --cz; z += WORLD_CHUNK_SIZE; }
-        else if (z >= WORLD_CHUNK_SIZE) { ++cz; z -= WORLD_CHUNK_SIZE; }
-        source = world_peek_chunk(world, cx, cz);
-        if (!source) return (uint8_t)(15-world->sky_subtracted);
-    }
-    {
-        int sky = chunk_get_sky_light(source, x, y, z)-world->sky_subtracted;
-        uint8_t block = chunk_get_block_light(source, x, y, z);
-        return sky > block ? (uint8_t)sky : block;
-    }
+    return world_render_light(world,chunk->x*16+x,y,chunk->z*16+z);
 }
 
 static uint8_t block_at(const World *world, const Chunk *chunk, int x, int y, int z)
@@ -1089,7 +1075,7 @@ static void emit_partial_face(const Renderer *renderer, const World *world,
     if(renderer->options.reduced_transparency &&
        (id==BETA_BLOCK_WOOD_DOOR || id==BETA_BLOCK_IRON_DOOR)) tile+=4;
     if (!layer_reserve(layer,layer->vertex_count+4u)) { layer->overflow=1; return; }
-    adjacent[axis] += direction;
+    if(direction>0 ? upper[axis]>=.999f : lower[axis]<=.001f)adjacent[axis]+=direction;
     light = light_at(world,chunk,adjacent[0],adjacent[1],adjacent[2]);
     ambient = 0.06f + (float)renderer->options.brightness * 0.0034f;
     illumination = ambient + (1.0f-ambient)*(float)light/15.0f;
@@ -1683,6 +1669,8 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                                 point[0], point[1], point[2]);
                             mask[row * width + column] = face_key(renderer, block,
                                 metadata, axis, direction, light);
+                            if(renderer->options.colored_redstone && world_red_light(world,chunk->x*16+adjacent[0],adjacent[1],chunk->z*16+adjacent[2]))
+                                mask[row*width+column]|=UINT32_C(0x80000000);
                             if(block==54) {
                                 unsigned face=axis==1 ? (direction>0 ? 1 : 0) : axis==2 ? (direction>0 ? 3 : 2) : (direction>0 ? 5 : 4);
                                 unsigned tile=beta_render_tile(block_chest_texture(world,chunk->x*16+point[0],point[1],chunk->z*16+point[2],face));
@@ -1796,6 +1784,27 @@ static ChunkMesh *build_chunk_mesh(const Renderer *renderer, const World *world,
                             chunk_get_block(chunk,x,y,z)==69 || chunk_get_block(chunk,x,y,z)==77 || chunk_get_block(chunk,x,y,z)==78 || chunk_get_block(chunk,x,y,z)==70 || chunk_get_block(chunk,x,y,z)==72)
                         emit_low_block(renderer,world,mesh,chunk,x,y,z,chunk_get_block(chunk,x,y,z),chunk_get_metadata(chunk,x,y,z));
     }
+    if(renderer->options.colored_redstone) {
+        int li;
+        for(li=0;li<3;++li) {
+            MeshLayer *layer=&mesh->layers[li];uint32_t n;
+            for(n=0;n+3<layer->vertex_count;n+=4) {
+                VoxelVertex *v=&layer->vertices[n];float center[3]={0,0,0},normal[3],a[3],b[3];int j,k,wx,wy,wz;
+                for(j=0;j<4;++j){center[0]+=v[j].x;center[1]+=v[j].y;center[2]+=v[j].z;}
+                a[0]=v[1].x-v[0].x;a[1]=v[1].y-v[0].y;a[2]=v[1].z-v[0].z;
+                b[0]=v[2].x-v[0].x;b[1]=v[2].y-v[0].y;b[2]=v[2].z-v[0].z;
+                normal[0]=a[1]*b[2]-a[2]*b[1];normal[1]=a[2]*b[0]-a[0]*b[2];normal[2]=a[0]*b[1]-a[1]*b[0];
+                for(k=0;k<3;++k)center[k]=center[k]/(4*VERTEX_COORD_SCALE)+(normal[k]>0 ? .01f : normal[k]<0 ? -.01f : 0);
+                wx=chunk->x*16+(int)floorf(center[0]);wy=(int)floorf(center[1]);wz=chunk->z*16+(int)floorf(center[2]);
+                { int red=world_red_light(world,wx,wy,wz),sky=world_sky_light(world,wx,wy,wz);
+                  if(red>sky && red>=world_render_light(world,wx,wy,wz)) {
+                      float amount=(float)(red-sky)/red;
+                      for(j=0;j<4;++j){v[j].g=(uint8_t)(v[j].g*(1-.68f*amount));v[j].b=(uint8_t)(v[j].b*(1-.78f*amount));}
+                  }
+                }
+            }
+        }
+    }
     return mesh;
 }
 
@@ -1853,6 +1862,8 @@ int renderer_rebuild_budget(Renderer *renderer, World *world,
 {
     int rebuilt = 0;
     if (!renderer || !world || max_chunks <= 0) return 0;
+    world_color_lighting(world,renderer->options.colored_redstone);
+    world_finish_color_updates(world);
     world_set_render_data_destroy(world, chunk_mesh_destroy);
     renderer->hooked_world = world;
     while (rebuilt < max_chunks) {

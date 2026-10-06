@@ -47,7 +47,7 @@ typedef struct Observed {
     int furnace_open,furnace_sync,furnace_slots,properties[3];
     int rejected,accepted,closed,dead,alive,respawn;
     int player_spawn,player_despawn,chat,sign;
-    int vehicle_spawn,fire_flags,notes;
+    int vehicle_spawn,fire_flags,notes,attach,item_spawn,item_collect,velocity,status,metadata;
     int16_t chest_id[63],chest_damage[63];
     uint8_t chest_count[63];
 } Observed;
@@ -267,6 +267,18 @@ static int mock_session(TestSocket s,int online)
           if(!send_all(s,spawn,sizeof(spawn))) return 0;
       }
       if(!recv_all(s,p,10)||p[0]!=0x07||beta14_i32(p+5)!=1001||p[9]!=0)return 0;
+      { uint8_t attach[9]={0x27},item[25]={0x15},v[11]={0x1c},collect[9]={0x16},status[6]={0x26};
+        put32(attach+1,123);put32(attach+5,1001);
+        if(!send_all(s,attach,4)||!send_all(s,attach+4,5))return 0;
+        if(!recv_all(s,p,42)||p[0]!=0x0d||beta14_f64(p+9)!=-999||beta14_f64(p+17)!=-999||fabs(beta14_f64(p+1)-.1)>.000001||fabs(beta14_f64(p+25)+.2)>.000001)return 0;
+        put32(attach+5,0xffffffff);if(!send_all(s,attach,9))return 0;
+        put32(item+1,1100);item[5]=1;item[6]=22;item[7]=3;item[9]=9;
+        put32(item+10,8*32);put32(item+14,65*32);put32(item+18,8*32);item[22]=64;item[23]=128;item[24]=32;
+        put32(v+1,1100);v[5]=0x1f;v[6]=0x40;v[7]=0xe0;v[8]=0xc0;
+        put32(status+1,1001);status[5]=2;
+        put32(collect+1,1100);put32(collect+5,123);
+        if(!send_all(s,item,25)||!send_all(s,v,11)||!send_all(s,status,6)||!send_all(s,collect,9))return 0;
+      }
     }
     { uint8_t spawn[64],string[32],chat[256],sign[139];size_t n,at;Beta14Packet parsed;char decoded[64];
       n=beta14_handshake(string,sizeof(string),"Bob");spawn[0]=0x14;put32(spawn+1,456);
@@ -315,6 +327,18 @@ static void *mock_worker(void *arg)
 static void observe(void *user,const NetworkEvent *e)
 {
     Observed *o=(Observed *)user;
+    if(e->type==NETWORK_EVENT_ATTACH) {
+        assert(e->entity_id==123 && e->entity_type==-1);++o->attach;
+        assert(network_vehicle_id(o->client)==e->vehicle_id);
+        if(e->vehicle_id>=0)assert(network_send_riding(o->client,2,-4,90,0,1));
+    }
+    if(e->type==NETWORK_EVENT_ENTITY_SPAWN && e->entity_type==1008) {
+        assert(e->entity_id==1100 && e->item_id==278 && e->item_count==3 && e->item_damage==9);
+        assert(e->vx==10 && e->vy==-20 && e->vz==5);++o->item_spawn;
+    }
+    if(e->type==NETWORK_EVENT_ENTITY_VELOCITY) {assert(e->entity_id==1100 && e->vx==20 && e->vy==-20 && e->vz==0);++o->velocity;}
+    if(e->type==NETWORK_EVENT_ENTITY_STATUS) {assert(e->entity_id==1001 && e->value==2);++o->status;}
+    if(e->type==NETWORK_EVENT_ENTITY_COLLECT) {assert(e->entity_id==1100 && e->vehicle_id==123 && e->entity_type==-1);++o->item_collect;}
     if(e->type==NETWORK_EVENT_NOTE) {
         assert(e->block_x==-3 && e->block_y==65 && e->block_z==8);
         assert(e->property==o->notes && e->value==o->notes*6);++o->notes;
@@ -388,7 +412,7 @@ static void observe(void *user,const NetworkEvent *e)
         assert(network_send_player_action(o->client,1)&&network_send_player_action(o->client,2));
         assert(!network_use_entity(o->client,123,1)&&!network_use_entity(o->client,456,2));
     }
-    if(e->type==NETWORK_EVENT_ENTITY_SPAWN && e->entity_type>=1000) {
+    if(e->type==NETWORK_EVENT_ENTITY_SPAWN && e->entity_type>=1000 && e->entity_type!=1008) {
         int object=e->entity_id-1001; assert(object>=0 && object<5);
         assert(e->entity_type==(object==0 ? 1002 : object==4 ? 1000 : 1001));
         if(object>=1 && object<=3) assert(e->entity_variant==object-1);
@@ -397,7 +421,7 @@ static void observe(void *user,const NetworkEvent *e)
     }
     if(e->type==NETWORK_EVENT_ENTITY_DESPAWN) {
         /* Despawn callback is emitted before the entry is released. */
-        assert(e->entity_id==456);++o->player_despawn;
+        if(e->entity_id==456)++o->player_despawn;else assert(e->entity_id==1100);
     }
     if(e->type==NETWORK_EVENT_CHAT) {assert(!strcmp(e->text,unicode_chat));++o->chat;}
     if(e->type==NETWORK_EVENT_SIGN) {
@@ -518,6 +542,7 @@ int main(void)
     assert(observed.closed==1 && observed.dead==1 && observed.respawn==1 && observed.alive==1);
     assert(observed.player_spawn==1&&observed.player_despawn==1&&observed.chat==1&&observed.sign==1);
     assert(observed.vehicle_spawn==5);
+    assert(observed.attach==2 && observed.item_spawn==1 && observed.item_collect==1 && observed.velocity==1 && observed.status==1);
     assert(observed.fire_flags==2 && server.joins==(online ? 3 : 0));
     assert(observed.notes==5);
     {NetworkPlayerInfo players[2];assert(network_player_list(client,players,2)==1&&players[0].self);}

@@ -144,7 +144,7 @@ static int blocks_light(uint8_t id)
 {
     /* ys in the Beta client is non-opaque for face culling but calls g(255):
      * the half slab blocks light despite its open upper half. */
-    return world_block_def(id)->opaque || id == BETA_BLOCK_SLAB || id==53 || id==67 || id==60;
+    return world_block_def(id)->opaque || id==10 || id==11 || id == BETA_BLOCK_SLAB || id==53 || id==67 || id==60;
 }
 
 static int valid_local(int x, int y, int z)
@@ -200,7 +200,7 @@ void chunk_set_block(Chunk *chunk, int x, int y, int z, uint8_t id)
     index = block_index(x,y,z);
     if (chunk->blocks[index] == id) return;
     chunk->blocks[index] = id;
-    chunk->dirty_flags |= CHUNK_DIRTY_MESH | CHUNK_DIRTY_SAVE;
+    chunk->dirty_flags |= CHUNK_DIRTY_MESH | CHUNK_DIRTY_SAVE | CHUNK_DIRTY_COLOR;
     ++chunk->revision;
 }
 
@@ -212,7 +212,7 @@ void chunk_set_metadata(Chunk *chunk, int x, int y, int z, uint8_t value)
     value &= 15u;
     if (nibble_get(chunk->metadata,index) == value) return;
     nibble_set(chunk->metadata,index,value);
-    chunk->dirty_flags |= CHUNK_DIRTY_MESH | CHUNK_DIRTY_SAVE;
+    chunk->dirty_flags |= CHUNK_DIRTY_MESH | CHUNK_DIRTY_SAVE | CHUNK_DIRTY_COLOR;
     ++chunk->revision;
 }
 
@@ -224,7 +224,7 @@ void chunk_set_block_light(Chunk *chunk, int x, int y, int z, uint8_t value)
     value &= 15u;
     if (nibble_get(chunk->block_light,index) == value) return;
     nibble_set(chunk->block_light,index,value);
-    chunk->dirty_flags |= CHUNK_DIRTY_MESH | CHUNK_DIRTY_SAVE;
+    chunk->dirty_flags |= CHUNK_DIRTY_MESH | CHUNK_DIRTY_SAVE | CHUNK_DIRTY_COLOR;
     ++chunk->revision;
 }
 
@@ -236,7 +236,7 @@ void chunk_set_sky_light(Chunk *chunk, int x, int y, int z, uint8_t value)
     value &= 15u;
     if (nibble_get(chunk->sky_light,index) == value) return;
     nibble_set(chunk->sky_light,index,value);
-    chunk->dirty_flags |= CHUNK_DIRTY_MESH | CHUNK_DIRTY_SAVE;
+    chunk->dirty_flags |= CHUNK_DIRTY_MESH | CHUNK_DIRTY_SAVE | CHUNK_DIRTY_COLOR;
     ++chunk->revision;
 }
 
@@ -338,7 +338,7 @@ static void relight_sky_column(Chunk *chunk, int x, int z)
         uint8_t id = chunk->blocks[index];
         if (blocks_light(id)) light = 0;
         else if (id == BLOCK_WATER || id == BETA_BLOCK_FLOWING_WATER)
-            light = light > 1 ? (uint8_t)(light-2) : 0;
+            light = light > 2 ? (uint8_t)(light-3) : 0;
         else if (id == BLOCK_LEAVES && light) --light;
         nibble_set(chunk->sky_light,index,light);
     }
@@ -353,114 +353,143 @@ static void relight_sky(Chunk *chunk)
             relight_sky_column(chunk,x,z);
 }
 
-static void queue_light(Chunk *chunk, size_t index, uint8_t value,
-                        uint8_t *queued, uint16_t *queue,
-                        size_t *tail, size_t *count)
-{
-    if (blocks_light(chunk->blocks[index])) return;
-    if (nibble_get(chunk->block_light,index) >= value) return;
-    nibble_set(chunk->block_light,index,value);
-    if (!queued[index]) {
-        queued[index] = 1;
-        queue[*tail] = (uint16_t)index;
-        *tail = (*tail + 1) % WORLD_CHUNK_VOLUME;
-        ++*count;
-    }
-}
-
 static void mark_mesh_neighbors(World *world,int32_t x,int32_t z);
 
-static void relight_block(World *world, Chunk *chunk)
+/* Channels share the same bounded propagation queue. Vanilla nibbles remain
+ * authoritative on the network; the optional red channel is presentation only. */
+static int light_opacity(uint8_t id)
+{ return blocks_light(id) ? 255 : id==8 || id==9 ? 3 : 1; }
+static void queue_light(Chunk *chunk,uint8_t *data,size_t index,int value,
+                        uint8_t *queued,uint16_t *queue,size_t *tail,size_t *count)
 {
-    static const int dx[4]={-1,1,0,0}, dz[4]={0,0,-1,1};
-    uint8_t previous[WORLD_NIBBLE_BYTES];
-    uint8_t queued[WORLD_CHUNK_VOLUME];
-    uint16_t queue[WORLD_CHUNK_VOLUME];
-    size_t head=0, tail=0, count=0, index;
-    int side,y,t;
-    memcpy(previous,chunk->block_light,sizeof(previous));
-    memset(chunk->block_light,0,sizeof(chunk->block_light));
-    memset(queued,0,sizeof(queued));
-    for (index=0; index<WORLD_CHUNK_VOLUME; ++index) {
-        uint8_t value = world_block_def(chunk->blocks[index])->emission;
-        if (value) {
-            nibble_set(chunk->block_light,index,value);
-            queued[index]=1;
-            queue[tail]=(uint16_t)index;
-            tail=(tail+1)%WORLD_CHUNK_VOLUME;
-            ++count;
-        }
-    }
-    /* Loaded neighbours are boundary conditions, never load chunks here.
-     * Every crossing loses at least one light level. Repeating changed edges
-     * therefore also removes stale light after deleting an emitter. */
-    for (side=0;side<4;++side) {
-        Chunk *neighbor=world_peek_chunk(world,chunk->x+dx[side],chunk->z+dz[side]);
-        if (!neighbor) continue;
-        for (y=0;y<WORLD_HEIGHT;++y) for (t=0;t<16;++t) {
-            int x=side==0?0:side==1?15:t;
-            int z=side==2?0:side==3?15:t;
-            int nx=side==0?15:side==1?0:t;
-            int nz=side==2?15:side==3?0:t;
-            uint8_t value=chunk_get_block_light(neighbor,nx,y,nz);
-            if (value>1) queue_light(chunk,block_index(x,y,z),(uint8_t)(value-1),
-                                     queued,queue,&tail,&count);
-        }
-    }
-    while (count) {
-        int x,z;
-        uint8_t current;
-        index=queue[head];
-        head=(head+1)%WORLD_CHUNK_VOLUME;
-        --count;
-        queued[index]=0;
-        current=nibble_get(chunk->block_light,index);
-        if (current <= 1) continue;
-        y=(int)(index >> 8);
-        z=(int)((index >> 4)&15u);
-        x=(int)(index&15u);
-        --current;
-        if (x>0) queue_light(chunk,index-1,current,queued,queue,&tail,&count);
-        if (x<15) queue_light(chunk,index+1,current,queued,queue,&tail,&count);
-        if (z>0) queue_light(chunk,index-16,current,queued,queue,&tail,&count);
-        if (z<15) queue_light(chunk,index+16,current,queued,queue,&tail,&count);
-        if (y>0) queue_light(chunk,index-256,current,queued,queue,&tail,&count);
-        if (y<127) queue_light(chunk,index+256,current,queued,queue,&tail,&count);
-    }
-    if (!memcmp(previous,chunk->block_light,sizeof(previous))) return;
-    chunk->dirty_flags|=CHUNK_DIRTY_MESH;
-    if (!world->beta_format || chunk->beta_raw) chunk->dirty_flags|=CHUNK_DIRTY_SAVE;
-    ++chunk->revision;
-    mark_mesh_neighbors(world,chunk->x,chunk->z);
-    for (side=0;side<4;++side) {
-        Chunk *neighbor=world_peek_chunk(world,chunk->x+dx[side],chunk->z+dz[side]);
-        int changed=0;
-        if (!neighbor) continue;
-        for (y=0;y<WORLD_HEIGHT && !changed;++y) for (t=0;t<16;++t) {
-            index=block_index(side==0?0:side==1?15:t,y,side==2?0:side==3?15:t);
-            if (nibble_get(previous,index)!=nibble_get(chunk->block_light,index)) {
-                changed=1; break;
-            }
-        }
-        if (changed) neighbor->dirty_flags|=CHUNK_DIRTY_LIGHT|CHUNK_DIRTY_MESH;
+    value-=light_opacity(chunk->blocks[index]);
+    if(value<=0 || nibble_get(data,index)>=value)return;
+    nibble_set(data,index,(uint8_t)value);
+    if(!queued[index]) {
+        queued[index]=1;queue[*tail]=(uint16_t)index;
+        *tail=(*tail+1)%WORLD_CHUNK_VOLUME;++*count;
     }
 }
-
+static void relight_channel(World *world,Chunk *chunk,int channel)
+{
+    static const int dx[4]={-1,1,0,0},dz[4]={0,0,-1,1};
+    uint8_t previous[WORLD_NIBBLE_BYTES],queued[WORLD_CHUNK_VOLUME];
+    uint16_t queue[WORLD_CHUNK_VOLUME];
+    uint8_t *data=channel==0 ? chunk->block_light : channel==1 ? chunk->sky_light : chunk->red_light;
+    size_t head=0,tail=0,count=0,index;
+    int side,y,t,has_source=0;
+    if(channel==2) {
+        for(index=0;index<WORLD_CHUNK_VOLUME&&!has_source;++index)has_source=chunk->blocks[index]==76;
+        for(side=0;side<4&&!has_source;++side) {
+            Chunk *n=world_peek_chunk(world,chunk->x+dx[side],chunk->z+dz[side]);
+            if(n&&n->red_light)for(y=0;y<128&&!has_source;++y)for(t=0;t<16;++t)
+                if(nibble_get(n->red_light,block_index(side==0?15:side==1?0:t,y,side==2?15:side==3?0:t))>1){has_source=1;break;}
+        }
+        if(!data&&!has_source)return;
+        if(!data){data=chunk->red_light=(uint8_t *)calloc(1,WORLD_NIBBLE_BYTES);if(!data)return;}
+    }
+    memcpy(previous,data,sizeof(previous));memset(queued,0,sizeof(queued));
+    if(channel==1)relight_sky(chunk);else memset(data,0,WORLD_NIBBLE_BYTES);
+    for(index=0;index<WORLD_CHUNK_VOLUME;++index) {
+        uint8_t value=channel==1 ? nibble_get(data,index) : channel==2 ? (chunk->blocks[index]==76 ? 7 : 0) : world_block_def(chunk->blocks[index])->emission;
+        if(value){nibble_set(data,index,value);queued[index]=1;queue[tail]=(uint16_t)index;tail=(tail+1)%WORLD_CHUNK_VOLUME;++count;}
+    }
+    /* Neighbours are boundary conditions. Never load terrain for a light query. */
+    for(side=0;side<4;++side) {
+        Chunk *n=world_peek_chunk(world,chunk->x+dx[side],chunk->z+dz[side]);
+        const uint8_t *nd=n ? channel==0 ? n->block_light : channel==1 ? n->sky_light : n->red_light : NULL;
+        if(!nd)continue;
+        for(y=0;y<128;++y)for(t=0;t<16;++t)
+            queue_light(chunk,data,block_index(side==0?0:side==1?15:t,y,side==2?0:side==3?15:t),
+                nibble_get(nd,block_index(side==0?15:side==1?0:t,y,side==2?15:side==3?0:t)),queued,queue,&tail,&count);
+    }
+    while(count) {
+        int x,z,value;
+        index=queue[head];head=(head+1)%WORLD_CHUNK_VOLUME;--count;queued[index]=0;
+        value=nibble_get(data,index);if(value<=1)continue;
+        x=(int)(index&15);z=(int)((index>>4)&15);y=(int)(index>>8);
+        if(x>0)queue_light(chunk,data,index-1,value,queued,queue,&tail,&count);
+        if(x<15)queue_light(chunk,data,index+1,value,queued,queue,&tail,&count);
+        if(z>0)queue_light(chunk,data,index-16,value,queued,queue,&tail,&count);
+        if(z<15)queue_light(chunk,data,index+16,value,queued,queue,&tail,&count);
+        if(y>0)queue_light(chunk,data,index-256,value,queued,queue,&tail,&count);
+        if(y<127)queue_light(chunk,data,index+256,value,queued,queue,&tail,&count);
+    }
+    if(!memcmp(previous,data,sizeof(previous)))return;
+    chunk->dirty_flags|=CHUNK_DIRTY_MESH;mark_mesh_neighbors(world,chunk->x,chunk->z);
+    if(channel!=2){++chunk->revision;if(!world->beta_format||chunk->beta_raw)chunk->dirty_flags|=CHUNK_DIRTY_SAVE;}
+    for(side=0;side<4;++side) {
+        Chunk *n=world_peek_chunk(world,chunk->x+dx[side],chunk->z+dz[side]);int changed=0;
+        if(!n)continue;
+        for(y=0;y<128&&!changed;++y)for(t=0;t<16;++t) {
+            index=block_index(side==0?0:side==1?15:t,y,side==2?0:side==3?15:t);
+            if(nibble_get(previous,index)!=nibble_get(data,index)){changed=1;break;}
+        }
+        if(changed)n->dirty_flags|=(channel==2 ? CHUNK_DIRTY_COLOR : CHUNK_DIRTY_LIGHT)|CHUNK_DIRTY_MESH;
+    }
+}
 static void flush_block_light(World *world)
 {
-    size_t i;
-    int pending;
+    size_t i;int pending;
     do {
         pending=0;
-        for (i=0;i<world->cache_count;++i) {
+        for(i=0;i<world->cache_count;++i) {
             Chunk *chunk=world->cache[i];
-            if (!(chunk->dirty_flags&CHUNK_DIRTY_LIGHT)) continue;
+            if(!(chunk->dirty_flags&CHUNK_DIRTY_LIGHT))continue;
             chunk->dirty_flags&=~CHUNK_DIRTY_LIGHT;
-            relight_block(world,chunk);
-            pending=1;
+            relight_channel(world,chunk,1);relight_channel(world,chunk,0);pending=1;
         }
-    } while (pending);
+    }while(pending);
 }
+void world_finish_color_updates(World *world)
+{
+    size_t i;int pending;
+    if(!world->colored_redstone)return;
+    do {
+        pending=0;
+        for(i=0;i<world->cache_count;++i) {
+            Chunk *c=world->cache[i];
+            if(!(c->dirty_flags&CHUNK_DIRTY_COLOR))continue;
+            c->dirty_flags&=~CHUNK_DIRTY_COLOR;relight_channel(world,c,2);pending=1;
+        }
+    }while(pending);
+}
+void world_color_lighting(World *w,int enabled)
+{
+    size_t i;enabled=!!enabled;if(w->colored_redstone==enabled)return;
+    w->colored_redstone=(uint8_t)enabled;
+    for(i=0;i<w->cache_count;++i) {
+        Chunk *c=w->cache[i];c->dirty_flags|=CHUNK_DIRTY_MESH;
+        if(enabled)c->dirty_flags|=CHUNK_DIRTY_COLOR;
+        else{free(c->red_light);c->red_light=NULL;c->dirty_flags&=~CHUNK_DIRTY_COLOR;}
+    }
+}
+static int raw_light(const World *w,int x,int y,int z,int channel)
+{
+    int32_t cx,cz;Chunk *c;const uint8_t *data;
+    if(y>=128)return channel==1 ? 15-w->sky_subtracted : 0;
+    if(y<0)return 0;
+    x=local_from_world(x,&cx);z=local_from_world(z,&cz);c=world_peek_chunk(w,cx,cz);
+    if(!c)return channel==1 ? 15-w->sky_subtracted : 0;
+    data=channel==0 ? c->block_light : channel==1 ? c->sky_light : c->red_light;
+    return data ? (int)nibble_get(data,block_index(x,y,z))-(channel==1 ? w->sky_subtracted : 0) : 0;
+}
+static int neighbor_light(const World *w,int x,int y,int z,int channel)
+{
+    static const int dx[5]={0,-1,1,0,0},dy[5]={1,0,0,0,0},dz[5]={0,0,0,-1,1};
+    unsigned id=world_peek_block(w,x,y,z);int value=raw_light(w,x,y,z,channel),i;
+    /* Beta's slab/stairs/farmland brightness rule, extended to other thin
+     * surfaces. It changes sampling, never the saved opacity of a half slab. */
+    if(id==44||id==53||id==67||id==60||id==55||id==93||id==94||id==96||id==78||id==70||id==72)
+        for(i=0;i<5;++i){int n=raw_light(w,x+dx[i],y+dy[i],z+dz[i],channel);if(n>value)value=n;}
+    return value>0 ? value : 0;
+}
+uint8_t world_render_light(const World *w,int x,int y,int z)
+{ int sky=neighbor_light(w,x,y,z,1),block=neighbor_light(w,x,y,z,0);return (uint8_t)(sky>block ? sky : block); }
+uint8_t world_red_light(const World *w,int x,int y,int z)
+{ return (uint8_t)neighbor_light(w,x,y,z,2); }
+int world_sky_light(const World *w,int x,int y,int z)
+{ return neighbor_light(w,x,y,z,1); }
 
 static void put_generated(Chunk *chunk, int64_t wx, int y, int64_t wz, uint8_t id)
 {
@@ -703,10 +732,11 @@ int world_unload_network_chunk(World *world,int32_t cx,int32_t cz)
     if(chunk->render_data && world->destroy_render_data) world->destroy_render_data(chunk->render_data);
     world_physics_forget_chunk(world,chunk);
     block_entities_free(chunk); world_entities_free(chunk); world_ticks_free(chunk);
-    free(chunk->beta_raw); free(chunk);
+    free(chunk->red_light); free(chunk->beta_raw); free(chunk);
     world->cache[i]=world->cache[--world->cache_count];
     world->cache[world->cache_count]=NULL;
     lookup_rebuild(world);
+    if(world->colored_redstone)for(i=0;i<world->cache_count;++i)if(abs(world->cache[i]->x-cx)<=1&&abs(world->cache[i]->z-cz)<=1)world->cache[i]->dirty_flags|=CHUNK_DIRTY_COLOR;
     return 1;
 }
 
@@ -816,6 +846,7 @@ Chunk *world_get_chunk(World *world, int32_t cx, int32_t cz)
         block_entities_free(outgoing);
         world_entities_free(outgoing);
         world_ticks_free(outgoing);
+        free(outgoing->red_light); outgoing->red_light=NULL;
         free(outgoing->beta_raw);
         outgoing->beta_raw=NULL;
         world->cache[victim]=incoming;
@@ -831,7 +862,7 @@ Chunk *world_get_chunk(World *world, int32_t cx, int32_t cz)
     if (!world->network_mode && !world->beta_format) {
         static const int dx[4]={-1,1,0,0},dz[4]={0,0,-1,1};
         static const uint8_t dark[WORLD_NIBBLE_BYTES]={0};
-        int side,has_light=memcmp(incoming->block_light,dark,sizeof(dark))!=0;
+        int side,has_light=1; /* Also propagate lateral skylight on new terrain. */
         for (side=0;side<4;++side) {
             Chunk *neighbor=world_peek_chunk(world,cx+dx[side],cz+dz[side]);
             if (neighbor && memcmp(neighbor->block_light,dark,sizeof(dark))) has_light=1;
@@ -844,6 +875,10 @@ Chunk *world_get_chunk(World *world, int32_t cx, int32_t cz)
             }
             flush_block_light(world);
         }
+    }
+    if(world->colored_redstone) {
+        size_t n;incoming->dirty_flags|=CHUNK_DIRTY_COLOR;
+        for(n=0;n<world->cache_count;++n)if(abs(world->cache[n]->x-cx)<=1&&abs(world->cache[n]->z-cz)<=1)world->cache[n]->dirty_flags|=CHUNK_DIRTY_COLOR;
     }
     world->error=WORLD_OK;
     return incoming;
@@ -877,7 +912,7 @@ size_t world_memory_bytes(const World *world)
            (world->cache_count + (world->staging!=NULL ? 1u : 0u))*sizeof(Chunk);
     for (i=0;i<world->cache_count;++i) {
         const BlockEntity *b; const SavedEntity *e; const Chunk *c=world->cache[i];
-        bytes+=c->beta_raw_size;
+        bytes+=c->beta_raw_size+(c->red_light ? WORLD_NIBBLE_BYTES : 0);
         for(b=c->entities;b;b=b->next) bytes+=sizeof(*b)+b->raw_size;
         for(e=c->saved_entities;e;e=e->next) bytes+=sizeof(*e)+e->raw_size;
         { const SavedTick *t; for(t=c->ticks;t;t=t->next) bytes+=sizeof(*t)+t->raw_size; }
@@ -936,7 +971,6 @@ int world_set_state(World *world,int wx,int y,int wz,BetaBlockState state)
     chunk_set_block(chunk,x,y,z,id);
     /* Neighbour callbacks must see the final attachment metadata. */
     chunk_set_metadata(chunk,x,y,z,state.metadata);
-    relight_sky_column(chunk,x,z);
     chunk->dirty_flags|=CHUNK_DIRTY_LIGHT;
     if (!world->physics_processing) flush_block_light(world);
     chunk->dirty_flags|=CHUNK_DIRTY_MESH|CHUNK_DIRTY_SAVE;
@@ -1045,7 +1079,6 @@ int world_set_metadata(World *world, int wx, int y, int wz, uint8_t value)
 void world_relight_chunk(World *world, Chunk *chunk)
 {
     if (!world || !chunk) return;
-    relight_sky(chunk);
     chunk->dirty_flags|=CHUNK_DIRTY_LIGHT;
     flush_block_light(world);
     chunk->dirty_flags|=CHUNK_DIRTY_MESH|CHUNK_DIRTY_SAVE;
@@ -1095,6 +1128,7 @@ WorldError world_close(World *world)
         block_entities_free(chunk);
         world_entities_free(chunk);
         world_ticks_free(chunk);
+        free(chunk->red_light);
         free(chunk->beta_raw);
         free(chunk);
     }

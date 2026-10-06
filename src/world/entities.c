@@ -47,6 +47,9 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
             if(!r->health_seen) r->current->mob.health=mob_default_health(r->current->mob.type);
         }
         if(t->type==NBT_SHORT && named(t,"Age")) r->current->item.age=t->value.short_value/20.0f;
+        if(t->type==NBT_SHORT && named(t,"AttackTime")) r->current->mob.attack_ticks=t->value.short_value;
+        if(t->type==NBT_SHORT && named(t,"DeathTime")) r->current->mob.death_ticks=t->value.short_value;
+        if(t->type==NBT_SHORT && named(t,"HurtTime")) r->current->mob.hurt_ticks=t->value.short_value;
         if(t->type==NBT_SHORT && named(t,"Health")) { r->health_seen=1; r->current->item.health=t->value.short_value; r->current->mob.health=t->value.short_value; }
         if(t->type==NBT_SHORT && named(t,"Fire")) r->current->mob.fire=t->value.short_value;
         if(t->type==NBT_SHORT && named(t,"Air")) r->current->mob.air=t->value.short_value;
@@ -128,6 +131,7 @@ static int read_tag(void *context,NbtEvent event,const NbtTag *t,unsigned depth)
             fabsf(e->item.x)>32000000 || fabsf(e->item.z)>32000000 || fabsf(e->item.y)>32000000)) return 0;
         e->item.active=e->item_entity && e->item.id>0 && e->item.count>0;
         e->mob.x=e->item.x; e->mob.y=e->item.y; e->mob.z=e->item.z;
+        e->mob.previous_x=e->mob.x;e->mob.previous_y=e->mob.y;e->mob.previous_z=e->mob.z;
         e->mob.vx=e->item.vx; e->mob.vy=e->item.vy; e->mob.vz=e->item.vz;
         if(e->transport.kind==1 || e->transport.kind==5 || e->transport.kind==6) e->mob.yaw=180-e->mob.yaw;
         if(e->transport.kind) {

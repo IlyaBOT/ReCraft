@@ -4,6 +4,7 @@
 #include "../renderer/renderer.h"
 #include "inventory.h"
 
+struct Player;
 typedef struct RenderEntity {
     int active, id, type;
     float x, y, z;
@@ -14,11 +15,23 @@ typedef struct RenderEntity {
     unsigned cape,skin;int skin_height,appearance;
     int local_interpolation;
     float previous_x,previous_y,previous_z,phase;
+    float draw_yaw,draw_pitch,walk_amount,lerp_remaining,age;
+    float vx,vy,vz;
+    int on_ground,hurt,death,vehicle_id;
+    InventorySlot item;
 } RenderEntity;
 /* Pick the nearest supported living entity or vehicle; block_distance occludes targets.
  * Returns an entity id, or -1. Camera yaw/pitch follow local Player radians. */
 int entity_pick(const RenderEntity *entities,int count,const RendererCamera *camera,
                 float reach,float block_distance);
+int entity_pick_except(const RenderEntity *entities,int count,const RendererCamera *camera,
+                       float reach,float block_distance,int ignored);
+void entity_remote_pose(RenderEntity *e,float x,float y,float z,float yaw,float pitch);
+void entity_render_update(RenderEntity *entities,int count,float dt,float fraction);
+void entity_network_collide(RenderEntity *entities,int count,struct Player *player);
+void entity_network_tick(RenderEntity *entities,int count,World *world);
+int entity_rider_position(const RenderEntity *entities,int count,int vehicle,int rendered,float *x,float *y,float *z);
+void entity_spider_leg_pose(float phase,float amount,int leg,float *yaw,float *roll);
 
 /* One depth-tested fixed-function batch of simple geometry for remote entities.
    Returns the number actually drawn. The backend owns no textures or buffers. */

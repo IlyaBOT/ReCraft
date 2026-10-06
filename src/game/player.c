@@ -5,6 +5,7 @@
 #include "../world/rail.h"
 #include "../world/block_entity.h"
 #include "../world/piston.h"
+#include "../world/collision.h"
 #include "../world/fluid.h"
 #include "bed.h"
 #include "sign.h"
@@ -72,49 +73,47 @@ static int body_collides(const Player *player, World *world)
     return 0;
 }
 
-static int move_axis(Player *player, World *world, int axis, float delta)
+static int move_axis(Player *p,World *w,int axis,float delta)
 {
-    float *position = axis == 0 ? &player->x : axis == 1 ? &player->y : &player->z;
-    int steps = (int)ceilf(fabsf(delta) * 4.0f);
-    int i;
-    if (steps < 1) return 0;
-    for (i = 0; i < steps; ++i) {
-        float start = *position;
-        float portion = delta / (float)steps;
-        int j;
-        *position += portion;
-        if (!body_collides(player, world)) continue;
-        *position = start;
-        /* Move close to the contact face without letting the player overlap it. */
-        {
-            float lo = 0.0f, hi = 1.0f;
-            for (j = 0; j < 8; ++j) {
-                float middle = (lo + hi) * 0.5f;
-                *position = start + portion * middle;
-                if (body_collides(player, world)) hi = middle;
-                else lo = middle;
-            }
-            *position = start + portion * lo;
+    WorldAabb body={{p->x-PLAYER_RADIUS,p->y,p->z-PLAYER_RADIUS},
+                    {p->x+PLAYER_RADIUS,p->y+PLAYER_HEIGHT,p->z+PLAYER_RADIUS}};
+    double clipped=world_clip_axis(w,&body,axis,delta,1);
+    float *position=axis==0 ? &p->x : axis==1 ? &p->y : &p->z;
+    size_t i;
+    /* Boats provide a collision box; living mobs and carts exchange impulses. */
+    for(i=0;i<w->cache_count;++i) {
+        const SavedEntity *e;
+        for(e=w->cache[i]->saved_entities;e;e=e->next) if(e->transport.kind==3 && !e->transport.dead && !e->transport.ridden) {
+            WorldAabb boat={{e->mob.x-.75,e->mob.y-.3,e->mob.z-.75},
+                            {e->mob.x+.75,e->mob.y+.3,e->mob.z+.75}};
+            clipped=world_aabb_clip(&body,&boat,axis,clipped);
         }
-        return 1;
     }
-    return 0;
+    *position=(float)((double)*position+clipped);
+    return fabs(clipped-delta)>1e-7;
 }
-static int move_horizontal(Player *p,World *w,int axis,float delta)
+static void move_grounded(Player *p,World *w,float dx,float dy,float dz)
 {
-    Player start=*p,stepped;
-    int blocked=move_axis(p,w,axis,delta);
-    if(!blocked || !start.on_ground || start.vy>0) return blocked;
-    /* Entity.stepHeight is 0.5 in Beta. Compare the stepped path with the
-     * unstepped path, and reject it under a ceiling or against a full wall. */
-    stepped=start;
-    if(move_axis(&stepped,w,1,.5f)) return blocked;
-    move_axis(&stepped,w,axis,delta);
-    if(fabsf(axis==0 ? stepped.x-start.x : stepped.z-start.z)<=
-       fabsf(axis==0 ? p->x-start.x : p->z-start.z)) return blocked;
-    move_axis(&stepped,w,1,-.5f);
-    p->x=stepped.x; p->y=stepped.y; p->z=stepped.z;
-    return 0;
+    Player start=*p,plain,step;
+    int vertical=move_axis(p,w,1,dy),grounded=start.on_ground || (vertical && dy<0);
+    int blocked_x=move_axis(p,w,0,dx),blocked_z=move_axis(p,w,2,dz);
+    p->on_ground=vertical && dy<0;
+    plain=*p;
+    if(grounded && (blocked_x || blocked_z)) {
+        double normal_distance=(p->x-start.x)*(p->x-start.x)+(p->z-start.z)*(p->z-start.z);
+        step=start;
+        /* Try the complete horizontal vector once, not a separate step per axis.
+         * This follows Entity.moveEntity's Y, X, Z clipping and .5 stepHeight. */
+        move_axis(&step,w,1,.5f);
+        move_axis(&step,w,0,dx);move_axis(&step,w,2,dz);
+        if((step.x-start.x)*(step.x-start.x)+(step.z-start.z)*(step.z-start.z)>normal_distance+1e-9) {
+            int landed=move_axis(&step,w,1,-.5f);
+            p->x=step.x;p->y=step.y;p->z=step.z;p->on_ground=landed;
+            vertical=landed;blocked_x=fabsf(p->x-start.x-dx)>1e-5f;blocked_z=fabsf(p->z-start.z-dz)>1e-5f;
+        } else *p=plain;
+    }
+    if(vertical)p->vy=0;
+    if(blocked_x)p->vx=0;if(blocked_z)p->vz=0;
 }
 void player_piston_move(Player *p,World *w,float dx,float dy,float dz)
 { move_axis(p,w,0,dx); move_axis(p,w,1,dy); move_axis(p,w,2,dz); }
@@ -261,8 +260,12 @@ void player_tick(Player *player, World *world, const PlayerInput *input, float d
     if(player->riding) {
         player->yaw+=input->look_dx*PLAYER_LOOK_SPEED; player->pitch-=input->look_dy*PLAYER_LOOK_SPEED;
         player->pitch=player_clamp_pitch(player->pitch);
-        player->vx=(sinf(player->yaw)*input->forward+cosf(player->yaw)*input->strafe)*4.3f;
-        player->vz=(-cosf(player->yaw)*input->forward+sinf(player->yaw)*input->strafe)*4.3f;
+        { float speed=world->network_mode ? .392f : 4.3f;
+          float length=fmaxf(1,sqrtf(input->forward*input->forward+input->strafe*input->strafe));
+          /* updateRidden clears motion; moveFlying applies .02*.98 per tick. */
+          player->vx=(sinf(player->yaw)*input->forward+cosf(player->yaw)*input->strafe)*speed/length;
+          player->vz=(-cosf(player->yaw)*input->forward+sinf(player->yaw)*input->strafe)*speed/length;
+        }
         if(!world->network_mode) hazards(player,world,player->y);
         return;
     }
@@ -311,12 +314,7 @@ void player_tick(Player *player, World *world, const PlayerInput *input, float d
         player->vy -= (in_water ? 5.0f : 22.0f) * dt;
         if (player->vy < (in_water ? -4.0f : -35.0f))
             player->vy = in_water ? -4.0f : -35.0f;
-        if (move_horizontal(player, world, 0, player->vx * dt)) player->vx = 0.0f;
-        if (move_horizontal(player, world, 2, player->vz * dt)) player->vz = 0.0f;
-        if (move_axis(player, world, 1, player->vy * dt)) {
-            if (player->vy < 0.0f) player->on_ground = 1;
-            player->vy = 0.0f;
-        } else player->on_ground = 0;
+        move_grounded(player,world,player->vx*dt,player->vy*dt,player->vz*dt);
     }
     hazards(player,world,old_y);
     if (player->creative && player->y < -32.0f) player_spawn(player, world,1);

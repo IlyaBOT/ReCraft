@@ -21,11 +21,29 @@ the client plays the server event with the original note sounds.
 
 The transport resolves DNS on a worker thread, connects over nonblocking TCP,
 buffers partial packets, and processes at most 128 packets and two zlib chunk
-regions per `network_tick()`. It limits a compressed region to 128 KiB and checks
+regions per `network_tick()`, with a 4 ms soft processing budget per frame. A single
+packet completes before yielding; socket reads and writes remain nonblocking. It limits a compressed region to 128 KiB and checks
 the exact decompressed length before writing blocks. Unknown packet IDs and
 malformed lengths end the connection with an error instead of losing framing.
 Small action packets use TCP_NODELAY. macOS sockets use SO_NOSIGPIPE, and status
 query deadlines use the monotonic `mach_absolute_time()` available on 10.6.
+
+## Entities and riding
+
+Protocol 14 AttachEntity `0x27` sets the local riding state only when confirmed by
+the server. Mounted players send the original motion/`-999` Y/stance sentinel
+packets, rather than ordinary walking positions. Camera and passenger positions
+follow the vehicle's interpolated pose. Shift requests dismount through the server.
+Respawn and vehicle removal clear riding state.
+
+PickupSpawn `0x15` creates a textured Item entity with ID, count, damage and byte
+velocity. Velocity `0x1C`, Collect `0x16`, entity status `0x26` and metadata `0x28`
+are handled. Collection and inventory remain server-authoritative. Object packets
+map arrows, carts, boats, TNT, snowballs, eggs and falling sand/gravel separately
+from living mob IDs. Remote mobs use network interpolation, not local AI.
+
+F3 reports network CPU, chunk application time, packet count and buffered bytes.
+Player camera interpolation now applies to multiplayer as well as singleplayer.
 
 ## Teleports, login plugins and commands
 
@@ -35,12 +53,13 @@ Previously the movement writer reversed feet Y and stance, and the mock server
 expected the same mistake. On goldenage.keii.dev this prevented the server from
 accepting the teleport acknowledgement and streaming terrain. The corrected
 client loaded the room with signs and the public chest as IlyaBOT on 2026-10-04.
-The automated test sent no password, chat command, block interaction or inventory
-action. The user then entered the password manually and the server reported
-successful login, but the player stayed in the room. Captured position events
-still pointed to the room; return to the former house/mine is unresolved and
-needs comparison with the original client. Later server teleports use the same
-corrected path; the loopback test also covers a second teleport and its ACK.
+The original room-only test sent no password. Following the protocol fixes, the
+user confirmed successful return to the last logout location. A read-only gameplay
+probe on 2026-10-06, using an explicitly authorized login command, also received the
+second teleport and all 441 terrain chunks. It did not interact with blocks,
+containers, mobs or vehicles. Passwords and chat contents are not retained in
+public diagnostics. Vehicle mounting is covered by the loopback tests; this probe
+had no nearby vehicles. See [the 0.2.3 checks](BETA_ENTITIES_023.md).
 Position-only `0x0B` and look-only `0x0C` corrections are now handled as well
 as combined `0x0D`, using the corresponding packet type for acknowledgement.
 An event's position/rotation bits prevent a partial correction from resetting

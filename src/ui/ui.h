@@ -22,6 +22,7 @@ typedef enum UiScreen {
     UI_SCREEN_DIRECT_CONNECT,
     UI_SCREEN_OPTIONS,
     UI_SCREEN_VIDEO,
+    UI_SCREEN_ENVIRONMENT,
     UI_SCREEN_LANGUAGES,
     UI_SCREEN_PACKS,
     UI_SCREEN_CONTROLS,
@@ -123,6 +124,7 @@ typedef struct UiOptions {
     int chunk_build_budget;   /* meshes per frame, 1..8 */
     int fog;                  /* 0 fast, 1 off */
     int fancy_leaves;
+    int colored_redstone;     /* Custom visual option, default OFF. */
     int reduced_transparency; /* Preserve essential alpha only; default OFF. */
     int dynamic_updates;      /* 1..8 */
     int debug_statistics;

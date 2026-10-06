@@ -20,8 +20,13 @@ GitHub Actions builds Windows/Linux and macOS on the local Vesper runner.
 See [CI, artifacts and host build instructions](docs/CI.md).
 
 The game has 16 x 16 x 128 chunk columns, deterministic terrain for ReCraft saves, walking and flying controls, block interaction, crafting and chest/furnace inventories, survival health and mining, menus, video settings, a debug overlay, and reproducible benchmark scenes. Chunk block bytes use the Beta 1.7.3 ID range 0..96 with separate metadata nibbles; native `.rcg` version 1 saves are migrated on load to version 2. Minecraft Beta 1.7.3 `level.dat` and existing McRegion `.mcr` chunks can also be opened for play. Edits to loaded Beta chunks are written back in McRegion format. Missing Beta chunks are not generated yet. Some Beta blocks still use proxy geometry and behavior, and ReCraft's own terrain generator is not Beta-compatible. The per-block status is in the [Beta compatibility matrix](docs/BETA_COMPATIBILITY_MATRIX.md).
-The Minecraft Beta 1.7.3 protocol 14 client is experimental. Pre-login terrain/signs/chests were verified on goldenage.keii.dev; the user's manual password login succeeded, but return to the previous location remains unresolved. Optional Microsoft session joining for online challenges still needs real-server verification. The server list queries modern status (protocol 47) for MOTD, favicon, population and ping; modern gameplay is not implemented. Beta entries show TCP reachability only. See [network support and limits](docs/NETWORK_PROTOCOLS.md).
+The Minecraft Beta 1.7.3 protocol 14 client is experimental. Pre-login terrain/signs/chests were verified on goldenage.keii.dev; return to the previous location after password login is confirmed by the user and a live protocol check. Optional Microsoft session joining for online challenges still needs real-server verification. The server list queries modern status (protocol 47) for MOTD, favicon, population and ping; modern gameplay is not implemented. Beta entries show TCP reachability only. See [network support and limits](docs/NETWORK_PROTOCOLS.md).
 The interface uses selected user-provided CoterieCraft Beta textures and an original bitmap font atlas. Effects and music use original OGG assets with Beta sound keys and a non-looping music schedule. See [asset sources](docs/ASSET_SOURCES.md).
+
+Version 0.2.3 fixes server-confirmed boat/minecart mounting, dropped Item entities,
+multiplayer camera/entity interpolation, entity targeting, half-block stepping
+and lighting under roofs. Environment settings include optional CPU-baked red
+torch light, off by default. See [the multiplayer/entity fixes and checks](docs/BETA_ENTITIES_023.md).
 
 Version 0.2.2 adds the missing storage blocks, sponge, sandstone, pumpkins,
 trapdoors, fences and the two Beta stair types. Snow renders all eight legacy
@@ -294,6 +299,8 @@ receive sample inventory or fixture blocks:
 .\build\ReCraft.exe --smoke-test --screen sign-edit --no-audio --frames 40 --capture build/sign-editor.png
 .\build\ReCraft.exe --smoke-test --screen multiplayer-demo --no-audio --frames 40 --capture build/multiplayer-status.png
 .\build\ReCraft.exe --smoke-test --screen events --no-audio --frames 3 --capture build/beta-events.png
+.\build\ReCraft.exe --smoke-test --screen partial-light --colored-redstone 1 --no-audio --frames 5 --capture build/partial-light.png
+.\build\ReCraft.exe --menu-smoke --screen environment --no-audio --frames 5 --capture build/environment.png
 ```
 
 The `player` view shows the Survival panel, textured biped and 2 x 2 crafting.

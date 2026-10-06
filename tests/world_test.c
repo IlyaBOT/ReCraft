@@ -135,7 +135,9 @@ int main(void)
     assert(world_set_block(&a,-1,64,-1,BETA_BLOCK_SLAB));
     assert(world_get_metadata(&a,-1,64,-1)==0);
     assert(world_set_block(&a,-2,66,-2,BETA_BLOCK_SLAB));
-    assert(chunk_get_sky_light(world_get_chunk(&a,-1,-1),14,65,14)==0);
+    /* An opaque slab stops the vertical column, but sky enters from its sides. */
+    assert(chunk_get_sky_light(world_get_chunk(&a,-1,-1),14,66,14)==0);
+    assert(chunk_get_sky_light(world_get_chunk(&a,-1,-1),14,65,14)==14);
     assert(world_set_block(&a,2,64,2,BETA_BLOCK_GLOWSTONE));
     assert(chunk_get_block_light(world_get_chunk(&a,0,0),2,64,2)==15);
     assert(world_set_block(&a,3,64,2,BETA_BLOCK_GLOWING_REDSTONE_ORE));

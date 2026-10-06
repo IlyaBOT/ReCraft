@@ -27,6 +27,7 @@ typedef struct RendererOptions {
     int smooth_lighting;
     int transparent_leaves; /* Fancy: crisp cutouts, including interior faces. */
     int reduced_transparency; /* Opaque foliage/doors/portals; essential alpha stays. */
+    int colored_redstone;    /* Optional CPU-baked red torch light; default OFF. */
     int brightness;          /* 0..100 ambient light; changes rebuild meshes. */
 } RendererOptions;
 

@@ -1,4 +1,4 @@
-# ReCraft 0.2.2
+# ReCraft 0.2.3
 
 Experimental client release targeting Minecraft Beta 1.7.3 behavior.
 
@@ -10,18 +10,34 @@ Experimental client release targeting Minecraft Beta 1.7.3 behavior.
 
 Keep the executable/app and `assets/` together. Existing worlds belong in `saves/` beside them. Back up Beta worlds before editing them with this experimental client.
 
-## Changes in 0.2.2
+## Changes in 0.2.3
 
-- Added correct Beta textures for gold, iron and diamond storage blocks, sponge and sandstone. Sponge intentionally does not absorb water.
-- Added wooden trapdoor side placement, orientation/open metadata, support drops, selection/collision and redstone control.
-- Added pumpkin/jack o'lantern facing textures and placement; jack o'lantern emits light 15.
-- Added Beta fence joins and 1.5-block collision; wooden/cobblestone stair shapes, orientations, collision, inventory/held models and half-block player stepping.
-- Snow supports all eight legacy metadata heights, Beta collision rules, support checks and block-light melting. Normal placement remains one layer; no modern snow stacking.
-- Fixed the stone button inventory model that resembled a pressure plate. Its original Beta texture is stone.
-- Added a safe generator for a flat McRegion world with all 97 IDs and 420 labelled state specimens, plus reader/writer and geometry regression tests. Run `python tools/create_block_lab.py build/saves/ReCraft_Block_Lab_022` from a source checkout.
-- Fixed protocol-14 movement Y/stance ordering, position/look packet variants, teleport interpolation, terrain readiness and disappearing server chunks. Added local commands (`/tp`, `/gamemode`, `/time`, `/weather`, `/seed`); multiplayer commands are forwarded to the server.
+- Fixed server-confirmed boat/minecart mounting, seated camera/passenger poses,
+  riding motion packets, dismount and respawn cleanup.
+- Added proper dropped Item entity stacks, velocities, collision, nearest texture
+  rendering and server-authoritative collection. Offline Item NBT is preserved.
+- Enabled multiplayer player/entity interpolation. Added F3 network timing and
+  a soft packet processing budget; the client does not wait for server ticks.
+- Fixed entity attacks falling through to block mining while holding the mouse.
+  Added network entity push impulses and corrected vehicle picking bounds.
+- Reworked half-block stepping with swept AABB clipping, combined horizontal
+  movement and grounded landing checks, including diagonal/chunk-boundary cases.
+- Fixed brightness sampling for slabs, stairs, farmland, wire and repeaters;
+  added lateral skylight propagation and correct partial-face sampling below roofs.
+- Added Environment settings and optional red torch light, disabled by default.
+  Colours are baked into mesh vertices on the CPU; no shader or NBT extension.
+- Fixed idle limb animation and spider legs; skeletons hold bows. Mob health and
+  tool damage now apply in creative too. Added hit knockback, hurt/death rendering,
+  vanilla transient NBT fields and closer Beta idle/look/attack behavior.
+- User-confirmed password-server return teleport was verified by a live network
+  probe. Existing saves were checked for unchanged contents.
 
-Includes 0.2.1's redstone texture, entity rendering and falling-block fixes. See the README and compatibility documentation for remaining Beta differences: exact terrain generation, complete multiplayer, crop/cake/ladder behavior and spawner AI remain unfinished. Returning to a password server's previous location after authentication still needs a live recheck; no password was automated or logged.
+See [verification details and remaining differences](BETA_ENTITIES_023.md) in the
+source repository, or `docs/BETA_ENTITIES_023.md` inside the downloaded package.
+Exact Beta terrain generation, exhaustive AI/pathfinding parity, every mob type,
+online account/app approval and modern gameplay protocols remain unfinished.
+No nearby boat/cart was available in the live check; riding is verified by packet
+and simulation regressions, and still merits a manual server ride.
 
 ## Package verification
 

@@ -1138,6 +1138,16 @@ int main(int argc, char **argv)
     }
     chunk_mesh_destroy(greedy);
     {
+        ChunkMesh sample={0};float lo[3]={0,0,0},hi[3]={1,.5f,1};int j;
+        chunk_set_block(chunk,4,17,4,1);chunk_set_block_light(chunk,3,16,4,12);
+        /* The slab top is inside its voxel: a ceiling in the next voxel must
+         * not replace its neighbour-derived brightness with opaque zero. */
+        emit_partial_face(&basic,&world,&sample,chunk,4,16,4,44,0,1,1,lo,hi);
+        assert(sample.layers[0].vertex_count==4);
+        for(j=0;j<4;++j)assert(sample.layers[0].vertices[j].r>100);
+        free(sample.layers[0].vertices);chunk_set_block(chunk,4,17,4,0);
+    }
+    {
         static const uint8_t orientations[3]={1,2,5};
         static const int min_x_bounds[3]={514,603,568};
         static const int max_x_bounds[3]={549,638,584};

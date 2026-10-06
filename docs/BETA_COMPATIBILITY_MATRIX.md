@@ -169,4 +169,5 @@ old/new save rotation are implemented.
 The Creative catalogue exposes registered IDs/variants; availability there does
 not mean that a block's geometry, mechanism or item-use behavior is implemented.
 Cross-chunk block light and optional smooth vertex colors are implemented;
-full Beta lateral sky-light propagation is still incomplete.
+lateral skylight now propagates under roofs and through loaded chunk boundaries.
+Partial blocks sample neighbour brightness; see [the 0.2.3 checks](BETA_ENTITIES_023.md).

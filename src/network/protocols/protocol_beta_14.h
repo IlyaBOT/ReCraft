@@ -32,6 +32,7 @@ size_t beta14_handshake(uint8_t *out, size_t capacity, const char *username);
 size_t beta14_login(uint8_t *out, size_t capacity, const char *username);
 size_t beta14_movement(uint8_t *out, size_t capacity, double x, double feet_y,
                        double z, float yaw, float pitch, int on_ground);
+size_t beta14_riding(uint8_t *out,size_t capacity,double motion_x,double motion_z,float yaw,float pitch,int ground);
 size_t beta14_chat(uint8_t *out, size_t capacity, const char *message);
 size_t beta14_sign_update(uint8_t *out,size_t capacity,int x,int y,int z,const char lines[4][61]);
 size_t beta14_held_item(uint8_t *out, size_t capacity, int slot);

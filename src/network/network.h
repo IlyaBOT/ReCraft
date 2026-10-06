@@ -34,7 +34,8 @@ typedef enum NetworkEventType {
     NETWORK_EVENT_WINDOW_OPEN,NETWORK_EVENT_WINDOW_CLOSE,NETWORK_EVENT_WINDOW_PROPERTY,
     NETWORK_EVENT_WINDOW_TRANSACTION,NETWORK_EVENT_WINDOW_SYNC,
     NETWORK_EVENT_RESPAWN,NETWORK_EVENT_SIGN,NETWORK_EVENT_ENTITY_FLAGS,
-    NETWORK_EVENT_NOTE
+    NETWORK_EVENT_NOTE,NETWORK_EVENT_ATTACH,NETWORK_EVENT_ENTITY_VELOCITY,
+    NETWORK_EVENT_ENTITY_STATUS,NETWORK_EVENT_ENTITY_COLLECT,NETWORK_EVENT_ENTITY_METADATA
 } NetworkEventType;
 
 typedef struct NetworkEvent {
@@ -44,11 +45,13 @@ typedef struct NetworkEvent {
     double x, y, z;                /* Feet position for POSITION. */
     float yaw, pitch;              /* Beta protocol degrees, not local radians. */
     int32_t entity_id;
+    int32_t vehicle_id;
+    double vx,vy,vz; /* Blocks per second, not protocol units. */
     int32_t block_x, block_y, block_z;
     int16_t item_id, item_damage;
     int16_t slot, health;
     uint8_t block_id, metadata, item_count, entity_variant;
-    int entity_type; /* Living Beta IDs; 1000 arrow, 1001 cart, 1002 boat visual types. */
+    int entity_type; /* Living Beta IDs; 1000 arrow, 1001 cart, 1002 boat, 1008 Item. */
     int window_id,window_type,window_slots,property,value,action,accepted;
     int dimension;
     char sign_lines[4][61];
@@ -67,6 +70,8 @@ void network_set_auth(NetworkClient *client,NetworkJoinFn join,void *context);
 int network_connect(NetworkClient *client, const char *host, uint16_t port,
                     const char *username);
 void network_disconnect(NetworkClient *client);
+typedef struct NetworkStats { double tick_ms,chunk_ms; unsigned packets,chunks; size_t pending_bytes; } NetworkStats;
+NetworkStats network_stats(const NetworkClient *client);
 void network_tick(NetworkClient *client); /* Nonblocking, bounded packet budget. */
 
 NetworkState network_state(const NetworkClient *client);
@@ -85,6 +90,8 @@ typedef struct NetworkPlayerInfo {
 size_t network_player_list(const NetworkClient *client,NetworkPlayerInfo *out,size_t capacity);
 int network_send_position(NetworkClient *client, double x, double feet_y,
                           double z, float yaw, float pitch, int on_ground);
+int32_t network_vehicle_id(const NetworkClient *client); /* -1 when unmounted. */
+int network_send_riding(NetworkClient *client,double vx,double vz,float yaw,float pitch,int ground);
 int network_send_chat(NetworkClient *client, const char *message);
 /* Current hotbar index (0..8), sent as Beta 14 packet 0x10. */
 int network_send_held_item(NetworkClient *client, int slot);

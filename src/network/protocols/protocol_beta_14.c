@@ -197,6 +197,12 @@ size_t beta14_movement(uint8_t *out,size_t cap,double x,double y,double z,float 
     out[0]=13; putf64(out+1,x); putf64(out+9,y); putf64(out+17,y+1.62); putf64(out+25,z);
     putf32(out+33,yaw); putf32(out+37,pitch); out[41]=(uint8_t)(ground!=0); return 42;
 }
+size_t beta14_riding(uint8_t *out,size_t cap,double vx,double vz,float yaw,float pitch,int ground)
+{
+    size_t n=beta14_movement(out,cap,vx,-999,vz,yaw,pitch,ground);
+    if(n) putf64(out+17,-999); /* Both Y fields are the Beta riding sentinel. */
+    return n;
+}
 size_t beta14_mine(uint8_t *out,size_t cap,int status,int x,int y,int z,int face)
 {
     if(!out || cap<12 || y<0 || y>127 || face<0 || face>5 || (status!=0 && status!=1 && status!=2 && status!=4)) return 0;
